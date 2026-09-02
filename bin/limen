@@ -1,0 +1,642 @@
+#!/bin/sh
+set -eu
+
+emacsclient=${EMACSCLIENT:-emacsclient}
+
+help() {
+    cat <<'EOF'
+Limen
+Expose Emacs functionality to local agents.
+
+Usage: limen <COMMAND>
+
+Commands:
+  attention    Read the selected Emacs attention state
+  buffer       Work with Emacs buffers
+  compile      Inspect Emacs compilation buffers
+  windows      List Emacs windows
+  diagnostics  List Flymake diagnostics
+  projects     List known projects
+  skill        Generate agent instructions
+  eval         Evaluate explicitly enabled Emacs Lisp
+  help         Print help for a command
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+skill_help() {
+    cat <<'EOF'
+Generate agent instructions for available Emacs commands.
+
+Usage: limen skill
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+attention_help() {
+    cat <<'EOF'
+Read the selected Emacs attention state.
+
+Usage: limen attention
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+compile_help() {
+    cat <<'EOF'
+Inspect existing Emacs compilation buffers.
+
+Usage: limen compile <COMMAND>
+
+Commands:
+  list           List compilation buffers
+  read <BUFFER>  Read a compilation buffer output tail
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+compile_list_help() {
+    cat <<'EOF'
+List existing Emacs compilation buffers.
+
+Usage: limen compile list
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+compile_read_help() {
+    cat <<'EOF'
+Read a bounded output tail from an existing Emacs compilation buffer.
+
+Usage: limen compile read <BUFFER>
+
+Arguments:
+  <BUFFER>  Compilation buffer name
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+buffer_help() {
+    cat <<'EOF'
+Work with Emacs buffers.
+
+Usage: limen buffer <COMMAND>
+
+Commands:
+  list [OPTIONS]            List live buffers
+  read <PATH> [OPTIONS]     Read a live buffer
+  save <PATH> [OPTIONS]     Save a live file buffer
+  open <PATH> [OPTIONS]     Open a file
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+buffer_list_help() {
+    cat <<'EOF'
+List live Emacs buffers.
+
+Usage: limen buffer list [OPTIONS]
+
+Options:
+      --virtual  List virtual buffers only
+      --all      List file and virtual buffers
+  -h, --help     Print help
+EOF
+}
+
+buffer_read_help() {
+    cat <<'EOF'
+Read text from a live Emacs buffer.
+
+Usage: limen buffer read <PATH> [OPTIONS]
+       limen buffer read --name <NAME> [OPTIONS]
+
+Arguments:
+  <PATH>  Project-relative or absolute file path
+
+Options:
+      --name <NAME>            Select a buffer by name
+      --line <LINE>            One-based start line
+      --end-line <END_LINE>    One-based end line
+      --widen                  Temporarily ignore buffer narrowing
+      --expected-tick <TICK>   Require the current modification tick
+  -h, --help                   Print help
+EOF
+}
+
+buffer_save_help() {
+    cat <<'EOF'
+Save a visited file buffer if its state is current.
+
+Usage: limen buffer save <PATH> --expected-tick <TICK>
+
+Arguments:
+  <PATH>  Project-relative or absolute file path
+
+Options:
+      --expected-tick <TICK>  Required current modification tick
+  -h, --help                  Print help
+EOF
+}
+
+buffer_open_help() {
+    cat <<'EOF'
+Open a file in an Emacs buffer.
+
+Usage: limen buffer open <PATH> [OPTIONS]
+
+Arguments:
+  <PATH>  Project-relative or absolute file path
+
+Options:
+      --line <LINE>              One-based start line
+      --column <COLUMN>          Zero-based start column
+      --end-line <END_LINE>      One-based end line
+      --start-text <START_TEXT>  Text locating the start
+      --end-text <END_TEXT>      Text locating the end
+  -h, --help                     Print help
+EOF
+}
+
+windows_help() {
+    cat <<'EOF'
+List Emacs windows.
+
+Usage: limen windows
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+diagnostics_help() {
+    cat <<'EOF'
+List already computed Emacs diagnostics.
+
+Usage: limen diagnostics [--uri <URI>]
+
+Options:
+      --uri <URI>  Restrict diagnostics to a file URI
+  -h, --help       Print help
+EOF
+}
+
+projects_help() {
+    cat <<'EOF'
+List known projects from Projectile or project.el.
+
+Usage: limen projects
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+eval_help() {
+    cat <<'EOF'
+Evaluate explicitly enabled Emacs Lisp.
+
+Usage: limen eval <CODE|->
+
+Arguments:
+  <CODE|->  Emacs Lisp source, or - to read from standard input
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+usage() {
+    "$1" >&2
+    exit 2
+}
+
+show_help() {
+    case $# in
+        0) help ;;
+        1)
+            case $1 in
+                attention) attention_help ;;
+                buffer) buffer_help ;;
+                compile) compile_help ;;
+                windows) windows_help ;;
+                diagnostics) diagnostics_help ;;
+                projects) projects_help ;;
+                skill) skill_help ;;
+                eval) eval_help ;;
+                *) usage help ;;
+            esac
+            ;;
+        2)
+            case "$1 $2" in
+                "buffer open") buffer_open_help ;;
+                "buffer list") buffer_list_help ;;
+                "buffer read") buffer_read_help ;;
+                "buffer save") buffer_save_help ;;
+                "compile list") compile_list_help ;;
+                "compile read") compile_read_help ;;
+                *) usage help ;;
+            esac
+            ;;
+        *) usage help ;;
+    esac
+}
+
+encode() {
+    base64 | tr -d '\n'
+}
+
+decode() {
+    if printf '' | base64 --decode >/dev/null 2>&1; then
+        base64 --decode
+    else
+        base64 -D
+    fi
+}
+
+argument_fields=
+
+append_argument() {
+    if [ -n "$argument_fields" ]; then
+        argument_fields="$argument_fields,$1"
+    else
+        argument_fields=$1
+    fi
+}
+
+add_string_argument() {
+    encoded_argument=$(printf '%s' "$2" | encode)
+    append_argument "\"$1\":{\"base64\":\"$encoded_argument\"}"
+}
+
+add_integer_argument() {
+    integer=$2
+    sign=
+    case $integer in
+        -*) sign=-; digits=${integer#-} ;;
+        *) digits=$integer ;;
+    esac
+    case $digits in
+        ''|*[!0-9]*) usage "$3" ;;
+    esac
+    while [ "${digits#0}" != "$digits" ] && [ "$digits" != 0 ]; do
+        digits=${digits#0}
+    done
+    append_argument "\"$1\":$sign$digits"
+}
+
+method=
+operation=
+arguments='{}'
+
+case ${1-} in
+    ''|-h|--help)
+        [ "$#" -le 1 ] || usage help
+        help
+        exit 0
+        ;;
+    help)
+        shift
+        show_help "$@"
+        exit 0
+        ;;
+    skill)
+        case ${2-} in
+            '' ) [ "$#" -eq 1 ] || usage skill_help ;;
+            -h|--help) [ "$#" -eq 2 ] || usage skill_help; skill_help; exit 0 ;;
+            *) usage skill_help ;;
+        esac
+        method=skill
+        ;;
+    attention)
+        case ${2-} in
+            '') [ "$#" -eq 1 ] || usage attention_help ;;
+            -h|--help) [ "$#" -eq 2 ] || usage attention_help; attention_help; exit 0 ;;
+            *) usage attention_help ;;
+        esac
+        method=call
+        operation=attention.get
+        ;;
+    compile)
+        case ${2-} in
+            ''|-h|--help)
+                [ "$#" -le 2 ] || usage compile_help
+                compile_help
+                exit 0
+                ;;
+            list)
+                case ${3-} in
+                    '') [ "$#" -eq 2 ] || usage compile_list_help ;;
+                    -h|--help)
+                        [ "$#" -eq 3 ] || usage compile_list_help
+                        compile_list_help
+                        exit 0
+                        ;;
+                    *) usage compile_list_help ;;
+                esac
+                method=call
+                operation=compile.list
+                ;;
+            read)
+                case ${3-} in
+                    '' ) usage compile_read_help ;;
+                    -h|--help)
+                        [ "$#" -eq 3 ] || usage compile_read_help
+                        compile_read_help
+                        exit 0
+                        ;;
+                    --*) usage compile_read_help ;;
+                    *)
+                        [ "$#" -eq 3 ] || usage compile_read_help
+                        method=call
+                        operation=compile.read
+                        argument_fields=
+                        add_string_argument name "$3"
+                        arguments="{$argument_fields}"
+                        ;;
+                esac
+                ;;
+            *) usage compile_help ;;
+        esac
+        ;;
+    buffer)
+        case ${2-} in
+            ''|-h|--help)
+                [ "$#" -le 2 ] || usage buffer_help
+                buffer_help
+                exit 0
+                ;;
+            list)
+                case ${3-} in -h|--help) [ "$#" -eq 3 ] || usage buffer_list_help; buffer_list_help; exit 0 ;; esac
+                method=call
+                operation=buffer.list
+                argument_fields=
+                selection=
+                shift 2
+                while [ "$#" -gt 0 ]; do
+                    case $1 in
+                        --virtual)
+                            [ -z "$selection" ] || usage buffer_list_help
+                            selection=virtual
+                            append_argument '"virtual":true'
+                            ;;
+                        --all)
+                            [ -z "$selection" ] || usage buffer_list_help
+                            selection=all
+                            append_argument '"all":true'
+                            ;;
+                        *) usage buffer_list_help ;;
+                    esac
+                    shift
+                done
+                arguments="{$argument_fields}"
+                ;;
+            read)
+                case ${3-} in -h|--help) [ "$#" -eq 3 ] || usage buffer_read_help; buffer_read_help; exit 0 ;; esac
+                method=call
+                operation=buffer.read
+                argument_fields=
+                selector=
+                line_seen=
+                end_line_seen=
+                widen_seen=
+                expected_tick_seen=
+                shift 2
+                while [ "$#" -gt 0 ]; do
+                    option=$1
+                    case $option in
+                        --name)
+                            [ "$#" -ge 2 ] && [ -z "$selector" ] || usage buffer_read_help
+                            selector=name
+                            add_string_argument name "$2"
+                            shift 2
+                            ;;
+                        --line)
+                            [ "$#" -ge 2 ] && [ -z "$line_seen" ] || usage buffer_read_help
+                            line_seen=true
+                            add_integer_argument line "$2" buffer_read_help
+                            shift 2
+                            ;;
+                        --end-line)
+                            [ "$#" -ge 2 ] && [ -z "$end_line_seen" ] || usage buffer_read_help
+                            end_line_seen=true
+                            add_integer_argument end_line "$2" buffer_read_help
+                            shift 2
+                            ;;
+                        --widen)
+                            [ -z "$widen_seen" ] || usage buffer_read_help
+                            widen_seen=true
+                            append_argument '"widen":true'
+                            shift
+                            ;;
+                        --expected-tick)
+                            [ "$#" -ge 2 ] && [ -z "$expected_tick_seen" ] || usage buffer_read_help
+                            expected_tick_seen=true
+                            add_integer_argument expected_tick "$2" buffer_read_help
+                            shift 2
+                            ;;
+                        --*) usage buffer_read_help ;;
+                        *)
+                            [ -z "$selector" ] || usage buffer_read_help
+                            selector=path
+                            add_string_argument path "$option"
+                            shift
+                            ;;
+                    esac
+                done
+                [ -n "$selector" ] || usage buffer_read_help
+                arguments="{$argument_fields}"
+                ;;
+            save)
+                case ${3-} in -h|--help) [ "$#" -eq 3 ] || usage buffer_save_help; buffer_save_help; exit 0 ;; esac
+                [ "$#" -ge 3 ] || usage buffer_save_help
+                case $3 in --*) usage buffer_save_help ;; esac
+                method=call
+                operation=buffer.save
+                argument_fields=
+                add_string_argument path "$3"
+                expected_tick_seen=
+                shift 3
+                while [ "$#" -gt 0 ]; do
+                    case $1 in
+                        --expected-tick)
+                            [ "$#" -ge 2 ] && [ -z "$expected_tick_seen" ] || usage buffer_save_help
+                            expected_tick_seen=true
+                            add_integer_argument expected_tick "$2" buffer_save_help
+                            shift 2
+                            ;;
+                        *) usage buffer_save_help ;;
+                    esac
+                done
+                [ -n "$expected_tick_seen" ] || usage buffer_save_help
+                arguments="{$argument_fields}"
+                ;;
+            open)
+                case ${3-} in -h|--help) [ "$#" -eq 3 ] || usage buffer_open_help; buffer_open_help; exit 0 ;; esac
+                [ "$#" -ge 3 ] || usage buffer_open_help
+                method=call
+                operation=buffer.open
+                argument_fields=
+                add_string_argument path "$3"
+                shift 3
+                while [ "$#" -gt 0 ]; do
+                    option=$1
+                    [ "$#" -ge 2 ] || usage buffer_open_help
+                    case $option in
+                        --line) add_integer_argument line "$2" buffer_open_help ;;
+                        --column) add_integer_argument column "$2" buffer_open_help ;;
+                        --end-line) add_integer_argument end_line "$2" buffer_open_help ;;
+                        --start-text) add_string_argument start_text "$2" ;;
+                        --end-text) add_string_argument end_text "$2" ;;
+                        *) usage buffer_open_help ;;
+                    esac
+                    shift 2
+                done
+                arguments="{$argument_fields}"
+                ;;
+            *) usage buffer_help ;;
+        esac
+        ;;
+    windows)
+        case ${2-} in
+            '' ) [ "$#" -eq 1 ] || usage windows_help ;;
+            -h|--help) [ "$#" -eq 2 ] || usage windows_help; windows_help; exit 0 ;;
+            *) usage windows_help ;;
+        esac
+        method=call
+        operation=window.list
+        ;;
+    diagnostics)
+        case ${2-} in
+            -h|--help)
+                [ "$#" -eq 2 ] || usage diagnostics_help
+                diagnostics_help
+                exit 0
+                ;;
+        esac
+        method=call
+        operation=diagnostic.list
+        argument_fields=
+        shift
+        while [ "$#" -gt 0 ]; do
+            [ "$1" = '--uri' ] && [ "$#" -eq 2 ] || usage diagnostics_help
+            add_string_argument uri "$2"
+            shift 2
+        done
+        arguments="{$argument_fields}"
+        ;;
+    projects)
+        case ${2-} in
+            '' ) [ "$#" -eq 1 ] || usage projects_help ;;
+            -h|--help) [ "$#" -eq 2 ] || usage projects_help; projects_help; exit 0 ;;
+            *) usage projects_help ;;
+        esac
+        method=call
+        operation=project.list
+        ;;
+    eval)
+        case ${2-} in
+            '' ) usage eval_help ;;
+            -h|--help)
+                [ "$#" -eq 2 ] || usage eval_help
+                eval_help
+                exit 0
+                ;;
+            *)
+                [ "$#" -eq 2 ] || usage eval_help
+                code=$2
+                ;;
+        esac
+        if [ "$code" = '-' ]; then
+            code=$(command cat)
+        fi
+        method=call
+        operation=elisp.eval
+        argument_fields=
+        add_string_argument code "$code"
+        arguments="{$argument_fields}"
+        ;;
+    *) usage help ;;
+esac
+
+cwd=$PWD
+if command -v cygpath >/dev/null 2>&1; then
+    cwd=$(cygpath -w "$cwd")
+fi
+cwd_base64=$(printf '%s' "$cwd" | encode)
+case $method in
+    call)
+        request=$(printf '{"version":1,"method":"call","operation":"%s","arguments":%s,"cwd_base64":"%s"}' \
+            "$operation" "$arguments" "$cwd_base64")
+        ;;
+    *)
+        request=$(printf '{"version":1,"method":"%s","cwd_base64":"%s"}' \
+            "$method" "$cwd_base64")
+        ;;
+esac
+
+encoded=$(printf '%s' "$request" | encode)
+case $encoded in
+    *[!A-Za-z0-9+/=]*)
+        printf '%s\n' 'limen: failed to encode request' >&2
+        exit 5
+        ;;
+esac
+
+case $operation in
+    compile.*)
+        expression="(progn (require 'limen) (require 'limen-compile) (limen-server-dispatch \"$encoded\"))"
+        ;;
+    *)
+        expression="(progn (require 'limen) (limen-server-dispatch \"$encoded\"))"
+        ;;
+esac
+if ! response=$("$emacsclient" --eval "$expression"); then
+    printf '%s\n' 'limen: local Emacs server or interface unavailable' >&2
+    exit 4
+fi
+
+response=${response#\"}
+response=${response%\"}
+case $response in
+    [0-9]*:*) ;;
+    *)
+        printf '%s\n' 'limen: malformed response from Emacs' >&2
+        exit 5
+        ;;
+esac
+status=${response%%:*}
+payload=${response#*:}
+case $status in
+    *[!0-9]*|'')
+        printf '%s\n' 'limen: malformed response status' >&2
+        exit 5
+        ;;
+esac
+case $payload in
+    *[!A-Za-z0-9+/=]*)
+        printf '%s\n' 'limen: malformed response payload' >&2
+        exit 5
+        ;;
+esac
+
+if ! decoded=$(printf '%s' "$payload" | decode); then
+    printf '%s\n' 'limen: malformed response encoding' >&2
+    exit 5
+fi
+printf '%s\n' "$decoded"
+exit "$status"

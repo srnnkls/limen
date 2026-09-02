@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Emacs ${{ matrix.emacs-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        emacs-version: ['29.1', '30.1']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jcs090218/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs-version }}
+
+      - uses: emacs-eask/setup-eask@master
+        with:
+          version: snapshot
+
+      - name: Install dependencies
+        run: eask install-deps
+
+      - name: Analyze Eask
+        run: eask analyze --strict
+
+      - name: Compile
+        run: eask compile
+
+      - name: Compile tests
+        run: eask compile --strict "limen*-tests.el"
+
+      - name: Test
+        run: eask run script test
+
+      - name: Test Pi extension
+        run: eask run script test-pi-extension
+
+      - name: Checkdoc
+        run: eask lint checkdoc --strict
+
+      - name: Package lint
+        run: eask lint package --strict
+
+      - name: Check declarations
+        run: eask lint declare --strict
+
+      - name: Check indentation
+        run: eask lint indent --strict
+
+      - name: Check keywords
+        run: eask lint keywords --strict
+
+      - name: Check regular expressions
+        run: eask lint regexps --strict
+
+      - name: Check license
+        run: eask lint license --strict

@@ -1,0 +1,22 @@
+{
+  "metadata": {
+    "claude_code_version": "2.1.235",
+    "snapshot_commit": "32a8a904",
+    "snapshot_version": "0.3.0",
+    "captured_at": "2026-08-27T06:56:18+02:00"
+  },
+  "provenance": "client-originated",
+  "exchanges": [
+    { "id": "initialize", "provenance": "client-originated", "category": "observed", "transport": "websocket", "method": "initialize", "capabilities": { "roots": { "listChanged": true }, "elicitation": {} }, "payload": { "jsonrpc": "2.0", "id": 0, "method": "initialize", "params": { "protocolVersion": "2025-11-25", "capabilities": { "roots": { "listChanged": true }, "elicitation": {} }, "clientInfo": { "name": "claude-code", "title": "Claude Code", "version": "2.1.235", "description": "Anthropic's agentic coding tool", "websiteUrl": "https://claude.com/claude-code" } } } },
+    { "id": "ide_connected", "provenance": "client-originated", "category": "observed", "transport": "websocket", "method": "ide_connected", "payload": { "jsonrpc": "2.0", "method": "ide_connected", "params": { "pid": 40047 } } },
+    { "id": "tools/list", "provenance": "client-originated", "category": "observed", "transport": "websocket", "method": "tools/list", "payload": { "jsonrpc": "2.0", "id": 1, "method": "tools/list" } },
+    { "id": "prompts/list", "provenance": "client-originated", "category": "observed", "transport": "websocket", "method": "prompts/list", "payload": { "jsonrpc": "2.0", "id": 2, "method": "prompts/list" } },
+    { "id": "resources/list", "provenance": "client-originated", "category": "observed", "transport": "websocket", "method": "resources/list", "payload": { "jsonrpc": "2.0", "id": 3, "method": "resources/list" } },
+    { "id": "tools/call/openFile", "provenance": "client-originated", "category": "probed", "transport": "websocket", "method": "tools/call", "payload": { "jsonrpc": "2.0", "id": 10, "method": "tools/call", "params": { "name": "openFile", "arguments": { "filePath": "/tmp/t001-no-file" } } } },
+    { "id": "tools/call/getDiagnostics", "provenance": "client-originated", "category": "probed", "transport": "websocket", "method": "tools/call", "payload": { "jsonrpc": "2.0", "id": 11, "method": "tools/call", "params": { "name": "getDiagnostics", "arguments": { "uri": "file:///tmp/t001-no-file" } } } },
+    { "id": "tools/call/close_tab", "provenance": "client-originated", "category": "probed", "transport": "websocket", "method": "tools/call", "payload": { "jsonrpc": "2.0", "id": 12, "method": "tools/call", "params": { "name": "close_tab", "arguments": { "tab_name": "t001" } } } },
+    { "id": "tools/call/openDiff", "provenance": "client-originated", "category": "probed", "transport": "websocket", "method": "tools/call", "payload": { "jsonrpc": "2.0", "id": 13, "method": "tools/call", "params": { "name": "openDiff", "arguments": { "old_file_path": "/tmp/t001-old", "new_file_path": "/tmp/t001-new", "new_file_contents": "x", "tab_name": "t001" } } } },
+    { "id": "tools/call/closeAllDiffTabs", "provenance": "client-originated", "category": "probed", "transport": "websocket", "method": "tools/call", "payload": { "jsonrpc": "2.0", "id": 14, "method": "tools/call", "params": { "name": "closeAllDiffTabs", "arguments": {} } } },
+    { "id": "tools/call/executeCode", "provenance": "client-originated", "category": "probed", "transport": "websocket", "method": "tools/call", "payload": { "jsonrpc": "2.0", "id": 15, "method": "tools/call", "params": { "name": "executeCode", "arguments": { "code": "(+ 1 1)" } } } }
+  ]
+}

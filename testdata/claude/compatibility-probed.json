@@ -1,0 +1,45 @@
+{
+  "metadata": {
+    "claude_code_version": "2.1.235",
+    "snapshot_commit": "32a8a904",
+    "snapshot_version": "0.3.0",
+    "captured_at": "2026-08-27T06:56:18+02:00"
+  },
+  "provenance": "compatibility-probed",
+  "exchanges": [
+    {
+      "id": "discovery",
+      "provenance": "compatibility-probed",
+      "category": "probed",
+      "transport": "discovery",
+      "basis": "Claude Code 2.1.235 compatibility probe",
+      "payload": {
+        "path": "~/.claude/ide/<port>.lock",
+        "pid": 11220,
+        "workspaceFolders": ["<project-root>"],
+        "ideName": "Emacs",
+        "transport": "ws"
+      }
+    },
+    {
+      "id": "websocket-handshake",
+      "provenance": "compatibility-probed",
+      "category": "probed",
+      "transport": "websocket",
+      "basis": "Claude Code 2.1.235 compatibility probe",
+      "payload": {
+        "url": "ws://127.0.0.1:<port>",
+        "subprotocol": "mcp",
+        "launch_environment": {
+          "CLAUDE_CODE_SSE_PORT": "<port>",
+          "FORCE_CODE_TERMINAL": "true",
+          "TERM_PROGRAM": "emacs"
+        },
+        "capture_environment": {
+          "CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL": "1",
+          "CLAUDE_CODE_IDE_SKIP_VALID_CHECK": "1"
+        }
+      }
+    }
+  ]
+}
