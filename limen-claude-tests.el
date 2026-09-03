@@ -46,6 +46,7 @@
   `(let ((process-environment
           (cons "CLAUDE_CONFIG_DIR" process-environment))
          (limen-claude--states (make-hash-table :test #'eq))
+         (limen-claude--cleanup-retries (make-hash-table :test #'eq))
          (limen--sessions (make-hash-table :test #'eq))
          (limen-editor--selection-timers (make-hash-table :test #'eq))
          (limen-editor--selection-contexts (make-hash-table :test #'eq))
@@ -245,6 +246,76 @@
          (limen-close-session session))
        (delete-directory root t)))))
 
+(ert-deftest limen-claude-startup-retains-failed-rollback-for-retry ()
+  (limen-claude-tests--with-runtime
+   (let* ((root (make-temp-file "limen-claude-startup-retry" t))
+          (session (limen-claude-tests--session root "startup-retry"))
+          (listener (make-symbol "listener"))
+          (close-failing t)
+          initial-close-attempted retry-close-attempted released-listener
+          captured-state startup-condition retry-states retained before-retry)
+     (unwind-protect
+         (cl-letf (((symbol-function 'limen-claude--start-server)
+                    (lambda (state)
+                      (setq captured-state state)
+                      (setf (limen-claude-state-server state) listener)
+                      (signal
+                       'limen-claude-tests-port-failure
+                       '("port derivation failed" (:stage . pre-publication)))))
+                   ((symbol-function 'websocket-server-close)
+                    (lambda (server)
+                      (if close-failing
+                          (progn
+                            (setq initial-close-attempted t)
+                            (error "listener cleanup failure"))
+                        (setq retry-close-attempted t
+                              released-listener server)))))
+           (setq startup-condition
+                 (condition-case condition
+                     (progn
+                       (limen-claude-open
+                        session
+                        :instance-id "startup-retry"
+                        :instance-name "startup-retry")
+                       nil)
+                   (error condition))
+                 retry-states
+                 (limen-claude--registry-states
+                  limen-claude--cleanup-retries)
+                 retained (car retry-states)
+                 before-retry
+                 (list (gethash session limen-claude--states)
+                       (length retry-states)
+                       (eq retained captured-state)
+                       initial-close-attempted
+                       (eq (limen-claude-state-server captured-state)
+                           listener)))
+           (setq close-failing nil)
+           (when retained
+             (limen-claude-cleanup retained))
+           (should
+            (equal
+             (list startup-condition
+                   before-retry
+                   retry-close-attempted
+                   (eq released-listener listener)
+                   (limen-claude-state-server captured-state)
+                   (length
+                    (limen-claude--registry-states
+                     limen-claude--cleanup-retries)))
+             '((limen-claude-tests-port-failure
+                "port derivation failed" (:stage . pre-publication))
+               (nil 1 t t t)
+               t t nil 0))))
+       (setq close-failing nil)
+       (when captured-state
+         (condition-case nil
+             (limen-claude-cleanup captured-state)
+           (error nil)))
+       (unless (limen-session-closed-p session)
+         (limen-close-session session))
+       (delete-directory root t)))))
+
 (ert-deftest limen-claude-mcp-initialize-and-listing-contract ()
   (limen-claude-tests--with-runtime
    (let* ((state (make-limen-claude-state
@@ -296,18 +367,12 @@
                     (limen-claude-tests--request 90 method))))
                 '("getCurrentSelection" "getLatestSelection"
                   "getOpenEditors" "getWorkspaceFolders"
-                  "checkDocumentDirty" "saveDocument"))
-               (limen-claude--tool-result "diff.open" "accepted\n")
-               (limen-claude--tool-result "diff.open" "")
-               (limen-claude--tool-result "diff.open" "Diff rejected"))
+                  "checkDocumentDirty" "saveDocument")))
          '(nil
            ("openFile" "getDiagnostics" "close_tab" "openDiff"
             "closeAllDiffTabs")
-           (-32601 -32601 -32601 -32601 -32601 -32601)
-           ((content . [((type . "text") (text . "FILE_SAVED"))
-                        ((type . "text") (text . "accepted\n"))]))
-           ((content . [((type . "text") (text . "TAB_CLOSED"))]))
-           ((content . [((type . "text") (text . "DIFF_REJECTED"))]))))))
+           (-32601 -32601 -32601 -32601 -32601 -32601))))
+
      (dolist (entry '(("prompts/list" . prompts) ("resources/list" . resources)))
        (let* ((response (limen-claude-receive
                          state client
@@ -315,7 +380,30 @@
               (listed (limen-claude-tests--value
                        (cdr entry)
                        (limen-claude-tests--value 'result response))))
-         (should (equal listed [])))))))
+         (should (equal listed []))))))))
+
+(ert-deftest limen-claude-diff-result-preserves-accepted-text ()
+  (should
+   (equal
+    (list (limen-claude--tool-result "diff.open" "accepted\n")
+          (limen-claude--tool-result "diff.open" "")
+          (limen-claude--tool-result "diff.open" "Diff rejected"))
+    '(((content . [((type . "text") (text . "FILE_SAVED"))
+                   ((type . "text") (text . "accepted\n"))]))
+      ((content . [((type . "text") (text . "FILE_SAVED"))
+                   ((type . "text") (text . ""))]))
+      ((content . [((type . "text") (text . "FILE_SAVED"))
+                   ((type . "text") (text . "Diff rejected"))]))))))
+
+(ert-deftest limen-claude-diff-result-distinguishes-rejection-and-closure ()
+  (should
+   (equal
+    (list (limen-claude--tool-result
+           "diff.open" '((outcome . "rejected")))
+          (limen-claude--tool-result
+           "diff.open" '((outcome . "closed"))))
+    '(((content . [((type . "text") (text . "DIFF_REJECTED"))]))
+      ((content . [((type . "text") (text . "TAB_CLOSED"))]))))))
 
 (ert-deftest limen-claude-mcp-errors-are-json-rpc-specific ()
   (limen-claude-tests--with-runtime

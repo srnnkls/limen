@@ -1,45 +1,103 @@
 {
   "metadata": {
-    "claude_code_version": "2.1.235",
-    "snapshot_commit": "32a8a904",
-    "snapshot_version": "0.3.0",
-    "captured_at": "2026-08-27T06:56:18+02:00"
+    "claude_code_version": "2.1.251",
+    "capture_range": {
+      "start": "2026-09-02T21:03:41+02:00",
+      "end": "2026-09-02T21:30:16+02:00"
+    },
+    "protocol_version": "2025-11-25"
   },
   "provenance": "compatibility-probed",
   "exchanges": [
     {
       "id": "discovery",
       "provenance": "compatibility-probed",
-      "category": "probed",
+      "category": "observed",
       "transport": "discovery",
-      "basis": "Claude Code 2.1.235 compatibility probe",
+      "basis": "Claude Code 2.1.251 disposable-project probe",
       "payload": {
-        "path": "~/.claude/ide/<port>.lock",
-        "pid": 11220,
-        "workspaceFolders": ["<project-root>"],
-        "ideName": "Emacs",
-        "transport": "ws"
+        "path": "<discovery-directory>/<port>.lock",
+        "mode": "0600",
+        "fields": ["pid", "workspaceFolders", "ideName", "transport"],
+        "transport": "ws",
+        "workspaceFolders": ["<project-root>"]
       }
     },
     {
-      "id": "websocket-handshake",
+      "id": "websocket-handshake-with-token",
       "provenance": "compatibility-probed",
-      "category": "probed",
+      "category": "observed",
       "transport": "websocket",
-      "basis": "Claude Code 2.1.235 compatibility probe",
+      "basis": "Claude Code 2.1.251 redacted upgrade capture",
       "payload": {
-        "url": "ws://127.0.0.1:<port>",
+        "request": "GET / HTTP/1.1",
         "subprotocol": "mcp",
-        "launch_environment": {
-          "CLAUDE_CODE_SSE_PORT": "<port>",
-          "FORCE_CODE_TERMINAL": "true",
-          "TERM_PROGRAM": "emacs"
+        "user_agent": "claude-code/2.1.251 (cli)",
+        "auth_token_discovery_field": true,
+        "authorization_header": "X-Claude-Code-Ide-Authorization",
+        "authorization_value": "verbatim-token",
+        "authorization_scheme": null
+      }
+    },
+    {
+      "id": "websocket-handshake-without-token",
+      "provenance": "compatibility-probed",
+      "category": "observed",
+      "transport": "websocket",
+      "basis": "Claude Code 2.1.251 redacted tokenless capture",
+      "payload": {
+        "connected": true,
+        "authorization_header_present": false
+      }
+    },
+    {
+      "id": "selection-and-workspace",
+      "provenance": "compatibility-probed",
+      "category": "observed",
+      "transport": "websocket",
+      "basis": "Claude Code 2.1.251 synthetic selection probes",
+      "payload": {
+        "latest_selection_wins": true,
+        "opened_file_uses_selection_changed": true,
+        "workspace_source": "discovery.workspaceFolders",
+        "runtime_roots_request_observed": false
+      }
+    },
+    {
+      "id": "diff-results",
+      "provenance": "compatibility-probed",
+      "category": "observed",
+      "transport": "websocket",
+      "basis": "Claude Code 2.1.251 synthetic editable-diff probes",
+      "payload": {
+        "FILE_SAVED": {
+          "content_blocks": ["FILE_SAVED", "<accepted-contents>"],
+          "final_file": "accepted-contents"
         },
-        "capture_environment": {
-          "CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL": "1",
-          "CLAUDE_CODE_IDE_SKIP_VALID_CHECK": "1"
+        "TAB_CLOSED": {
+          "content_blocks": ["TAB_CLOSED"],
+          "final_file": "proposed-contents"
+        },
+        "DIFF_REJECTED": {
+          "content_blocks": ["DIFF_REJECTED"],
+          "final_file": "original-contents"
         }
       }
+    },
+    {
+      "id": "unobserved-rpcs",
+      "provenance": "compatibility-probed",
+      "category": "observed-absence",
+      "transport": "websocket",
+      "basis": "Claude Code 2.1.251 redacted live captures",
+      "methods": [
+        "getCurrentSelection",
+        "getLatestSelection",
+        "getOpenEditors",
+        "getWorkspaceFolders",
+        "checkDocumentDirty",
+        "saveDocument"
+      ]
     }
   ]
 }

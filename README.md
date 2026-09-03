@@ -1,24 +1,33 @@
 # Limen
 
-Limen is a provider-neutral Emacs 29.1+ interface for local agents. It exposes a registry of project-confined operations, session events, editor context and diffs, a loopback MCP transport, and a framed command-line client.
+Limen is a provider-neutral Emacs 29.1+ interface for local agents. It exposes project-confined operations, session events, live editor context and diffs, read-only compilation state, a loopback MCP transport, and a framed command-line client.
 
 ## Install
 
-Install `websocket` 1.12+ and `transient` 0.9.0+ from a configured package archive, then place this directory on `load-path`:
+Install `websocket` 1.12+ and `transient` 0.9.0+ from a configured package archive, then place this directory on `load-path`. A standalone MCP setup loads the core operations, editor support, compilation observer, and transport:
 
 ```elisp
 (require 'limen)
 (require 'limen-editor)
+(require 'limen-compile)
 (require 'limen-mcp)
+```
+
+For Herdr-managed provider sessions, also load the bridge and enable its mode:
+
+```elisp
+(require 'limen-herdr)
+(require 'limen-herdr-transient)
+(limen-herdr-mode 1)
 ```
 
 Limen installs no global keybinding.
 
 ## Command line
 
-Put `bin/limen` on `PATH`. Run `limen` for the command index and `limen help COMMAND` for command-specific arguments.
+Put `bin/limen` on `PATH`. Run `limen` for the canonical command index and `limen help COMMAND` for command-specific arguments.
 
-`projects` uses Projectile when available and falls back to `project.el`. `eval -` reads source from standard input; evaluation remains disabled unless explicitly enabled in Emacs.
+`projects` uses Projectile when available and falls back to `project.el`. `compile` observes existing Emacs compilation buffers without starting work. `skill` generates instructions from the live operation registry. `eval -` reads source from standard input; evaluation remains disabled unless explicitly enabled in Emacs.
 
 ## Lisp interface
 
@@ -30,7 +39,7 @@ Register coarse operations with `limen-register-operation`, open integrations wi
 
 Claude Code, Codex, and Pi can use Limen through their native transports. The optional `limen-herdr-mode` injects launch and lifecycle wiring into Herdr without making either package depend on the other at runtime. `M-x limen-herdr-transient` exposes status, context push, reconnect, adoption, and protocol diagnostics.
 
-See [docs/integrations.md](docs/integrations.md) for the canonical capability and lifecycle contract. Claude's fixed wire evidence is recorded in [docs/claude-integration-parity.md](docs/claude-integration-parity.md).
+See [docs/integrations.md](docs/integrations.md) for the canonical capability, disclosure, and lifecycle contract. Claude's fixed wire evidence is recorded in [docs/claude-integration-parity.md](docs/claude-integration-parity.md).
 
 ## License
 

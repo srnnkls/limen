@@ -41,9 +41,10 @@
 
 (defun limen-mcp--value (key object)
   "Return KEY's value from OBJECT with symbol or string keys."
-  (or (alist-get key object nil nil #'eq)
-      (alist-get (if (symbolp key) (symbol-name key) (intern key))
-                 object nil nil #'equal)))
+  (when (listp object)
+    (or (alist-get key object nil nil #'eq)
+        (alist-get (if (symbolp key) (symbol-name key) (intern key))
+                   object nil nil #'equal))))
 
 (defun limen-mcp--header (name headers)
   "Return case-insensitive header NAME from HEADERS."
@@ -120,9 +121,26 @@
         (limen-request-cancel
          (cdr entry) '(limen-operation-failed "Request cancelled"))))))
 
+(defun limen-mcp--outbound-json-value (value)
+  "Return VALUE with JSON null sentinels ready for serialization."
+  (cond
+   ((eq value :json-null) nil)
+   ((vectorp value)
+    (vconcat (mapcar #'limen-mcp--outbound-json-value value)))
+   ((and (consp value) (seq-every-p #'consp value))
+    (mapcar
+     (lambda (entry)
+       (cons (car entry)
+             (limen-mcp--outbound-json-value (cdr entry))))
+     value))
+   ((consp value)
+    (mapcar #'limen-mcp--outbound-json-value value))
+   (t value)))
+
 (defun limen-mcp--json (object)
   "Serialize OBJECT as compact JSON."
-  (json-serialize object :false-object :json-false :null-object nil))
+  (json-serialize (limen-mcp--outbound-json-value object)
+                  :false-object :json-false :null-object nil))
 
 (defun limen-mcp--response (status &optional body headers stream)
   "Return an HTTP response with STATUS, BODY, HEADERS, and STREAM flag."
@@ -139,11 +157,14 @@
 
 (defun limen-mcp--rpc-result (id result)
   "Return a JSON-RPC success for ID and RESULT."
-  `((jsonrpc . "2.0") (id . ,id) (result . ,result)))
+  `((jsonrpc . "2.0")
+    (id . ,(if (eq id :json-null) nil id))
+    (result . ,result)))
 
 (defun limen-mcp--rpc-error (id code message)
   "Return a JSON-RPC error for ID with CODE and MESSAGE."
-  `((jsonrpc . "2.0") (id . ,id)
+  `((jsonrpc . "2.0")
+    (id . ,(if (eq id :json-null) nil id))
     (error . ((code . ,code) (message . ,message)))))
 
 (defun limen-mcp--json-response (status message &optional headers stream)
@@ -192,7 +213,8 @@
                   value
                 (limen-mcp--json value))))
     `((content . [((type . "text") (text . ,text))])
-      ,@(unless (stringp value) `((structuredContent . ,value)))
+      ,@(when (and (consp value) (seq-every-p #'consp value))
+          `((structuredContent . ,value)))
       (isError . ,(if error-p t :json-false)))))
 
 (defun limen-mcp--initialize-params-p (params)
@@ -201,7 +223,9 @@
        (stringp (limen-mcp--value 'protocolVersion params))
        (let ((capabilities (or (assoc 'capabilities params)
                                (assoc "capabilities" params))))
-         (and capabilities (listp (cdr capabilities))))
+         (and capabilities
+              (or (listp (cdr capabilities))
+                  (eq (cdr capabilities) :json-null))))
        (let ((client (limen-mcp--value 'clientInfo params)))
          (and (listp client)
               (stringp (limen-mcp--value 'name client))
@@ -247,7 +271,8 @@
   "Call ROUTE tool from PARAMS for ID, using DELIVER and CLIENT state."
   (let* ((session (limen-mcp-route-session route))
          (name (limen-mcp--value 'name params))
-         (arguments (or (limen-mcp--value 'arguments params) nil))
+         (raw-arguments (limen-mcp--value 'arguments params))
+         (arguments (if (eq raw-arguments :json-null) nil raw-arguments))
          (operation (and (stringp name)
                          (limen-mcp--operation-for-tool session name))))
     (if (not operation)
@@ -343,14 +368,22 @@
      ((equal method "notifications/initialized")
       (limen-mcp--response 202 ""))
      ((equal method "notifications/cancelled")
-      (when-let* ((request-id (limen-mcp--value 'requestId params))
-                  (pending (limen-mcp--pending-call route request-id)))
-        (let ((pending-client (car pending))
-              (request (cdadr pending)))
-          (limen-mcp--forget-client-request pending-client request)
-          (limen-request-cancel
-           request '(limen-operation-failed "Request cancelled"))))
+      (when (listp params)
+        (when-let* ((request-id (limen-mcp--value 'requestId params))
+                    (pending (limen-mcp--pending-call route request-id)))
+          (let ((pending-client (car pending))
+                (request (cdadr pending)))
+            (limen-mcp--forget-client-request pending-client request)
+            (limen-request-cancel
+             request '(limen-operation-failed "Request cancelled")))))
       (limen-mcp--response 202 ""))
+     ((and (member method '("tools/call"
+                            "resources/read"
+                            "resources/subscribe"
+                            "resources/unsubscribe"))
+           (not (listp params)))
+      (limen-mcp--json-response
+       200 (limen-mcp--rpc-error id -32602 "Invalid params")))
      ((equal method "tools/list")
       (limen-mcp--json-response
        200 (limen-mcp--rpc-result
@@ -396,7 +429,7 @@
   "Parse BODY as one JSON-RPC object."
   (condition-case nil
       (json-parse-string body :object-type 'alist :array-type 'array
-                         :null-object nil :false-object :json-false)
+                         :null-object :json-null :false-object :json-false)
     (error nil)))
 
 (defun limen-mcp--authorized-p (route headers)
@@ -454,11 +487,15 @@ DELIVER receives deferred JSON-RPC messages.  CLIENT carries stream state."
      (t
       (let* ((body (limen-mcp--value 'body request))
              (message (and (stringp body) (limen-mcp--parse-message body)))
-             (rpc-method (and message (limen-mcp--value 'method message))))
+             (rpc-method (and (listp message)
+                              (limen-mcp--value 'method message))))
         (cond
          ((not message)
           (limen-mcp--json-response
            400 (limen-mcp--rpc-error nil -32700 "Parse error")))
+         ((not (listp message))
+          (limen-mcp--json-response
+           400 (limen-mcp--rpc-error nil -32600 "Invalid Request")))
          ((and (not (equal rpc-method "initialize"))
                (not (limen-mcp--valid-session-header-p route headers)))
           (limen-mcp--json-response
@@ -580,6 +617,22 @@ Return a cons of request and remaining bytes, or nil when incomplete."
                        (substring input body-start body-end) 'utf-8-unix)))
            (substring input body-end))))))))
 
+(defun limen-mcp--transfer-client-route (client route)
+  "Transfer CLIENT ownership and state to ROUTE."
+  (let ((previous (limen-mcp-client-route client)))
+    (if (eq previous route)
+        t
+      (when previous
+        (setf (limen-mcp-route-clients previous)
+              (delq client (limen-mcp-route-clients previous))))
+      (limen-mcp--cancel-client-requests client)
+      (setf (limen-mcp-client-stream-p client) nil
+            (limen-mcp-client-route client) nil)
+      (when (limen-mcp--client-live-p client)
+        (setf (limen-mcp-client-route client) route)
+        (cl-pushnew client (limen-mcp-route-clients route) :test #'eq)
+        t))))
+
 (defun limen-mcp--client (process route)
   "Return PROCESS client for ROUTE, creating it when needed."
   (or (process-get process 'limen-mcp-client)
@@ -598,28 +651,29 @@ Return a cons of request and remaining bytes, or nil when incomplete."
 (defun limen-mcp--serve-request (process request)
   "Serve decoded HTTP REQUEST through PROCESS."
   (let* ((route (limen-mcp--route-from-request request))
-         (client (limen-mcp--client process route))
-         (deliver
-          (lambda (message)
-            (when (process-live-p process)
-              (setf (limen-mcp-client-stream-p client) t)
-              (limen-mcp--send-client-message client message)
-              (delete-process process))))
-         (response (limen-mcp-handle-request request deliver client)))
-    (when (and route (not (eq route (limen-mcp-client-route client))))
-      (setf (limen-mcp-client-route client) route)
-      (push client (limen-mcp-route-clients route)))
-    (when (alist-get 'stream response)
-      (setf (limen-mcp-client-stream-p client) t))
-    (when-let* ((pending (alist-get 'request response)))
-      (push (cons (limen-mcp--value
-                   'id (limen-mcp--parse-message
-                        (limen-mcp--value 'body request)))
-                  pending)
-            (limen-mcp-client-pending client)))
-    (process-send-string process (limen-mcp--http-response response))
-    (when-let* ((closing (alist-get 'close_route response)))
-      (limen-mcp-unregister-session closing))))
+         (client (limen-mcp--client process route)))
+    (if (and route
+             (not (eq route (limen-mcp-client-route client)))
+             (not (limen-mcp--transfer-client-route client route)))
+        nil
+      (let* ((deliver
+              (lambda (message)
+                (when (process-live-p process)
+                  (setf (limen-mcp-client-stream-p client) t)
+                  (limen-mcp--send-client-message client message)
+                  (delete-process process))))
+             (response (limen-mcp-handle-request request deliver client)))
+        (when (alist-get 'stream response)
+          (setf (limen-mcp-client-stream-p client) t))
+        (when-let* ((pending (alist-get 'request response)))
+          (push (cons (limen-mcp--value
+                       'id (limen-mcp--parse-message
+                            (limen-mcp--value 'body request)))
+                      pending)
+                (limen-mcp-client-pending client)))
+        (process-send-string process (limen-mcp--http-response response))
+        (when-let* ((closing (alist-get 'close_route response)))
+          (limen-mcp-unregister-session closing))))))
 
 (defun limen-mcp--filter (process chunk)
   "Accumulate CHUNK and serve complete requests from PROCESS."

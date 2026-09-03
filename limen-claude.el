@@ -33,6 +33,8 @@
   raw-clients)
 
 (defvar limen-claude--states (make-hash-table :test #'eq))
+(defvar limen-claude--cleanup-retries (make-hash-table :test #'eq)
+  "Incomplete startup states awaiting an explicit cleanup retry.")
 (defvar limen-claude--defer-close nil)
 (defvar limen-claude--close-after-send nil)
 (defvar limen-claude--incoming-observers nil)
@@ -331,10 +333,10 @@ STATES selects a registry; nil uses the global registry."
    ((equal operation "diff.open")
     `((content
        . ,(cond
-           ((equal result "")
-            [((type . "text") (text . "TAB_CLOSED"))])
-           ((equal result "Diff rejected")
+           ((equal result '((outcome . "rejected")))
             [((type . "text") (text . "DIFF_REJECTED"))])
+           ((equal result '((outcome . "closed")))
+            [((type . "text") (text . "TAB_CLOSED"))])
            (t
             `[((type . "text") (text . "FILE_SAVED"))
               ((type . "text")
@@ -554,7 +556,8 @@ DISCOVERY-DIRECTORY, TOOL-LIST, and TOOL-CALL override transport defaults."
           (error
            (condition-case nil
                (limen-claude-cleanup state)
-             (error nil))
+             (error
+              (puthash state state limen-claude--cleanup-retries)))
            (signal (car err) (cdr err)))))))
 
 (defun limen-claude-client-connect (state &optional raw)
@@ -790,6 +793,7 @@ DISCOVERY-DIRECTORY, TOOL-LIST, and TOOL-CALL override transport defaults."
         (clrhash (limen-claude-state-raw-clients state))
         (remhash (or (limen-claude-state-session state) state)
                  limen-claude--states)
+        (remhash state limen-claude--cleanup-retries)
         (setf (limen-claude-state-state state) 'stopped))))
   state)
 

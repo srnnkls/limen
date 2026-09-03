@@ -219,20 +219,27 @@ is the condition sent to the pending request; t denotes cancellation."
                (= (with-current-buffer old (buffer-chars-modified-tick))
                   expected-tick))))))
 
+(defun limen-editor--close-diff (diff &optional killed)
+  "Close DIFF without accepting its proposal.
+KILLED records an already killed proposed buffer."
+  (limen-editor--finish-diff diff '((outcome . "closed")) killed))
+
 (defun limen-editor--complete-diff (diff accept &optional killed)
   "Complete DIFF as ACCEPT, with optional KILLED proposed buffer."
-  (if (and accept (not (limen-editor--diff-base-current-p diff)))
-      (limen-editor--finish-diff
-       diff nil killed '(limen-conflict "Buffer changed since diff opened"))
+  (cond
+   ((not accept)
+    (limen-editor--finish-diff diff '((outcome . "rejected")) killed))
+   ((not (buffer-live-p (limen-editor--diff-proposed diff)))
+    (limen-editor--close-diff diff killed))
+   ((not (limen-editor--diff-base-current-p diff))
+    (limen-editor--finish-diff
+     diff nil killed '(limen-conflict "Buffer changed since diff opened")))
+   (t
     (limen-editor--finish-diff
      diff
-     (if accept
-         (if (buffer-live-p (limen-editor--diff-proposed diff))
-             (with-current-buffer (limen-editor--diff-proposed diff)
-               (buffer-string))
-           "")
-       "Diff rejected")
-     killed)))
+     (with-current-buffer (limen-editor--diff-proposed diff)
+       (buffer-string))
+     killed))))
 
 (defun limen-editor--find-diff (owner name)
   "Return OWNER's deferred diff named NAME."
@@ -326,8 +333,8 @@ is the condition sent to the pending request; t denotes cancellation."
                         :old-owned-p (null old-existing) :root root
                         :expected-tick expected-tick)))
             (with-current-buffer proposed (insert contents))
-            (let ((completion (lambda () (limen-editor--complete-diff diff t t)))
-                  (control-completion (lambda () (limen-editor--cancel-diff diff))))
+            (let ((completion (lambda () (limen-editor--close-diff diff t)))
+                  (control-completion (lambda () (limen-editor--close-diff diff))))
               (setf (limen-editor--diff-completion diff) completion
                     (limen-editor--diff-control-completion diff) control-completion)
               (with-current-buffer proposed
@@ -355,7 +362,7 @@ is the condition sent to the pending request; t denotes cancellation."
     (when (and (limen-editor--diff-p diff)
                (or (null name)
                    (equal name (limen-editor--diff-name diff))))
-      (limen-editor--cancel-diff diff)))
+      (limen-editor--close-diff diff)))
   "Closed diffs")
 
 (defun limen-editor--diff-open-operation (arguments request)

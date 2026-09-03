@@ -243,6 +243,8 @@
                         (buffer-modified-p))))
           (let* ((context (limen-make-request :interface 'cli
                                               :project-root root))
+                 (limen-virtual-buffer-read-allow-condition
+                  (concat "\\`" (regexp-quote (buffer-name inside)) "\\'"))
                  (record
                   (limen-compile-tests--without-process-actions
                     (limen-call
@@ -285,6 +287,119 @@
                  (limen-call "compile.read" `((name . ,name)) context)
                  :type 'limen-operation-failed)))))
       (dolist (buffer (list inside outside wrong-mode))
+        (when (buffer-live-p buffer) (kill-buffer buffer)))
+      (delete-directory root t)
+      (delete-directory outside-root t))))
+
+(ert-deftest limen-compile-protects-virtual-output-and-omits-internal-buffers ()
+  (limen-compile-tests--require-feature)
+  (let ((root (file-truename
+               (make-temp-file "limen-compile-protected-root" t)))
+        visible internal observations)
+    (unwind-protect
+        (progn
+          (setq visible
+                (limen-compile-tests--make-buffer
+                 "*limen compile protected*" root)
+                internal
+                (limen-compile-tests--make-buffer
+                 " limen compile internal" root))
+          (with-current-buffer visible
+            (let ((inhibit-read-only t))
+              (insert "compile output")))
+          (let* ((context (limen-make-request :interface 'cli
+                                              :project-root root))
+                 (name (buffer-name visible))
+                 (limen-virtual-buffer-read-allow-condition nil))
+            (setq observations
+                  (list
+                   (and (limen-compile-tests--record
+                         (buffer-name internal) context)
+                        t)
+                   (condition-case nil
+                       (progn
+                         (limen-call "compile.read" `((name . ,name)) context)
+                         'readable)
+                     (limen-operation-failed 'denied))
+                   (let ((limen-virtual-buffer-read-allow-condition
+                          "\\`different compilation buffer\\'"))
+                     (condition-case nil
+                         (progn
+                           (limen-call
+                            "compile.read" `((name . ,name)) context)
+                           'readable)
+                       (limen-operation-failed 'denied)))
+                   (let ((limen-virtual-buffer-read-allow-condition
+                          (concat "\\`" (regexp-quote name) "\\'")))
+                     (alist-get
+                      'text
+                      (limen-call "compile.read" `((name . ,name)) context)))
+                   (let ((limen-virtual-buffer-read-allow-condition t)
+                         (internal-name (buffer-name internal)))
+                     (condition-case nil
+                         (progn
+                           (limen-call
+                            "compile.read"
+                            `((name . ,internal-name)) context)
+                           'readable)
+                       (limen-operation-failed 'denied)))))
+            (should (equal observations
+                           '(nil denied denied "compile output" denied)))))
+      (dolist (buffer (list visible internal))
+        (when (buffer-live-p buffer) (kill-buffer buffer)))
+      (delete-directory root t))))
+
+(ert-deftest limen-compile-confines-file-backed-buffers-before-virtual-read-allowance ()
+  (limen-compile-tests--require-feature)
+  (let ((root (file-truename
+               (make-temp-file "limen-compile-confined-root" t)))
+        (outside-root (file-truename
+                       (make-temp-file "limen-compile-unconfined-root" t)))
+        outside-file outside virtual observations)
+    (unwind-protect
+        (progn
+          (setq outside-file
+                (make-temp-file
+                 (expand-file-name "outside-output-" outside-root)
+                 nil ".log" "outside file output")
+                outside (find-file-noselect outside-file)
+                virtual
+                (limen-compile-tests--make-buffer
+                 "*limen compile confined virtual*" root))
+          (with-current-buffer outside
+            (limen-compile-tests-mode)
+            (setq default-directory (file-name-as-directory root)))
+          (with-current-buffer virtual
+            (let ((inhibit-read-only t))
+              (insert "project virtual output")))
+          (let* ((context (limen-make-request :interface 'cli
+                                              :project-root root))
+                 (outside-name (buffer-name outside))
+                 (virtual-name (buffer-name virtual))
+                 (limen-virtual-buffer-read-allow-condition
+                  (concat "\\`\\(?:" (regexp-quote outside-name)
+                          "\\|" (regexp-quote virtual-name) "\\)\\'"))
+                 (records
+                  (append (limen-call "compile.list" nil context) nil))
+                 (record-names
+                  (mapcar (lambda (record) (alist-get 'name record)) records)))
+            (setq observations
+                  (list
+                   (and (member outside-name record-names) 'listed)
+                   (condition-case nil
+                       (alist-get
+                        'text
+                        (limen-call
+                         "compile.read" `((name . ,outside-name)) context))
+                     (limen-operation-failed 'denied))
+                   (and (member virtual-name record-names) 'listed)
+                   (alist-get
+                    'text
+                    (limen-call
+                     "compile.read" `((name . ,virtual-name)) context))))
+            (should (equal observations
+                           '(nil denied listed "project virtual output")))))
+      (dolist (buffer (list outside virtual))
         (when (buffer-live-p buffer) (kill-buffer buffer)))
       (delete-directory root t)
       (delete-directory outside-root t))))

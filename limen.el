@@ -103,7 +103,7 @@ project-confined non-internal virtual buffers."
 
 (cl-defstruct (limen--owned-buffer
                (:constructor limen--make-owned-buffer))
-  buffer window owned-p)
+  buffer window owned-p paths)
 
 (defvar limen--operations (make-hash-table :test #'equal)
   "Registered operations keyed by dotted name.")
@@ -179,20 +179,29 @@ REPLAY makes the latest payload replayable to new subscribers."
     (&key id provider project-root owner capabilities)
   "Open an integration session for PROVIDER and PROJECT-ROOT.
 ID and OWNER default to opaque values.  CAPABILITIES describes the transport."
-  (let ((session
-         (limen--make-session
-          :id (or id (format "limen-%x" (sxhash (list (float-time) (random)))))
-          :provider provider
-          :project-root (and project-root
-                             (directory-file-name (file-truename project-root)))
-          :owner (or owner (make-symbol "limen-owner"))
-          :generation 1
-          :capabilities capabilities
-          :latest (make-hash-table :test #'equal)
-          :sequence 0)))
-    (puthash session t limen--sessions)
-    (run-hook-with-args 'limen-session-open-hook session)
-    session))
+  (let ((canonical-root
+         (when project-root
+           (when (file-remote-p project-root)
+             (signal 'limen-operation-failed
+                     '("Remote project roots are unavailable")))
+           (let ((expanded-root (expand-file-name project-root)))
+             (when (file-remote-p expanded-root)
+               (signal 'limen-operation-failed
+                       '("Remote project roots are unavailable")))
+             (directory-file-name (file-truename expanded-root))))))
+    (let ((session
+           (limen--make-session
+            :id (or id (format "limen-%x" (sxhash (list (float-time) (random)))))
+            :provider provider
+            :project-root canonical-root
+            :owner (or owner (make-symbol "limen-owner"))
+            :generation 1
+            :capabilities capabilities
+            :latest (make-hash-table :test #'equal)
+            :sequence 0)))
+      (puthash session t limen--sessions)
+      (run-hook-with-args 'limen-session-open-hook session)
+      session)))
 
 (defun limen--request-current-p (request)
   "Return non-nil when REQUEST still belongs to its live generation."
@@ -499,15 +508,19 @@ PATH identifies a containing object when validation is recursive."
 
 (defun limen--project-file-confined-p (file root)
   "Return non-nil when local FILE is beneath ROOT, ignoring access policy."
-  (when (and (stringp file) (stringp root) (not (file-remote-p file)))
-    (let ((file (expand-file-name file root))
-          (root (file-name-as-directory (expand-file-name root))))
-      (and (not (file-symlink-p file))
+  (when (and (stringp file) (stringp root)
+             (not (file-remote-p file))
+             (not (file-remote-p root)))
+    (let* ((root (expand-file-name root))
+           (file (expand-file-name file root)))
+      (and (not (file-remote-p root))
+           (not (file-remote-p file))
+           (not (file-symlink-p file))
            (file-in-directory-p
             (if (file-exists-p file)
                 (file-truename file)
               (file-truename (file-name-directory file)))
-            (file-truename root))))))
+            (file-truename (file-name-as-directory root)))))))
 
 (defun limen--canonical-project-relative-path (file root)
   "Return FILE's canonical path relative to ROOT."
@@ -540,6 +553,19 @@ PATH identifies a containing object when validation is recursive."
   (when (and (stringp value) (limen--project-file-confined-p value root))
     (expand-file-name value root)))
 
+(defun limen--lexically-confined-project-path (value root)
+  "Return local VALUE lexically below ROOT without resolving links."
+  (when (and (stringp value) (stringp root)
+             (not (file-remote-p value))
+             (not (file-remote-p root)))
+    (let* ((root (file-name-as-directory (expand-file-name root)))
+           (file (expand-file-name value root)))
+      (when (and (not (file-remote-p root))
+                 (not (file-remote-p file))
+                 (string-prefix-p root file
+                                  (file-name-case-insensitive-p root)))
+        file))))
+
 (defun limen-project-path (value root)
   "Return allowed local VALUE below ROOT as an absolute path, or nil."
   (when (and (stringp value) (limen-project-file-p value root))
@@ -550,13 +576,25 @@ PATH identifies a containing object when validation is recursive."
   (when (and (stringp file) (not (file-remote-p file)))
     (condition-case nil
         (let ((file (expand-file-name file)))
-          (if (file-exists-p file)
-              (file-truename file)
-            (when-let* ((directory (file-name-directory file))
-                        ((file-directory-p directory)))
-              (expand-file-name (file-name-nondirectory file)
-                                (file-truename directory)))))
+          (when (not (file-remote-p file))
+            (if (file-exists-p file)
+                (file-truename file)
+              (when-let* ((directory (file-name-directory file))
+                          ((file-directory-p directory)))
+                (expand-file-name (file-name-nondirectory file)
+                                  (file-truename directory))))))
       (file-error nil))))
+
+(defun limen--file-equivalent-p (left right)
+  "Return non-nil when local paths LEFT and RIGHT identify the same file."
+  (when (and (stringp left) (stringp right)
+             (not (file-remote-p left))
+             (not (file-remote-p right)))
+    (condition-case nil
+        (if (and (file-exists-p left) (file-exists-p right))
+            (file-equal-p left right)
+          (equal left right))
+      (file-error (equal left right)))))
 
 (defun limen-buffer-file-identity (buffer)
   "Return BUFFER's stable canonical visited-file identity, or nil."
@@ -575,7 +613,7 @@ PATH identifies a containing object when validation is recursive."
 
 (defun limen--same-file-identity-p (file identity)
   "Return non-nil when FILE currently has canonical IDENTITY."
-  (equal (limen--canonical-file-identity file) identity))
+  (limen--file-equivalent-p (limen--canonical-file-identity file) identity))
 
 (defun limen--buffer-file-path (buffer)
   "Return BUFFER's visited path bound to its stable file identity."
@@ -589,7 +627,8 @@ PATH identifies a containing object when validation is recursive."
   "Return the live buffer whose stable identity matches FILE."
   (when-let* ((identity (limen--canonical-file-identity file)))
     (seq-find (lambda (buffer)
-                (equal (limen-buffer-file-identity buffer) identity))
+                (limen--file-equivalent-p
+                 (limen-buffer-file-identity buffer) identity))
               (buffer-list))))
 
 (defun limen--require-project-root (context)
@@ -815,20 +854,96 @@ START-TEXT and END-TEXT refine the selection bounds."
       (and create
            (puthash owner (make-hash-table :test #'equal) limen--buffers))))
 
-(defun limen--remember-buffer (owner file record)
-  "Remember that OWNER opened FILE through RECORD."
-  (when owner
-    (puthash file record (limen--owner-buffers owner t))))
+(defun limen--file-identity-entry (files file)
+  "Return FILE's equivalent identity entry from FILES."
+  (when (and (hash-table-p files) (stringp file)
+             (not (file-remote-p file)))
+    (or (when-let* ((record (gethash file files)))
+          (cons file record))
+        (let (entry)
+          (maphash
+           (lambda (identity record)
+             (when (and (null entry)
+                        (limen--file-equivalent-p identity file))
+               (setq entry (cons identity record))))
+           files)
+          entry))))
 
-(defun limen--other-buffer-owner-p (owner file)
-  "Return non-nil when an owner other than OWNER tracks FILE."
-  (let (found)
+(defun limen--remember-buffer (owner identity record)
+  "Remember that OWNER opened canonical IDENTITY through RECORD."
+  (when owner
+    (let* ((files (limen--owner-buffers owner t))
+           (entry (limen--file-identity-entry files identity))
+           same-buffer-identities)
+      (maphash
+       (lambda (stored-identity stored-record)
+         (when (eq (limen--owned-buffer-buffer record)
+                   (limen--owned-buffer-buffer stored-record))
+           (push stored-identity same-buffer-identities)
+           (setf (limen--owned-buffer-owned-p record)
+                 (or (limen--owned-buffer-owned-p record)
+                     (limen--owned-buffer-owned-p stored-record))
+                 (limen--owned-buffer-paths record)
+                 (delete-dups
+                  (append
+                   (copy-sequence (limen--owned-buffer-paths record))
+                   (copy-sequence
+                    (limen--owned-buffer-paths stored-record)))))))
+       files)
+      (dolist (stored-identity same-buffer-identities)
+        (remhash stored-identity files))
+      (puthash (if entry (car entry) identity) record files))))
+
+(defun limen--other-buffer-owner-records (owner buffer)
+  "Return records for owners other than OWNER that track live BUFFER."
+  (when (buffer-live-p buffer)
+    (let (records)
+      (maphash
+       (lambda (other files)
+         (unless (eq other owner)
+           (maphash
+            (lambda (_identity record)
+              (when (eq buffer (limen--owned-buffer-buffer record))
+                (push record records)))
+            files)))
+       limen--buffers)
+      records)))
+
+(defun limen--recorded-buffer-entry (files file)
+  "Return FILE's equivalent recorded ownership entry from FILES."
+  (let (exact case-equivalent equivalent)
     (maphash
-     (lambda (other files)
-       (when (and (not (eq other owner)) (gethash file files))
-         (setq found t)))
-     limen--buffers)
-    found))
+     (lambda (identity record)
+       (let ((paths (limen--owned-buffer-paths record)))
+         (cond
+          ((and (null exact) (member file paths))
+           (setq exact (cons identity record)))
+          ((and (null case-equivalent)
+                (seq-some
+                 (lambda (path)
+                   (and (string-equal-ignore-case path file)
+                        (file-name-case-insensitive-p path)))
+                 paths))
+           (setq case-equivalent (cons identity record)))
+          ((and (null equivalent)
+                (seq-some
+                 (lambda (path)
+                   (limen--file-equivalent-p path file))
+                 paths))
+           (setq equivalent (cons identity record))))))
+     files)
+    (or exact
+        case-equivalent
+        (when-let* ((record (gethash file files)))
+          (cons file record))
+        equivalent)))
+
+(defun limen--owned-buffer-entry (files file)
+  "Return FILE's ownership entry from FILES."
+  (or (limen--recorded-buffer-entry files file)
+      (limen--file-identity-entry files file)
+      (when-let* ((identity (limen--canonical-file-identity file)))
+        (limen--file-identity-entry files identity))))
 
 (defun limen--buffer-open (arguments context)
   "Open the file in ARGUMENTS using CONTEXT."
@@ -847,30 +962,82 @@ START-TEXT and END-TEXT refine the selection bounds."
     (let* ((existing (limen--buffer-for-file identity))
            (stale-alias (and (null existing) (get-file-buffer identity)))
            (owned (and owner (limen--owner-buffers owner)))
-           (previous (and owned (gethash file owned)))
+           (previous-entry
+            (and owned (limen--file-identity-entry owned identity)))
+           (previous (cdr previous-entry))
+           (previous-buffer
+            (and previous (limen--owned-buffer-buffer previous)))
+           (previous-identity
+            (and (buffer-live-p previous-buffer)
+                 (limen-buffer-file-identity previous-buffer)))
+           (relocation
+            (when (and previous
+                       (limen--owned-buffer-owned-p previous)
+                       (buffer-live-p previous-buffer)
+                       (not (limen--file-equivalent-p
+                             previous-identity identity)))
+              (unless previous-identity
+                (signal 'limen-operation-failed
+                        '("Tracked buffer has no stable file identity")))
+              (let* ((collision-entry
+                      (limen--file-identity-entry owned previous-identity))
+                     (collision (cdr collision-entry)))
+                (when (and collision
+                           (not (eq previous-buffer
+                                    (limen--owned-buffer-buffer collision))))
+                  (signal 'limen-operation-failed
+                          '("Tracked buffer identity is already owned")))
+                (cons previous-identity collision))))
            (buffer
             (progn
               (when stale-alias
                 (signal 'limen-operation-failed
                         '("A visited file alias has a different identity")))
-              (let ((resolved (or existing (find-file-noselect identity))))
-                (unless (equal (limen-project-buffer-file resolved root)
-                               identity)
+              (let* ((buffers-before-open (buffer-list))
+                     (resolved (or existing (find-file-noselect identity)))
+                     (created (not (memq resolved buffers-before-open))))
+                (unless (limen--file-equivalent-p
+                         (limen-project-buffer-file resolved root) identity)
+                  (when (and created (buffer-live-p resolved))
+                    (with-current-buffer resolved
+                      (let ((kill-buffer-query-functions nil))
+                        (kill-buffer resolved))))
                   (signal 'limen-operation-failed
                           '("Resolved buffer is outside the project or denied")))
                 resolved)))
+           (same-buffer-p
+            (and previous
+                 (buffer-live-p buffer)
+                 (eq buffer (limen--owned-buffer-buffer previous))))
            (window (or (get-buffer-window buffer 0)
                        (or (limen-request-window context) (selected-window))))
            (record (limen--make-owned-buffer
                     :buffer buffer :window window
                     :owned-p (or (null existing)
-				 (and previous
-                                      (limen--owned-buffer-owned-p previous))))))
+                                 (and same-buffer-p
+                                      (limen--owned-buffer-owned-p previous)))
+                    :paths (cl-adjoin
+                            file
+                            (and same-buffer-p
+                                 (copy-sequence
+                                  (limen--owned-buffer-paths previous)))
+                            :test #'equal))))
       (when (window-live-p window) (set-window-buffer window buffer))
       (limen--select-position buffer line column end-line start-text end-text)
       (when (window-live-p window)
         (set-window-point window (with-current-buffer buffer (point))))
-      (limen--remember-buffer owner file record)
+      (when relocation
+        (let ((relocated-identity (car relocation))
+              (collision (cdr relocation)))
+          (if collision
+              (setf (limen--owned-buffer-owned-p collision) t
+                    (limen--owned-buffer-paths collision)
+                    (delete-dups
+                     (append
+                      (copy-sequence (limen--owned-buffer-paths collision))
+                      (copy-sequence (limen--owned-buffer-paths previous)))))
+            (limen--remember-buffer owner relocated-identity previous))))
+      (limen--remember-buffer owner identity record)
       (with-current-buffer buffer
         (append
          (limen--buffer-record buffer)
@@ -881,34 +1048,35 @@ START-TEXT and END-TEXT refine the selection bounds."
 (defun limen-release-buffer (owner file)
   "Release OWNER's tracked FILE buffer and return non-nil on completion."
   (when-let* ((files (limen--owner-buffers owner))
-              (record (gethash file files)))
-    (let ((buffer (limen--owned-buffer-buffer record))
-          (window (limen--owned-buffer-window record)))
+              (entry (limen--owned-buffer-entry files file)))
+    (let* ((identity (car entry))
+           (record (cdr entry))
+           (buffer (limen--owned-buffer-buffer record))
+           (window (limen--owned-buffer-window record))
+           (other-records
+            (limen--other-buffer-owner-records owner buffer)))
       (when (and (window-live-p window) (eq (window-buffer window) buffer))
         (set-window-buffer window (other-buffer buffer t)))
-      (when (and (limen--owned-buffer-owned-p record)
-                 (limen--other-buffer-owner-p owner file))
-        (maphash
-         (lambda (other other-files)
-           (when-let* (((not (eq other owner)))
-                       (other-record (gethash file other-files)))
-             (setf (limen--owned-buffer-owned-p other-record) t)))
-         limen--buffers))
+      (when (limen--owned-buffer-owned-p record)
+        (dolist (other-record other-records)
+          (setf (limen--owned-buffer-owned-p other-record) t)))
       (when (and (limen--owned-buffer-owned-p record)
                  (buffer-live-p buffer)
                  (not (buffer-modified-p buffer))
-                 (not (limen--other-buffer-owner-p owner file))
+                 (null other-records)
                  (null (get-buffer-window-list buffer nil 0)))
-        (kill-buffer buffer))
+        (with-current-buffer buffer
+          (let ((kill-buffer-query-functions nil))
+            (kill-buffer buffer))))
       (when (or (not (limen--owned-buffer-owned-p record))
                 (not (buffer-live-p buffer))
                 (buffer-modified-p buffer)
-                (limen--other-buffer-owner-p owner file)
+                other-records
                 (get-buffer-window-list buffer nil 0))
-        (remhash file files))
+        (remhash identity files))
       (when (= (hash-table-count files) 0)
         (remhash owner limen--buffers))
-      (not (gethash file files)))))
+      (not (gethash identity files)))))
 
 (defun limen-release-owner (owner)
   "Release buffers tracked for opaque OWNER without killing modified buffers."
@@ -922,21 +1090,49 @@ START-TEXT and END-TEXT refine the selection bounds."
 (defun limen--buffer-release (arguments context)
   "Release the buffer in ARGUMENTS using CONTEXT."
   (let* ((root (limen-request-project-root context))
-         (file (and root
-                    (limen--confined-project-path
-                     (alist-get 'path arguments) root))))
+         (owner (limen-request-owner context))
+         (requested (alist-get 'path arguments))
+         (lexical (and root
+                       (limen--lexically-confined-project-path
+                        requested root)))
+         (files (limen--owner-buffers owner))
+         (recorded (and lexical files
+                        (limen--recorded-buffer-entry files lexical)))
+         (file (or (and recorded lexical)
+                   (and root (limen-project-path requested root)))))
     (unless file
       (signal 'limen-operation-failed '("Path is outside the project")))
-    (limen-release-buffer (limen-request-owner context) file)
+    (limen-release-buffer owner file)
     "Released buffer"))
 
 (defun limen--buffer-save-destination-p (buffer identity root)
   "Return non-nil when BUFFER will save to authorized IDENTITY below ROOT."
   (and (buffer-live-p buffer)
        (with-current-buffer buffer
-         (and (equal (limen-buffer-file-identity buffer) identity)
-              (limen--same-file-identity-p buffer-file-name identity)
-              (limen-project-file-p identity root)))))
+         (let ((destinations
+                (delq nil (list buffer-file-name buffer-file-truename))))
+           (and (seq-every-p
+                 (lambda (destination)
+                   (and (stringp destination)
+                        (not (file-remote-p destination))
+                        (let ((expanded (expand-file-name destination)))
+                          (and (not (file-remote-p expanded))
+                               (limen-project-file-p expanded root)))))
+                 destinations)
+                (limen--file-equivalent-p
+                 (limen-buffer-file-identity buffer) identity)
+                (seq-every-p
+                 (lambda (destination)
+                   (limen--same-file-identity-p destination identity))
+                 destinations)
+                (limen-project-file-p identity root))))))
+
+(defun limen--file-identifier-current-p (file identifier)
+  "Return non-nil when FILE still has IDENTIFIER."
+  (condition-case nil
+      (equal identifier
+             (file-attribute-file-identifier (file-attributes file)))
+    (file-error nil)))
 
 (defun limen--buffer-save (arguments context)
   "Save the visited file in ARGUMENTS using CONTEXT."
@@ -955,19 +1151,41 @@ START-TEXT and END-TEXT refine the selection bounds."
       (signal 'limen-operation-failed
               '("Save destination is outside the project or denied")))
     (limen--assert-buffer-tick buffer expected-tick)
-    (unless (verify-visited-file-modtime buffer)
-      (signal 'limen-conflict '("File changed on disk")))
     (with-current-buffer buffer
       (let* ((original-name buffer-file-name)
              (original-truename buffer-file-truename)
+             (visited-identifier buffer-file-number)
+             (backed-up-before buffer-backed-up)
+             (backup-file
+              (and make-backup-files
+                   (not backup-inhibited)
+                   (not backed-up-before)
+                   (car (find-backup-file-name original-name))))
              (write-region-function (symbol-function 'write-region))
-             (guard
+             (destination-guard
               (lambda ()
                 (unless (limen--buffer-save-destination-p
                          buffer identity root)
                   (signal 'limen-operation-failed
-                          '("Save destination changed during save"))))))
-        (add-hook 'before-save-hook guard 100 t)
+                          '("Save destination changed during save")))))
+             (write-guard
+              (lambda ()
+                (funcall destination-guard)
+                (unless
+                    (or (limen--file-identifier-current-p
+                         identity visited-identifier)
+                        (and (not backed-up-before)
+                             buffer-backed-up
+                             backup-file
+                             (not (file-exists-p identity))
+                             (limen--file-identifier-current-p
+                              backup-file visited-identifier)))
+                  (signal 'limen-conflict '("File changed on disk"))))))
+        (unless (and (verify-visited-file-modtime buffer)
+                     (limen--file-identifier-current-p
+                      identity visited-identifier))
+          (signal 'limen-conflict '("File changed on disk")))
+        (add-hook 'before-save-hook write-guard 100 t)
         (unwind-protect
             (progn
               (cl-letf (((symbol-function 'ask-user-about-supersession-threat)
@@ -978,15 +1196,18 @@ START-TEXT and END-TEXT refine the selection bounds."
                            (when (and (eq (current-buffer) buffer)
                                       (or (equal filename buffer-file-name)
                                           (nth 1 options)))
-                             (funcall guard))
+                             (funcall write-guard))
                            (apply write-region-function
                                   start end filename options))))
                 (save-buffer))
-              (funcall guard)
+              (funcall destination-guard)
+              (unless (limen--file-identifier-current-p
+                       identity buffer-file-number)
+                (signal 'limen-conflict '("File changed on disk")))
               (limen--buffer-record buffer))
           (when (buffer-live-p buffer)
             (with-current-buffer buffer
-              (remove-hook 'before-save-hook guard t)
+              (remove-hook 'before-save-hook write-guard t)
               (unless (limen--buffer-save-destination-p
                        buffer identity root)
                 (setq buffer-file-name original-name

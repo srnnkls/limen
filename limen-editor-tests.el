@@ -17,7 +17,7 @@
 (defun limen-editor-tests--fire (timer)
   (apply (car timer) (cadr timer)))
 
-(ert-deftest limen-editor-diffs-resolve-through-the-operation-registry ()
+(ert-deftest limen-editor-diffs-resolve-canonical-outcomes-through-registry ()
   (limen-editor-tests--with-state
     (let* ((root (make-temp-file "limen-diff" t))
            (old-file (expand-file-name "old.el" root))
@@ -47,6 +47,31 @@
                   (insert "edited proposal"))
                 (should (limen-editor-accept-diff owner "accept"))
                 (should-not (buffer-live-p proposed)))
+              (should (equal (car resolved) "edited proposal"))
+              (should
+               (eq (limen-call
+                    "diff.open"
+                    `((old_path . ,old-file) (new_path . ,new-file)
+                      (contents . "") (name . "empty"))
+                    (limen-make-request
+                     :interface 'adapter :owner owner :project-root root
+                     :resolve (lambda (result) (push result resolved))
+                     :reject (lambda (result) (push result cancelled))))
+                   limen-deferred))
+              (should (limen-editor-accept-diff owner "empty"))
+              (should (equal (car resolved) ""))
+              (should
+               (eq (limen-call
+                    "diff.open"
+                    `((old_path . ,old-file) (new_path . ,new-file)
+                      (contents . "Diff rejected") (name . "collision"))
+                    (limen-make-request
+                     :interface 'adapter :owner owner :project-root root
+                     :resolve (lambda (result) (push result resolved))
+                     :reject (lambda (result) (push result cancelled))))
+                   limen-deferred))
+              (should (limen-editor-accept-diff owner "collision"))
+              (should (equal (car resolved) "Diff rejected"))
               (should
                (eq (limen-call
                     "diff.open"
@@ -57,10 +82,28 @@
                      :resolve (lambda (result) (push result resolved))
                      :reject (lambda (result) (push result cancelled))))
                    limen-deferred))
-              (should (limen-editor-reject-diff owner "reject")))
+              (should (limen-editor-reject-diff owner "reject"))
+              (should (equal (car resolved) '((outcome . "rejected"))))
+              (should
+               (eq (limen-call
+                    "diff.open"
+                    `((old_path . ,old-file) (new_path . ,new-file)
+                      (contents . "must not be accepted") (name . "closed"))
+                    (limen-make-request
+                     :interface 'adapter :owner owner :project-root root
+                     :resolve (lambda (result) (push result resolved))
+                     :reject (lambda (result) (push result cancelled))))
+                   limen-deferred))
+              (let* ((diff (car (limen-editor--owner-diffs owner)))
+                     (proposed (limen-editor--diff-proposed diff)))
+                (should (kill-buffer proposed))
+                (should-not (buffer-live-p proposed))))
             (should-not cancelled)
+            (should (equal (car resolved) '((outcome . "closed"))))
             (should (equal (nreverse resolved)
-                           '("edited proposal" "Diff rejected")))
+                           '("edited proposal" "" "Diff rejected"
+                             ((outcome . "rejected"))
+                             ((outcome . "closed")))))
             (should-not (limen-editor--owner-diffs owner)))
         (limen-editor-cancel owner)
         (when-let* ((buffer (get-file-buffer old-file))) (kill-buffer buffer))

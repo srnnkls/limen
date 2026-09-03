@@ -74,7 +74,7 @@
        root
        (with-current-buffer buffer
          (and (derived-mode-p 'compilation-mode)
-              (limen-project-file-p default-directory root)))))
+              (limen--buffer-kind buffer root)))))
 
 (defun limen-compile--count (variable)
   "Return the numeric buffer-local counter stored in VARIABLE, or zero."
@@ -151,7 +151,9 @@
   (let* ((name (alist-get 'name arguments))
          (buffer (get-buffer name))
          (root (limen-request-project-root context)))
-    (unless (and buffer (limen-compile--eligible-p buffer root))
+    (unless (and buffer
+                 (limen-compile--eligible-p buffer root)
+                 (limen--buffer-readable-p buffer root))
       (signal 'limen-operation-failed
               '("Compilation buffer is unavailable for this project")))
     (with-current-buffer buffer

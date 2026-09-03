@@ -492,16 +492,41 @@ case ${1-} in
                 operation=buffer.open
                 argument_fields=
                 add_string_argument path "$3"
+                line_seen=
+                column_seen=
+                end_line_seen=
+                start_text_seen=
+                end_text_seen=
                 shift 3
                 while [ "$#" -gt 0 ]; do
                     option=$1
                     [ "$#" -ge 2 ] || usage buffer_open_help
                     case $option in
-                        --line) add_integer_argument line "$2" buffer_open_help ;;
-                        --column) add_integer_argument column "$2" buffer_open_help ;;
-                        --end-line) add_integer_argument end_line "$2" buffer_open_help ;;
-                        --start-text) add_string_argument start_text "$2" ;;
-                        --end-text) add_string_argument end_text "$2" ;;
+                        --line)
+                            [ -z "$line_seen" ] || usage buffer_open_help
+                            line_seen=true
+                            add_integer_argument line "$2" buffer_open_help
+                            ;;
+                        --column)
+                            [ -z "$column_seen" ] || usage buffer_open_help
+                            column_seen=true
+                            add_integer_argument column "$2" buffer_open_help
+                            ;;
+                        --end-line)
+                            [ -z "$end_line_seen" ] || usage buffer_open_help
+                            end_line_seen=true
+                            add_integer_argument end_line "$2" buffer_open_help
+                            ;;
+                        --start-text)
+                            [ -z "$start_text_seen" ] || usage buffer_open_help
+                            start_text_seen=true
+                            add_string_argument start_text "$2"
+                            ;;
+                        --end-text)
+                            [ -z "$end_text_seen" ] || usage buffer_open_help
+                            end_text_seen=true
+                            add_string_argument end_text "$2"
+                            ;;
                         *) usage buffer_open_help ;;
                     esac
                     shift 2
