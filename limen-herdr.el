@@ -204,9 +204,19 @@ MCP exposes the standard Limen route.  LAUNCHED-P records process ownership."
       ,@(when-let* ((transport (and state (limen-herdr-state-transport state))))
           (limen-claude-status transport)))))
 
-(defun limen-herdr--context-item-text (item)
-  "Return one model-visible context ITEM."
-  (let ((path (alist-get 'path item))
+(defun limen-herdr--context-path (path root)
+  "Return PATH relative to ROOT, the agent's working directory.
+Paths outside ROOT stay absolute."
+  (let ((relative (and path root
+                       (file-relative-name (file-truename path)
+                                           (file-truename root)))))
+    (if (and relative (not (string-prefix-p ".." relative)))
+        relative
+      path)))
+
+(defun limen-herdr--context-item-text (item &optional root)
+  "Return one model-visible context ITEM with paths relative to ROOT."
+  (let ((path (limen-herdr--context-path (alist-get 'path item) root))
         (buffer (alist-get 'buffer item))
         (mode (alist-get 'major_mode item))
         (line (alist-get 'line item))
@@ -220,13 +230,16 @@ MCP exposes the standard Limen route.  LAUNCHED-P records process ownership."
                 (concat "\n\n" text)
               ""))))
 
-(defun limen-herdr--context-text (context)
-  "Return CONTEXT as a model-visible terminal message."
+(defun limen-herdr--context-text (context &optional root)
+  "Return CONTEXT as a model-visible message with paths relative to ROOT."
   (let ((items (alist-get 'items context)))
     (if (and (vectorp items) (> (length items) 0))
         (concat "Emacs context:\n\n"
-                (mapconcat #'limen-herdr--context-item-text items "\n\n"))
-      (concat "Emacs context: " (limen-herdr--context-item-text context)))))
+                (mapconcat (lambda (item)
+                             (limen-herdr--context-item-text item root))
+                           items "\n\n"))
+      (concat "Emacs context: "
+              (limen-herdr--context-item-text context root)))))
 
 (defun limen-herdr--dired-context (root)
   "Return an atomic explicit context snapshot for Dired files below ROOT."
@@ -297,15 +310,21 @@ project-confined buffers report their name, mode, and text at point."
               (limen-herdr--virtual-context)
             (limen-herdr--current-context session)))))))
 
-(defun limen-herdr--live-hint (context)
-  "Return the CLI hint that follows CONTEXT in a message."
-  (let ((path (alist-get 'path context)))
-    (format "Live Emacs state: `limen context` (focus, windows, buffers, recent \
-trail); `limen buffer read %s` reads this buffer; `limen --help` lists the rest."
-            (if path
-                (shell-quote-argument path)
-              (concat "--name " (shell-quote-argument
-                                 (alist-get 'buffer context)))))))
+(defconst limen-herdr--barrier "\n\n---\n"
+  "Separator between a message, its context, and the live-state footer.")
+
+(defun limen-herdr--live-hint (context &optional root)
+  "Return the CLI footer for CONTEXT with paths relative to ROOT."
+  (let ((path (limen-herdr--context-path (alist-get 'path context) root)))
+    (concat
+     "Live Emacs state:\n"
+     "- `limen context` — focus, windows, buffers, recent trail\n"
+     (format "- `limen buffer read %s` — this buffer\n"
+             (if path
+                 (shell-quote-argument path)
+               (concat "--name " (shell-quote-argument
+                                  (alist-get 'buffer context)))))
+     "- `limen --help` — every command")))
 
 (defun limen-herdr-send-context (entry)
   "Return rich context for the integrated Herdr agent ENTRY, or nil."
@@ -317,10 +336,11 @@ trail); `limen buffer read %s` reads this buffer; `limen --help` lists the rest.
                   (state (limen-herdr-state agent-session))
                   (session (limen-herdr-state-session state))
                   ((not (limen-session-closed-p session))))
-        (let ((context (limen-herdr--send-context-snapshot session)))
-          (concat (limen-herdr--context-text context)
-                  "\n\n"
-                  (limen-herdr--live-hint context))))
+        (let ((context (limen-herdr--send-context-snapshot session))
+              (root (limen-session-project-root session)))
+          (concat (string-trim-right (limen-herdr--context-text context root))
+                  limen-herdr--barrier
+                  (limen-herdr--live-hint context root))))
     (user-error nil)))
 
 ;;;###autoload
@@ -337,7 +357,8 @@ trail); `limen buffer read %s` reads this buffer; `limen --help` lists the rest.
           (herdr-agent-prompt
            (cons (herdr-agent-session-server agent-session)
                  (herdr-agent-session-terminal agent-session))
-           (limen-herdr--context-text context))
+           (limen-herdr--context-text
+            context (limen-session-project-root session)))
         (limen-session-publish session "context.push" context))
       t)))
 

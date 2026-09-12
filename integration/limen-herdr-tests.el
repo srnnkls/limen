@@ -7,9 +7,10 @@
 (require 'limen-herdr-claude)
 
 (defun limen-herdr-tests--hint (selector)
-  (format "Live Emacs state: `limen context` (focus, windows, buffers, recent \
-trail); `limen buffer read %s` reads this buffer; `limen --help` lists the rest."
-          selector))
+  (format "\n\n---\nLive Emacs state:
+- `limen context` — focus, windows, buffers, recent trail
+- `limen buffer read %s` — this buffer
+- `limen --help` — every command" selector))
 
 (defun limen-herdr-tests--session (kind root)
   (herdr-agent--make-session
@@ -154,8 +155,8 @@ trail); `limen buffer read %s` reads this buffer; `limen --help` lists the rest.
                   (limen-herdr-send-context
                    '((server_key . "/tmp/herdr.sock")
                      (terminal_id . "term-claude")))
-                  (concat (format "Emacs context: %s:1:0\n\nalpha\nbeta" file)
-                          "\n\n" (limen-herdr-tests--hint file))))
+                  (concat "Emacs context: context.el:1:0\n\nalpha\nbeta"
+                          (limen-herdr-tests--hint "context.el"))))
                 (deactivate-mark)
                 (goto-char (point-min))
                 (forward-line 2)
@@ -164,8 +165,8 @@ trail); `limen buffer read %s` reads this buffer; `limen --help` lists the rest.
                   (limen-herdr-send-context
                    '((server_key . "/tmp/herdr.sock")
                      (terminal_id . "term-claude")))
-                  (concat (format "Emacs context: %s:3:0\n\ngamma" file)
-                          "\n\n" (limen-herdr-tests--hint file))))))
+                  (concat "Emacs context: context.el:3:0\n\ngamma"
+                          (limen-herdr-tests--hint "context.el"))))))
           (should (equal resolved '("/tmp/herdr.sock" . "term-claude")))
           (limen-herdr--set-state agent-session nil)
           (should-not
@@ -205,7 +206,7 @@ trail); `limen buffer read %s` reads this buffer; `limen --help` lists the rest.
               (should
                (equal (limen-herdr-send-context entry)
                       (concat "Emacs context: *limen virtual* (fundamental-mode):2:0"
-                              "\n\nsecond line\n\n"
+                              "\n\nsecond line"
                               (limen-herdr-tests--hint
                                (concat "--name "
                                        (shell-quote-argument "*limen virtual*"))))))
@@ -226,7 +227,7 @@ trail); `limen buffer read %s` reads this buffer; `limen --help` lists the rest.
                   'claude)
             (with-current-buffer inside
               (should (string-suffix-p
-                       "`limen --help` lists the rest."
+                       "- `limen --help` — every command"
                        (limen-herdr-send-context entry))))))
       (dolist (buffer (list inside away internal))
         (when (buffer-live-p buffer) (kill-buffer buffer)))
