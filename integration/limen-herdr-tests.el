@@ -6,6 +6,11 @@
 (require 'limen-herdr)
 (require 'limen-herdr-claude)
 
+(defun limen-herdr-tests--hint (selector)
+  (format "Live Emacs state: `limen context` (focus, windows, buffers, recent \
+trail); `limen buffer read %s` reads this buffer; `limen --help` lists the rest."
+          selector))
+
 (defun limen-herdr-tests--session (kind root)
   (herdr-agent--make-session
    :kind kind :name "review" :server "/tmp/herdr.sock"
@@ -149,7 +154,8 @@
                   (limen-herdr-send-context
                    '((server_key . "/tmp/herdr.sock")
                      (terminal_id . "term-claude")))
-                  (format "Emacs context: %s:1:0\n\nalpha\nbeta" file)))
+                  (concat (format "Emacs context: %s:1:0\n\nalpha\nbeta" file)
+                          "\n\n" (limen-herdr-tests--hint file))))
                 (deactivate-mark)
                 (goto-char (point-min))
                 (forward-line 2)
@@ -158,7 +164,8 @@
                   (limen-herdr-send-context
                    '((server_key . "/tmp/herdr.sock")
                      (terminal_id . "term-claude")))
-                  (format "Emacs context: %s:3:0\n\ngamma" file)))))
+                  (concat (format "Emacs context: %s:3:0\n\ngamma" file)
+                          "\n\n" (limen-herdr-tests--hint file))))))
           (should (equal resolved '("/tmp/herdr.sock" . "term-claude")))
           (limen-herdr--set-state agent-session nil)
           (should-not
@@ -170,6 +177,63 @@
       (unless (limen-session-closed-p integration)
         (limen-close-session integration))
       (delete-directory root t))))
+
+(ert-deftest limen-herdr-send-context-describes-virtual-buffers-and-hints-the-cli ()
+  (let* ((root (file-truename (make-temp-file "limen-herdr-virtual" t)))
+         (outside (file-truename (make-temp-file "limen-herdr-outside" t)))
+         (entry '((server_key . "/tmp/herdr.sock") (terminal_id . "term-codex")))
+         (agent-session (limen-herdr-tests--session "codex" root))
+         (integration (limen-open-session :provider 'codex :project-root root))
+         (inside (generate-new-buffer "*limen virtual*"))
+         (away (generate-new-buffer "*limen away*"))
+         (internal (generate-new-buffer " limen internal")))
+    (unwind-protect
+        (progn
+          (limen-herdr--set-state
+           agent-session
+           (make-limen-herdr-state :provider 'codex :session integration))
+          (dolist (pair (list (cons inside root) (cons away outside)
+                              (cons internal root)))
+            (with-current-buffer (car pair)
+              (setq default-directory (file-name-as-directory (cdr pair)))
+              (insert "first line\nsecond line\n")))
+          (cl-letf (((symbol-function 'herdr-agent-resolve-session)
+                     (lambda (_target) agent-session)))
+            (with-current-buffer inside
+              (goto-char (point-min))
+              (forward-line 1)
+              (should
+               (equal (limen-herdr-send-context entry)
+                      (concat "Emacs context: *limen virtual* (fundamental-mode):2:0"
+                              "\n\nsecond line\n\n"
+                              (limen-herdr-tests--hint
+                               (concat "--name "
+                                       (shell-quote-argument "*limen virtual*"))))))
+              (let ((transient-mark-mode t))
+                (goto-char (point-min))
+                (set-mark (point))
+                (forward-line 1)
+                (end-of-line)
+                (setq mark-active t)
+                (should (string-prefix-p
+                         "Emacs context: *limen virtual* (fundamental-mode):1:0\n\nfirst line\nsecond line"
+                         (limen-herdr-send-context entry)))))
+            (with-current-buffer away
+              (should-not (limen-herdr-send-context entry)))
+            (with-current-buffer internal
+              (should-not (limen-herdr-send-context entry)))
+            (setf (limen-herdr-state-provider (limen-herdr-state agent-session))
+                  'claude)
+            (with-current-buffer inside
+              (should (string-suffix-p
+                       "`limen --help` lists the rest."
+                       (limen-herdr-send-context entry))))))
+      (dolist (buffer (list inside away internal))
+        (when (buffer-live-p buffer) (kill-buffer buffer)))
+      (unless (limen-session-closed-p integration)
+        (limen-close-session integration))
+      (delete-directory root t)
+      (delete-directory outside t))))
 
 (ert-deftest limen-herdr-claude-auto-adoption-observes-herdr-events ()
   (let ((agent '((agent . "claude") (pane_id . "pane-1")

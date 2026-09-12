@@ -44,7 +44,7 @@ Register coarse operations with `limen-register-operation`, open integrations wi
 
 ## Provider integrations
 
-Claude Code, Codex, and Pi can use Limen through their native transports. The optional `limen-herdr-mode` injects launch and lifecycle wiring into Herdr without making either package depend on the other at runtime. `M-x limen-herdr-transient` exposes status, context push, reconnect, adoption, and protocol diagnostics.
+Claude Code, Codex, and Pi can use Limen through their native transports. The optional `limen-herdr-mode` injects launch and lifecycle wiring into Herdr without making either package depend on the other at runtime. `M-x limen-herdr-transient` exposes status, context push, reconnect, adoption, and protocol diagnostics. Herdr's message and send commands receive Limen's snapshot for any project-confined buffer, virtual ones included, followed by a hint that `limen context` and `limen buffer read` return the live state on demand.
 
 See [docs/integrations.md](docs/integrations.md) for the canonical capability, disclosure, and lifecycle contract. Claude's fixed wire evidence is recorded in [docs/claude-integration-parity.md](docs/claude-integration-parity.md).
 

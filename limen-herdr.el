@@ -207,10 +207,12 @@ MCP exposes the standard Limen route.  LAUNCHED-P records process ownership."
 (defun limen-herdr--context-item-text (item)
   "Return one model-visible context ITEM."
   (let ((path (alist-get 'path item))
+        (buffer (alist-get 'buffer item))
+        (mode (alist-get 'major_mode item))
         (line (alist-get 'line item))
         (column (alist-get 'column item))
         (text (alist-get 'text item)))
-    (concat path
+    (concat (or path (format "%s (%s)" buffer mode))
             (if (and (integerp line) (integerp column))
                 (format ":%d:%d" line column)
               "")
@@ -262,16 +264,48 @@ MCP exposes the standard Limen route.  LAUNCHED-P records process ownership."
           (user-error "Current file has no matching Limen integration"))
         (limen-editor-context-snapshot)))))
 
+(defun limen-herdr--virtual-context ()
+  "Return explicit context for the current project virtual buffer."
+  (let ((selection (limen--selection-record
+                    (or (limen--selection-bounds) (cons (point) (point))))))
+    `((buffer . ,(buffer-name))
+      (major_mode . ,(symbol-name major-mode))
+      (line . ,(alist-get 'line selection))
+      (column . ,(alist-get 'column selection))
+      (end_line . ,(alist-get 'end_line selection))
+      (end_column . ,(alist-get 'end_column selection))
+      (text . ,(alist-get 'text selection)))))
+
 (defun limen-herdr--send-context-snapshot (session)
-  "Return point context for SESSION with a current-line fallback."
-  (if (or (derived-mode-p 'dired-mode) (use-region-p))
-      (limen-herdr--current-context session)
-    (save-mark-and-excursion
-      (let ((transient-mark-mode t))
-        (set-mark (line-beginning-position))
-        (goto-char (line-end-position))
-        (setq mark-active t)
-        (limen-herdr--current-context session)))))
+  "Return point context for SESSION with a current-line fallback.
+Project file buffers and Dired report as explicit context; other
+project-confined buffers report their name, mode, and text at point."
+  (let ((virtual (and (not (derived-mode-p 'dired-mode))
+                      (eq (limen--buffer-kind (current-buffer)
+                                              (limen-session-project-root session))
+                          'virtual))))
+    (if (or (derived-mode-p 'dired-mode) (use-region-p))
+        (if virtual
+            (limen-herdr--virtual-context)
+          (limen-herdr--current-context session))
+      (save-mark-and-excursion
+        (let ((transient-mark-mode t))
+          (set-mark (line-beginning-position))
+          (goto-char (line-end-position))
+          (setq mark-active t)
+          (if virtual
+              (limen-herdr--virtual-context)
+            (limen-herdr--current-context session)))))))
+
+(defun limen-herdr--live-hint (context)
+  "Return the CLI hint that follows CONTEXT in a message."
+  (let ((path (alist-get 'path context)))
+    (format "Live Emacs state: `limen context` (focus, windows, buffers, recent \
+trail); `limen buffer read %s` reads this buffer; `limen --help` lists the rest."
+            (if path
+                (shell-quote-argument path)
+              (concat "--name " (shell-quote-argument
+                                 (alist-get 'buffer context)))))))
 
 (defun limen-herdr-send-context (entry)
   "Return rich context for the integrated Herdr agent ENTRY, or nil."
@@ -283,8 +317,10 @@ MCP exposes the standard Limen route.  LAUNCHED-P records process ownership."
                   (state (limen-herdr-state agent-session))
                   (session (limen-herdr-state-session state))
                   ((not (limen-session-closed-p session))))
-        (limen-herdr--context-text
-         (limen-herdr--send-context-snapshot session)))
+        (let ((context (limen-herdr--send-context-snapshot session)))
+          (concat (limen-herdr--context-text context)
+                  "\n\n"
+                  (limen-herdr--live-hint context))))
     (user-error nil)))
 
 ;;;###autoload
