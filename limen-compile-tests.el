@@ -91,6 +91,24 @@
     (dolist (name '("compile.run" "test.run"))
       (should-not (gethash name limen--operations)))))
 
+(ert-deftest limen-compile-contributes-a-compilations-context-section ()
+  (limen-compile-tests--require-feature)
+  (let* ((root (file-truename (make-temp-file "limen-compile-context" t)))
+         (context (limen-make-request :interface 'cli :project-root root
+                                      :frame (selected-frame)
+                                      :window (selected-window)))
+         (buffer (limen-compile-tests--make-buffer "*limen compile context*" root)))
+    (unwind-protect
+        (save-window-excursion
+          (let ((section (alist-get 'compilations
+                                    (limen-call "context.get" nil context))))
+            (should (equal section (limen-call "compile.list" nil context)))
+            (should (seq-find (lambda (record)
+                                (equal (alist-get 'name record) (buffer-name buffer)))
+                              section))))
+      (kill-buffer buffer)
+      (delete-directory root t))))
+
 (ert-deftest limen-compile-list-confines-records-and-distinguishes-statuses ()
   (limen-compile-tests--require-feature)
   (let ((root (file-truename (make-temp-file "limen-compile-root" t)))

@@ -11,7 +11,9 @@ Expose Emacs functionality to local agents.
 Usage: limen <COMMAND>
 
 Commands:
-  attention    Read the selected Emacs attention state
+  context      Read the current Emacs context in one call
+  focus        Read the selected Emacs focus state
+  trail        List recently visited Emacs buffers
   buffer       Work with Emacs buffers
   compile      Inspect Emacs compilation buffers
   windows      List Emacs windows
@@ -37,11 +39,37 @@ Options:
 EOF
 }
 
-attention_help() {
+context_help() {
     cat <<'EOF'
-Read the selected Emacs attention state.
+Read the current Emacs context in one call.
 
-Usage: limen attention
+Usage: limen context [OPTIONS]
+
+Options:
+      --section <NAME>  Include only this section; repeatable
+  -h, --help            Print help
+EOF
+}
+
+trail_help() {
+    cat <<'EOF'
+List recently visited Emacs buffers with settled point traces.
+
+Requires limen-trail-mode in Emacs.
+
+Usage: limen trail [OPTIONS]
+
+Options:
+      --limit <N>  Return at most N entries
+  -h, --help       Print help
+EOF
+}
+
+focus_help() {
+    cat <<'EOF'
+Read the selected Emacs focus state.
+
+Usage: limen focus
 
 Options:
   -h, --help  Print help
@@ -230,7 +258,9 @@ show_help() {
         0) help ;;
         1)
             case $1 in
-                attention) attention_help ;;
+                context) context_help ;;
+                focus) focus_help ;;
+                trail) trail_help ;;
                 buffer) buffer_help ;;
                 compile) compile_help ;;
                 windows) windows_help ;;
@@ -322,14 +352,61 @@ case ${1-} in
         esac
         method=skill
         ;;
-    attention)
+    focus)
         case ${2-} in
-            '') [ "$#" -eq 1 ] || usage attention_help ;;
-            -h|--help) [ "$#" -eq 2 ] || usage attention_help; attention_help; exit 0 ;;
-            *) usage attention_help ;;
+            '') [ "$#" -eq 1 ] || usage focus_help ;;
+            -h|--help) [ "$#" -eq 2 ] || usage focus_help; focus_help; exit 0 ;;
+            *) usage focus_help ;;
         esac
         method=call
-        operation=attention.get
+        operation=focus.get
+        ;;
+    context)
+        case ${2-} in -h|--help) [ "$#" -eq 2 ] || usage context_help; context_help; exit 0 ;; esac
+        method=call
+        operation=context.get
+        sections=
+        shift
+        while [ "$#" -gt 0 ]; do
+            case $1 in
+                --section)
+                    [ "$#" -ge 2 ] || usage context_help
+                    case $2 in
+                        ''|*[!abcdefghijklmnopqrstuvwxyz_-]*) usage context_help ;;
+                    esac
+                    if [ -n "$sections" ]; then
+                        sections="$sections,\"$2\""
+                    else
+                        sections="\"$2\""
+                    fi
+                    shift 2
+                    ;;
+                *) usage context_help ;;
+            esac
+        done
+        if [ -n "$sections" ]; then
+            arguments="{\"sections\":[$sections]}"
+        fi
+        ;;
+    trail)
+        case ${2-} in -h|--help) [ "$#" -eq 2 ] || usage trail_help; trail_help; exit 0 ;; esac
+        method=call
+        operation=trail.list
+        argument_fields=
+        limit_seen=
+        shift
+        while [ "$#" -gt 0 ]; do
+            case $1 in
+                --limit)
+                    [ "$#" -ge 2 ] && [ -z "$limit_seen" ] || usage trail_help
+                    limit_seen=true
+                    add_integer_argument limit "$2" trail_help
+                    shift 2
+                    ;;
+                *) usage trail_help ;;
+            esac
+        done
+        arguments="{$argument_fields}"
         ;;
     compile)
         case ${2-} in
@@ -625,6 +702,12 @@ esac
 case $operation in
     compile.*)
         expression="(progn (require 'limen) (require 'limen-compile) (limen-server-dispatch \"$encoded\"))"
+        ;;
+    trail.*)
+        expression="(progn (require 'limen) (require 'limen-trail) (limen-server-dispatch \"$encoded\"))"
+        ;;
+    context.*)
+        expression="(progn (require 'limen) (require 'limen-compile) (require 'limen-trail) (limen-server-dispatch \"$encoded\"))"
         ;;
     *)
         expression="(progn (require 'limen) (limen-server-dispatch \"$encoded\"))"

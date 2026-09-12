@@ -461,6 +461,8 @@
         (should (string-match-p "skill +Generate" help))
         (should (string-match-p "buffer +Work" help))
         (should (string-match-p "^  compile[[:space:]]" help))
+        (should (string-match-p "^  context[[:space:]]" help))
+        (should (string-match-p "^  trail[[:space:]]" help))
         (should-not (string-match-p "registry" help))
         (should-not (string-match-p "limen call" help)))
       (should (equal (run "buffer") (run "help" "buffer")))
@@ -1011,7 +1013,7 @@
   (seq-find (lambda (entry) (equal (alist-get 'name entry) name))
             (limen-operations context)))
 
-(ert-deftest limen-roadmap-core-schema-exposure-attention-and-diagnostics ()
+(ert-deftest limen-roadmap-core-schema-exposure-focus-and-diagnostics ()
   (limen-tests--with-registry
     (let* ((root (file-truename (make-temp-file "limen-roadmap-root" t)))
            (outside-root (file-truename
@@ -1158,8 +1160,8 @@
             (let (snapshot)
               (cl-letf (((symbol-function 'redisplay)
                          (lambda (&rest _arguments)
-                           (ert-fail "attention.get forced redisplay"))))
-                (setq snapshot (limen-call "attention.get" nil context)))
+                           (ert-fail "focus.get forced redisplay"))))
+                (setq snapshot (limen-call "focus.get" nil context)))
               (should (equal (alist-get 'kind snapshot) "file"))
               (should (integerp (alist-get 'tick snapshot)))
               (should (alist-get 'narrowing snapshot))
@@ -1170,9 +1172,9 @@
               (should (<= (length (alist-get 'invisible_spans snapshot)) 100)))
             (set-window-buffer (selected-window) outside-buffer)
             (should-not (alist-get 'focus
-                                   (limen-call "attention.get" nil context)))
+                                   (limen-call "focus.get" nil context)))
             (set-window-buffer (selected-window) virtual)
-            (let* ((snapshot (limen-call "attention.get" nil context))
+            (let* ((snapshot (limen-call "focus.get" nil context))
                    (expected
                     (with-current-buffer virtual
                       `((name . ,(buffer-name))
@@ -1373,7 +1375,57 @@
         (delete-directory root t)
         (delete-directory outside-root t)))))
 
-(ert-deftest limen-roadmap-cli-frames-attention-read-and-save ()
+(ert-deftest limen-context-get-composes-registered-sections ()
+  (limen-tests--with-registry
+    (let* ((root (file-truename (make-temp-file "limen-context-root" t)))
+           (file (expand-file-name "a.el" root))
+           (context (limen-make-request :interface 'cli :project-root root
+                                        :frame (selected-frame)
+                                        :window (selected-window)))
+           (limen-context-sections
+            (append (seq-filter (lambda (section)
+                                  (member (car section)
+                                          '("project" "focus" "windows" "buffers")))
+                                limen-context-sections)
+                    (list (cons "sample" (lambda (_context) nil)))))
+           buffer)
+      (unwind-protect
+          (save-window-excursion
+            (with-temp-file file (insert "one\ntwo\n"))
+            (setq buffer (find-file-noselect file))
+            (set-window-buffer (selected-window) buffer)
+            (let ((result (limen-call "context.get" nil context)))
+              (should (equal (map-keys result)
+                             '(project focus windows buffers)))
+              (should (equal (alist-get 'root (alist-get 'project result)) root))
+              (should (equal (alist-get 'focus result)
+                             (limen-call "focus.get" nil context)))
+              (should (equal (alist-get 'windows result)
+                             (limen-call "window.list" nil context)))
+              (should (equal (alist-get 'buffers result)
+                             (limen-call "buffer.list" '((all . t)) context))))
+            (should (equal (map-keys (limen-call "context.get"
+                                                 '((sections . ["focus"]))
+                                                 context))
+                           '(focus)))
+            (should-error (limen-call "context.get"
+                                      '((sections . ["missing"])) context)
+                          :type 'limen-invalid-arguments)
+            (should-error (limen-call "context.get" '((sections . "focus"))
+                                      context)
+                          :type 'limen-invalid-arguments)
+            (let ((operation (limen-tests--operation "context.get" context)))
+              (should (equal (alist-get 'effect operation) "read"))
+              (should (equal (alist-get 'type
+                                        (alist-get 'sections
+                                                   (alist-get 'properties
+                                                              (alist-get 'input_schema
+                                                                         operation))))
+                             "array"))))
+        (when (buffer-live-p buffer) (kill-buffer buffer))
+        (delete-directory root t)))))
+
+(ert-deftest limen-roadmap-cli-frames-focus-read-and-save ()
   (let* ((directory (make-temp-file "limen-roadmap-cli" t))
          (client (expand-file-name "emacsclient" directory))
          (capture (expand-file-name "expression" directory))
@@ -1414,9 +1466,23 @@
                  (decoded-string (value)
                    (decode-coding-string
                     (base64-decode-string (alist-get 'base64 value)) 'utf-8)))
-              (let ((attention (request "attention")))
-                (should (equal (alist-get 'operation attention)
-                               "attention.get")))
+              (let ((focus (request "focus")))
+                (should (equal (alist-get 'operation focus)
+                               "focus.get")))
+              (let ((whole (request "context")))
+                (should (equal (alist-get 'operation whole) "context.get"))
+                (should (equal (alist-get 'arguments whole) nil)))
+              (let* ((partial (request "context" "--section" "focus"
+                                       "--section" "trail"))
+                     (arguments (alist-get 'arguments partial)))
+                (should (equal (alist-get 'sections arguments)
+                               ["focus" "trail"])))
+              (let ((trail (request "trail")))
+                (should (equal (alist-get 'operation trail) "trail.list"))
+                (should (equal (alist-get 'arguments trail) nil)))
+              (let* ((trail (request "trail" "--limit" "04"))
+                     (arguments (alist-get 'arguments trail)))
+                (should (= (alist-get 'limit arguments) 4)))
               (let* ((read (request "buffer" "read" "src/a.el"
                                     "--widen" "--expected-tick" "07"))
                      (arguments (alist-get 'arguments read)))
@@ -1434,17 +1500,21 @@
               (dolist (arguments '(("buffer" "read" "src/a.el"
                                     "--expected-tick" "1x")
                                    ("buffer" "save" "src/a.el")
-                                   ("attention" "extra")))
+                                   ("focus" "extra")
+                                   ("context" "--section" "Focus")
+                                   ("context" "--section")
+                                   ("trail" "--limit" "x")
+                                   ("trail" "extra")))
                 (when (file-exists-p capture) (delete-file capture))
                 (pcase-let ((`(,status . ,_output)
                              (apply #'run arguments)))
                   (should (= status 2))
                   (should-not (file-exists-p capture))))
-              (dolist (command '(("attention" "--help")
+              (dolist (command '(("focus" "--help")
                                   ("buffer" "save" "--help")))
                 (pcase-let ((`(,status . ,output) (apply #'run command)))
                   (should (= status 0))
-                  (should (string-match-p "expected-tick\\|attention" output)))))))
+                  (should (string-match-p "expected-tick\\|focus" output)))))))
       (delete-directory directory t))))
 
 (ert-deftest limen-buffer-open-preserves-retargeted-owned-buffer ()

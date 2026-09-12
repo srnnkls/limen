@@ -13,6 +13,13 @@ Install `websocket` 1.12+ and `transient` 0.9.0+ from a configured package archi
 (require 'limen-mcp)
 ```
 
+Recent-buffer tracking is opt-in. Load `limen-trail` and enable its mode to expose the visit trail:
+
+```elisp
+(require 'limen-trail)
+(limen-trail-mode 1)
+```
+
 For Herdr-managed provider sessions, also load the bridge and enable its mode:
 
 ```elisp
@@ -27,7 +34,7 @@ Limen installs no global keybinding.
 
 Put `bin/limen` on `PATH`. Run `limen` for the canonical command index and `limen help COMMAND` for command-specific arguments.
 
-`projects` uses Projectile when available and falls back to `project.el`. `compile` observes existing Emacs compilation buffers without starting work. `skill` generates instructions from the live operation registry. `eval -` reads source from standard input; evaluation remains disabled unless explicitly enabled in Emacs.
+`context` returns the project, focus, windows, buffers, compilations, and trail in one call; `--section` narrows it. `trail` lists recently visited buffers with settled point traces while `limen-trail-mode` is enabled. `projects` uses Projectile when available and falls back to `project.el`. `compile` observes existing Emacs compilation buffers without starting work. `skill` generates instructions from the live operation registry. `eval -` reads source from standard input; evaluation remains disabled unless explicitly enabled in Emacs.
 
 ## Lisp interface
 

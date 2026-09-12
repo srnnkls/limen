@@ -186,5 +186,12 @@
                       :description "Compilation buffer name."))
  :interfaces '(cli mcp))
 
+(defun limen-compile--context-section (context)
+  "Return the compilations section of `context.get' for CONTEXT."
+  (limen-compile--list nil context))
+
+(setf (alist-get "compilations" limen-context-sections nil nil #'equal)
+      #'limen-compile--context-section)
+
 (provide 'limen-compile)
 ;;; limen-compile.el ends here

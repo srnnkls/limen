@@ -14,6 +14,7 @@
 (require 'limen-compile)
 (require 'limen-editor)
 (require 'limen-mcp)
+(require 'limen-trail)
 
 (declare-function herdr-agent-adapter "ext:herdr-agent" (kind))
 (declare-function herdr-agent-register-adapter "ext:herdr-agent" (kind adapter))

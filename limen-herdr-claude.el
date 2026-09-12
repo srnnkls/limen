@@ -78,11 +78,13 @@
     (herdr-agent-send-text (limen-herdr-claude--target session) "/ide\n")))
 
 ;;;###autoload
-(defun limen-herdr-claude-adopt (agent &optional server-key)
-  "Adopt Claude AGENT from optional Herdr SERVER-KEY into Limen."
-  (interactive (list (limen-herdr-claude--read-agent "Adopt Herdr Claude: ")))
+(defun limen-herdr-claude-adopt (agent &optional server-key display)
+  "Adopt Claude AGENT from optional Herdr SERVER-KEY into Limen.
+DISPLAY shows the attached buffer."
+  (interactive (list (limen-herdr-claude--read-agent "Adopt Herdr Claude: ") nil t))
   (let ((session (herdr-agent-adopt
-                  agent :server-key (or server-key (alist-get 'server_key agent)))))
+                  agent :server-key (or server-key (alist-get 'server_key agent))
+                  :display display)))
     (when (limen-herdr-claude--connect-p agent)
       (herdr-agent-send-text (limen-herdr-claude--target session) "/ide\n"))
     session))
@@ -99,7 +101,8 @@
            :key (lambda (agent) (alist-get 'pane_id agent)) :test #'equal))
 
 (defun limen-herdr-claude--maybe-adopt (server-key type data)
-  "Adopt Claude from Herdr event TYPE and DATA on SERVER-KEY."
+  "Adopt Claude from Herdr event TYPE and DATA on SERVER-KEY.
+The attachment stays off screen; nothing you are looking at moves."
   (when (and (equal type "pane.agent_detected")
              (equal (alist-get 'agent data) "claude")
              (not (alist-get 'released data)))

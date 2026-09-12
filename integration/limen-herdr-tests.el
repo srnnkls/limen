@@ -181,13 +181,13 @@
                  (should (equal server "/tmp/herdr.sock"))
                  (list agent)))
               ((symbol-function 'limen-herdr-claude-adopt)
-               (lambda (actual server)
-                 (setq adopted (list actual server)))))
+               (lambda (actual server &optional display)
+                 (setq adopted (list actual server display)))))
       (let ((limen-herdr-claude-auto-adopt-predicate (lambda (_agent) t)))
         (limen-herdr-claude--maybe-adopt
          "/tmp/herdr.sock" "pane.agent_detected"
          '((agent . "claude") (pane_id . "pane-1")))
-        (should (equal adopted (list agent "/tmp/herdr.sock")))))))
+        (should (equal adopted (list agent "/tmp/herdr.sock" nil)))))))
 
 (provide 'limen-herdr-tests)
 ;;; limen-herdr-tests.el ends here

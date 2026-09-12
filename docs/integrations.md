@@ -30,7 +30,7 @@ Codex and Pi startup wiring cannot be retrofitted into an externally started pro
 
 `limen.el` owns operation, event, request, and integration-session contracts without depending on Herdr or a provider.
 
-Operations have a dotted ID, description, recursive parameter schema, effect, interface visibility, enable predicate, and optional deferred completion. Registry-derived MCP operations cover live buffers, selected-window attention, windows, computed diagnostics, editable diffs, and existing compilation buffers. `project.list` stays CLI-only. `elisp.eval` remains CLI-only, hidden, and disabled unless `limen-enable-elisp-eval` is non-nil.
+Operations have a dotted ID, description, recursive parameter schema, effect, interface visibility, enable predicate, and optional deferred completion. Registry-derived MCP operations cover one-call context, live buffers, selected-window focus, windows, the opt-in recent-buffer trail, computed diagnostics, editable diffs, and existing compilation buffers. `project.list` stays CLI-only. `elisp.eval` remains CLI-only, hidden, and disabled unless `limen-enable-elisp-eval` is non-nil.
 
 Two normalized events carry editor context:
 
@@ -41,13 +41,17 @@ An integration session owns its project root, opaque resource owner, generation,
 
 ### Disclosure policy
 
-Built-in operations and Limen's editor and Herdr context producers apply project confinement before file-backed reads, writes, diagnostics, diffs, attention snapshots, and context pushes. Canonical paths must remain local and beneath the session root. `limen-project-path-deny-regexps` adds canonical project-relative deny patterns; denied paths stay hidden across those built-in surfaces.
+Built-in operations and Limen's editor and Herdr context producers apply project confinement before file-backed reads, writes, diagnostics, diffs, focus snapshots, and context pushes. Canonical paths must remain local and beneath the session root. `limen-project-path-deny-regexps` adds canonical project-relative deny patterns; denied paths stay hidden across those built-in surfaces.
 
 Virtual-buffer metadata remains listable. Content and positional state are denied by default. `limen-virtual-buffer-read-allow-condition` accepts the conditions supported by Emacs 29's `buffer-match-p`: `t`, name regexps, predicates, major- or derived-mode clauses, and recursive `and`, `or`, and `not` forms. Set it to `t` only for an explicit global allowance. Invalid conditions fail closed, and no condition bypasses project confinement or the internal-buffer exclusion.
 
-### Attention and buffers
+### Focus and buffers
 
-`attention.get` reads the request window, or the selected window, without redisplay or UI refresh. It reports the shared buffer record, point, active selection, cached viewport bounds, narrowing, and bounded invisible spans. A missing cached `window-end` stays null. Disallowed virtual focus returns non-positional metadata with `redacted: true`; inaccessible focus returns null.
+`context.get` is the one-call entrypoint. It composes `limen-context-sections`, an alist of section names to functions of the request: `project`, `focus`, `windows`, and `buffers` come from `limen.el` and reuse the standalone handlers with the same disclosure; `limen-compile.el` adds `compilations` and `limen-trail.el` adds `trail`. A section returning nil is omitted, `sections` selects a subset, and an unknown name is rejected.
+
+`focus.get` reads the request window, or the selected window, without redisplay or UI refresh. It reports the shared buffer record, point, active selection, cached viewport bounds, narrowing, and bounded invisible spans. A missing cached `window-end` stays null. Disallowed virtual focus returns non-positional metadata with `redacted: true`; inaccessible focus returns null.
+
+`limen-trail.el` keeps a bounded most-recently-used trail while `limen-trail-mode` is enabled; the mode is off by default, and `trail.list` stays hidden and disabled until it is on. Visits are recorded from window selection and buffer change hooks, and point is sampled by one idle timer, so no per-command work runs. Each entry keeps at most `limen-trail-point-limit` settled points as markers, newest first, merging moves shorter than `limen-trail-point-distance` lines into the latest point. Killing a file buffer freezes its points to line and column and keeps the entry as `live: false`; reopening the file resumes it. Virtual entries drop on kill. Disabling the mode clears the trail. `trail.list` applies the same confinement, deny patterns, and virtual redaction as `buffer.list`, returns newest first, and `limit` caps the disclosed entries.
 
 Buffer records include kind, modification tick, modified state, major mode, and narrowing bounds. `buffer.read` returns live unsaved text and respects narrowing unless `widen` is explicit. `expected_tick` rejects stale reads. `buffer.save` requires a matching tick and unchanged on-disk state, then revalidates the destination after save hooks. Conflicts never prompt or overwrite silently.
 

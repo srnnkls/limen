@@ -58,8 +58,8 @@ project-confined non-internal virtual buffers."
   :type '(repeat regexp)
   :group 'limen)
 
-(defcustom limen-attention-invisible-span-limit 100
-  "Maximum number of invisible spans returned by `attention.get'."
+(defcustom limen-focus-invisible-span-limit 100
+  "Maximum number of invisible spans returned by `focus.get'."
   :type '(integer 0)
   :group 'limen)
 
@@ -1248,13 +1248,13 @@ START-TEXT and END-TEXT refine the selection bounds."
           (setq position next))))
     (setq spans (sort spans #'limen--invisible-span-less-p))
     (let* ((count (length spans))
-           (limit (max 0 limen-attention-invisible-span-limit))
+           (limit (max 0 limen-focus-invisible-span-limit))
            (truncated (> count limit)))
       (when truncated
         (setq spans (seq-take spans limit)))
       (cons (vconcat spans) truncated))))
 
-(defun limen--attention-window (context)
+(defun limen--focus-window (context)
   "Return the live request or selected window for CONTEXT."
   (let ((window (and context (limen-request-window context))))
     (if (window-live-p window) window (selected-window))))
@@ -1266,9 +1266,9 @@ START-TEXT and END-TEXT refine the selection bounds."
                (limen--buffer-record buffer))
    '((redacted . t))))
 
-(defun limen--attention-get (_arguments context)
-  "Return the current project-confined attention snapshot for CONTEXT."
-  (let* ((window (limen--attention-window context))
+(defun limen--focus-get (_arguments context)
+  "Return the current project-confined focus snapshot for CONTEXT."
+  (let* ((window (limen--focus-window context))
          (buffer (window-buffer window))
          (root (limen-request-project-root context))
          (kind (limen--buffer-kind buffer root)))
@@ -1324,6 +1324,47 @@ START-TEXT and END-TEXT refine the selection bounds."
                (selected . ,(if (eq window (selected-window)) t :json-false))
                (start . ,(window-start window))))))
        (window-list frame 'nomini))))))
+
+(defvar limen-context-sections
+  '(("project" . limen--context-project)
+    ("focus" . limen--context-focus)
+    ("windows" . limen--context-windows)
+    ("buffers" . limen--context-buffers))
+  "Alist of `context.get' section names to functions of one request.
+Each function returns a JSON value, or nil to omit the section.")
+
+(defun limen--context-project (context)
+  "Return the project section for CONTEXT."
+  `((root . ,(limen-request-project-root context))))
+
+(defun limen--context-focus (context)
+  "Return the focus section for CONTEXT."
+  (limen--focus-get nil context))
+
+(defun limen--context-windows (context)
+  "Return the windows section for CONTEXT."
+  (limen--window-list nil context))
+
+(defun limen--context-buffers (context)
+  "Return the buffers section for CONTEXT."
+  (limen--buffer-list '((all . t)) context))
+
+(defun limen--context-get (arguments context)
+  "Return the selected `limen-context-sections' for ARGUMENTS and CONTEXT."
+  (let ((names (alist-get 'sections arguments)))
+    (when (vectorp names)
+      (dolist (name (append names nil))
+        (unless (assoc name limen-context-sections)
+          (signal 'limen-invalid-arguments
+                  (list (format "Unknown context section %s" name))))))
+    (delq nil
+          (mapcar
+           (lambda (section)
+             (when (or (not (vectorp names))
+                       (seq-contains-p names (car section)))
+               (when-let* ((value (funcall (cdr section) context)))
+                 (cons (intern (car section)) value))))
+           limen-context-sections))))
 
 (defun limen--diagnostic-severity (type)
   "Return normalized diagnostic severity for TYPE."
@@ -1695,9 +1736,17 @@ START-TEXT and END-TEXT refine the selection bounds."
  :effect 'read :parameters nil :interfaces '(cli))
 
 (limen-register-operation
- "attention.get" #'limen--attention-get
- :description "Read the selected window's project-confined attention state."
+ "focus.get" #'limen--focus-get
+ :description "Read the selected window's project-confined focus state."
  :effect 'read :parameters nil :interfaces '(cli adapter mcp))
+
+(limen-register-operation
+ "context.get" #'limen--context-get
+ :description "Read the current editor context in one call: project, focus, windows, buffers, and any optional sections."
+ :effect 'read
+ :parameters '((:name "sections" :type array :items (:type string)
+                      :description "Section names to include; omit for all."))
+ :interfaces '(cli adapter mcp))
 
 (limen-register-operation
  "window.list" #'limen--window-list
