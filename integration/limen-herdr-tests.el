@@ -6,11 +6,7 @@
 (require 'limen-herdr)
 (require 'limen-herdr-claude)
 
-(defun limen-herdr-tests--hint (selector)
-  (format "\n\n---\nLive Emacs state:
-- `limen context` — focus, windows, buffers, recent trail
-- `limen buffer read %s` — this buffer
-- `limen --help` — every command" selector))
+(defconst limen-herdr-tests--footer "\n\n---\nLive state: `limen context`")
 
 (defun limen-herdr-tests--session (kind root)
   (herdr-agent--make-session
@@ -155,8 +151,9 @@
                   (limen-herdr-send-context
                    '((server_key . "/tmp/herdr.sock")
                      (terminal_id . "term-claude")))
-                  (concat "Emacs context: context.el:1:0\n\nalpha\nbeta"
-                          (limen-herdr-tests--hint "context.el"))))
+                  (concat "Emacs context\nfile: context.el\nposition: 1:0-2:4"
+                          "\nmode: emacs-lisp-mode\n\n```\nalpha\nbeta\n```"
+                          limen-herdr-tests--footer)))
                 (deactivate-mark)
                 (goto-char (point-min))
                 (forward-line 2)
@@ -165,8 +162,9 @@
                   (limen-herdr-send-context
                    '((server_key . "/tmp/herdr.sock")
                      (terminal_id . "term-claude")))
-                  (concat "Emacs context: context.el:3:0\n\ngamma"
-                          (limen-herdr-tests--hint "context.el"))))))
+                  (concat "Emacs context\nfile: context.el\nposition: 3:0-3:5"
+                          "\nmode: emacs-lisp-mode\n\n```\ngamma\n```"
+                          limen-herdr-tests--footer)))))
           (should (equal resolved '("/tmp/herdr.sock" . "term-claude")))
           (limen-herdr--set-state agent-session nil)
           (should-not
@@ -205,11 +203,10 @@
               (forward-line 1)
               (should
                (equal (limen-herdr-send-context entry)
-                      (concat "Emacs context: *limen virtual* (fundamental-mode):2:0"
-                              "\n\nsecond line"
-                              (limen-herdr-tests--hint
-                               (concat "--name "
-                                       (shell-quote-argument "*limen virtual*"))))))
+                      (concat "Emacs context\nbuffer: *limen virtual*"
+                              "\nposition: 2:0-2:11\nmode: fundamental-mode"
+                              "\n\n```\nsecond line\n```"
+                              limen-herdr-tests--footer)))
               (let ((transient-mark-mode t))
                 (goto-char (point-min))
                 (set-mark (point))
@@ -217,7 +214,7 @@
                 (end-of-line)
                 (setq mark-active t)
                 (should (string-prefix-p
-                         "Emacs context: *limen virtual* (fundamental-mode):1:0\n\nfirst line\nsecond line"
+                         "Emacs context\nbuffer: *limen virtual*\nposition: 1:0-2:11\nmode: fundamental-mode\n\n```\nfirst line\nsecond line\n```"
                          (limen-herdr-send-context entry)))))
             (with-current-buffer away
               (should-not (limen-herdr-send-context entry)))
@@ -227,7 +224,7 @@
                   'claude)
             (with-current-buffer inside
               (should (string-suffix-p
-                       "- `limen --help` — every command"
+                       "\n---\nLive state: `limen context`"
                        (limen-herdr-send-context entry))))))
       (dolist (buffer (list inside away internal))
         (when (buffer-live-p buffer) (kill-buffer buffer)))

@@ -214,32 +214,52 @@ Paths outside ROOT stay absolute."
         relative
       path)))
 
-(defun limen-herdr--context-item-text (item &optional root)
-  "Return one model-visible context ITEM with paths relative to ROOT."
-  (let ((path (limen-herdr--context-path (alist-get 'path item) root))
-        (buffer (alist-get 'buffer item))
-        (mode (alist-get 'major_mode item))
-        (line (alist-get 'line item))
+(defun limen-herdr--position-text (item)
+  "Return ITEM's point or selection as LINE:COLUMN or a range, or nil."
+  (let ((line (alist-get 'line item))
         (column (alist-get 'column item))
-        (text (alist-get 'text item)))
-    (concat (or path (format "%s (%s)" buffer mode))
-            (if (and (integerp line) (integerp column))
-                (format ":%d:%d" line column)
-              "")
-            (if (and text (not (string-empty-p text)))
-                (concat "\n\n" text)
-              ""))))
+        (end-line (alist-get 'end_line item))
+        (end-column (alist-get 'end_column item)))
+    (when (and (integerp line) (integerp column))
+      (if (and (integerp end-line) (integerp end-column)
+               (not (and (= line end-line) (= column end-column))))
+          (format "%d:%d-%d:%d" line column end-line end-column)
+        (format "%d:%d" line column)))))
+
+(defun limen-herdr--context-item-text (item &optional root)
+  "Return one file list entry for context ITEM with its path relative to ROOT."
+  (let ((position (limen-herdr--position-text item)))
+    (concat "- " (limen-herdr--context-path (alist-get 'path item) root)
+            (if position (concat ":" position) ""))))
+
+(defun limen-herdr--context-fields (context root)
+  "Return the key-value header lines for single-buffer CONTEXT below ROOT."
+  (let ((path (limen-herdr--context-path (alist-get 'path context) root))
+        (position (limen-herdr--position-text context))
+        (mode (alist-get 'major_mode context)))
+    (delq nil
+          (list (if path
+                    (format "file: %s" path)
+                  (format "buffer: %s" (alist-get 'buffer context)))
+                (and position (format "position: %s" position))
+                (and mode (format "mode: %s" mode))))))
 
 (defun limen-herdr--context-text (context &optional root)
-  "Return CONTEXT as a model-visible message with paths relative to ROOT."
-  (let ((items (alist-get 'items context)))
-    (if (and (vectorp items) (> (length items) 0))
-        (concat "Emacs context:\n\n"
-                (mapconcat (lambda (item)
-                             (limen-herdr--context-item-text item root))
-                           items "\n\n"))
-      (concat "Emacs context: "
-              (limen-herdr--context-item-text context root)))))
+  "Return CONTEXT as a structured message with paths relative to ROOT."
+  (let ((items (alist-get 'items context))
+        (text (alist-get 'text context)))
+    (concat
+     "Emacs context\n"
+     (if (and (vectorp items) (> (length items) 0))
+         (concat "files:\n"
+                 (mapconcat (lambda (item)
+                              (limen-herdr--context-item-text item root))
+                            items "\n"))
+       (concat
+        (string-join (limen-herdr--context-fields context root) "\n")
+        (if (and text (not (string-empty-p text)))
+            (format "\n\n```\n%s\n```" (string-trim-right text))
+          ""))))))
 
 (defun limen-herdr--dired-context (root)
   "Return an atomic explicit context snapshot for Dired files below ROOT."
@@ -313,18 +333,8 @@ project-confined buffers report their name, mode, and text at point."
 (defconst limen-herdr--barrier "\n\n---\n"
   "Separator between a message, its context, and the live-state footer.")
 
-(defun limen-herdr--live-hint (context &optional root)
-  "Return the CLI footer for CONTEXT with paths relative to ROOT."
-  (let ((path (limen-herdr--context-path (alist-get 'path context) root)))
-    (concat
-     "Live Emacs state:\n"
-     "- `limen context` — focus, windows, buffers, recent trail\n"
-     (format "- `limen buffer read %s` — this buffer\n"
-             (if path
-                 (shell-quote-argument path)
-               (concat "--name " (shell-quote-argument
-                                  (alist-get 'buffer context)))))
-     "- `limen --help` — every command")))
+(defconst limen-herdr--live-hint "Live state: `limen context`"
+  "Footer pointing the agent at the CLI for the current editor state.")
 
 (defun limen-herdr-send-context (entry)
   "Return rich context for the integrated Herdr agent ENTRY, or nil."
@@ -338,9 +348,11 @@ project-confined buffers report their name, mode, and text at point."
                   ((not (limen-session-closed-p session))))
         (let ((context (limen-herdr--send-context-snapshot session))
               (root (limen-session-project-root session)))
-          (concat (string-trim-right (limen-herdr--context-text context root))
+          (unless (or (alist-get 'items context) (alist-get 'buffer context))
+            (push (cons 'major_mode (symbol-name major-mode)) context))
+          (concat (limen-herdr--context-text context root)
                   limen-herdr--barrier
-                  (limen-herdr--live-hint context root))))
+                  limen-herdr--live-hint)))
     (user-error nil)))
 
 ;;;###autoload
