@@ -202,9 +202,7 @@ for every provider; disabling removes the question events again."
     (setq limen-hooks-extra-events
           (seq-remove (lambda (spec) (member spec limen-inbox--events))
                       limen-hooks-extra-events))
-    (dolist (provider limen-hooks--providers)
-      (when (limen-hooks-any-installed-p provider)
-        (limen-hooks-remove-events provider (mapcar #'car limen-inbox--events))))
+    (limen-hooks-remove-events-everywhere (mapcar #'car limen-inbox--events))
     (setq limen-inbox--questions nil)
     (limen-inbox--refresh))))
 

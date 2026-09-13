@@ -14,6 +14,7 @@
                          (concat "CODEX_HOME=" (expand-file-name "codex" directory)))
                    process-environment))
           (limen-hooks-command "limen")
+          (limen-hooks-mode t)
           (limen-hooks-extra-events
            '(("PreToolUse" . "AskUserQuestion|request_user_input")
              ("PostToolUse" . "AskUserQuestion|request_user_input")
@@ -310,11 +311,11 @@
                    (lambda (_agent) state))
                   ((symbol-function 'limen-hooks-installed-p)
                    (lambda (_provider) installed)))
-          (let ((limen-hooks-inject-context nil))
+          (let ((limen-hooks-mode nil))
             (limen-hooks--draft session context root "Emacs context\nfile: x.el:1:0")
             (should-not (limen-hooks--compose '("/s" . "t") "hi"
                                               "Emacs context\nfile: x.el:1:0")))
-          (let ((limen-hooks-inject-context t))
+          (let ((limen-hooks-mode t))
             (should-not (limen-hooks--compose '("/s" . "t") "hi" "Emacs context\nother"))
             (should (zerop (hash-table-count limen-hooks--pending)))
             (setq installed nil)
@@ -332,33 +333,28 @@
       (limen-close-session session)
       (delete-directory root t))))
 
-(ert-deftest limen-hooks-offer-install-asks-once-per-provider ()
+(ert-deftest limen-hooks-mode-installs-and-removes-the-context-events ()
   (limen-hooks-tests--with-settings
-    (let* ((root (make-temp-file "limen-hooks-offer" t))
-           (limen-hooks-inject-context t)
-           (limen-hooks--declined nil)
-           (noninteractive nil)
-           (answers (list nil t))
-           (asked 0))
+    (let ((limen-hooks-extra-events '(("Stop"))))
+      (limen-hooks-mode -1)
+      (should (equal (mapcar #'car (limen-hooks-events)) '("Stop")))
       (unwind-protect
-          (cl-letf (((symbol-function 'y-or-n-p)
-                     (lambda (_prompt) (cl-incf asked) (pop answers))))
-            (dotimes (_ 2)
-              (limen-close-session
-               (limen-open-session :provider 'claude :project-root root)))
-            (should (= asked 1))
-            (should (equal limen-hooks--declined '(claude)))
-            (should-not (limen-hooks-installed-p 'claude))
-            (limen-close-session
-             (limen-open-session :provider 'codex :project-root root))
-            (should (= asked 2))
-            (should (limen-hooks-installed-p 'codex))
-            (limen-close-session
-             (limen-open-session :provider 'codex :project-root root))
-            (limen-close-session
-             (limen-open-session :provider 'pi :project-root root))
-            (should (= asked 2)))
-        (delete-directory root t)))))
+          (progn
+            (limen-hooks-mode 1)
+            (should (equal (mapcar #'car (limen-hooks-events))
+                           '("UserPromptSubmit" "SessionStart" "Stop")))
+            (dolist (provider '(claude codex))
+              (should (limen-hooks-installed-p provider)))
+            (limen-hooks-mode -1)
+            (dolist (provider '(claude codex))
+              (let ((settings (limen-hooks--read-settings
+                               (limen-hooks-settings-file provider))))
+                (should (limen-hooks--event-installed-p settings "Stop" provider))
+                (should-not (limen-hooks--event-installed-p
+                             settings "UserPromptSubmit" provider))
+                (should-not (limen-hooks--event-installed-p
+                             settings "SessionStart" provider)))))
+        (limen-hooks-mode -1)))))
 
 (provide 'limen-hooks-tests)
 ;;; limen-hooks-tests.el ends here

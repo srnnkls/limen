@@ -34,11 +34,11 @@ For Herdr-managed provider sessions, also load the bridge and enable its mode:
 (limen-herdr-mode 1)
 ```
 
-To have every prompt typed into a Claude Code or Codex pane carry Emacs context, load `limen-hooks` and switch injection on. The first session of each provider then offers to install `limen hook` into its user settings; `M-x limen-hooks-install` does the same on demand:
+To have every prompt typed into a Claude Code or Codex pane carry Emacs context, load `limen-hooks` and enable its mode. Enabling installs `limen hook` into both providers' user settings; `M-x limen-hooks-uninstall` removes it:
 
 ```elisp
 (require 'limen-hooks)
-(setq limen-hooks-inject-context t)
+(limen-hooks-mode 1)
 ```
 
 `limen-inbox-mode` lists the questions agents are waiting on in an `Inbox` section at the top of `herdr-status`. Enabling it registers the question hook events and installs Limen's hooks for both providers:
@@ -64,7 +64,7 @@ Register coarse operations with `limen-register-operation`, open integrations wi
 
 ## Provider integrations
 
-Claude Code, Codex, and Pi can use Limen through their native transports. The optional `limen-herdr-mode` injects launch and lifecycle wiring into Herdr without making either package depend on the other at runtime. `M-x limen-herdr-transient` exposes status, context push, reconnect, adoption, and protocol diagnostics. Herdr's message and send commands receive Limen's snapshot for any project-confined buffer, virtual ones included, with a `live: \`limen context\`` field pointing at the full state. With `limen-hooks-inject-context` and the provider's hooks installed, that snapshot and the recent buffer trail reach the agent through its prompt hook instead of the message body.
+Claude Code, Codex, and Pi can use Limen through their native transports. The optional `limen-herdr-mode` injects launch and lifecycle wiring into Herdr without making either package depend on the other at runtime. `M-x limen-herdr-transient` exposes status, context push, reconnect, adoption, and protocol diagnostics. Herdr's message and send commands receive Limen's snapshot for any project-confined buffer, virtual ones included, with a `live: \`limen context\`` field pointing at the full state. With `limen-hooks-mode` enabled, that snapshot and the recent buffer trail reach the agent through its prompt hook instead of the message body.
 
 See [docs/integrations.md](docs/integrations.md) for the canonical capability, disclosure, and lifecycle contract. Claude's fixed wire evidence is recorded in [docs/claude-integration-parity.md](docs/claude-integration-parity.md).
 

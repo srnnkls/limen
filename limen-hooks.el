@@ -33,13 +33,7 @@
   :group 'limen
   :prefix "limen-hooks-")
 
-(defcustom limen-hooks-inject-context nil
-  "Inject Emacs context through agent prompt hooks instead of the message body.
-When non-nil, the first Claude Code or Codex session offers to install the
-hooks, and Herdr messages to a provider with installed hooks carry only
-their text."
-  :type 'boolean
-  :group 'limen-hooks)
+(defvar limen-hooks-mode)
 
 (defcustom limen-hooks-command nil
   "Command the installed hooks run, without the `hook PROVIDER' arguments.
@@ -64,7 +58,8 @@ MATCHER is nil or the provider's tool matcher string.")
 
 (defun limen-hooks-events ()
   "Return every (EVENT . MATCHER) spec the installed hooks must cover."
-  (append limen-hooks--base-events limen-hooks-extra-events))
+  (append (and limen-hooks-mode limen-hooks--base-events)
+          limen-hooks-extra-events))
 
 (defconst limen-hooks--timeout 5
   "Seconds a provider waits for the hook before continuing without it.")
@@ -78,9 +73,6 @@ MATCHER is nil or the provider's tool matcher string.")
 Each receives the provider name, the decoded payload extended with the
 `server' and `pane' of the Herdr pane, the resolved Limen session or nil,
 and the request context.")
-
-(defvar limen-hooks--declined nil
-  "Providers whose install offer was declined in this Emacs session.")
 
 (defvar limen-hooks--drafts (make-hash-table :test #'eq)
   "Rendered text and context of the latest Herdr context per session.")
@@ -275,21 +267,14 @@ cannot be written is reported and skipped."
                    nil)))
               limen-hooks--providers))
 
-(defun limen-hooks--offer-install (session)
-  "Offer to install prompt hooks for SESSION's provider on its first use."
-  (let ((provider (limen-session-provider session)))
-    (when (and (or limen-hooks-inject-context limen-hooks-extra-events)
-               (memq provider limen-hooks--providers)
-               (not noninteractive)
-               (not (memq provider limen-hooks--declined)))
-      (condition-case err
-          (unless (limen-hooks-installed-p provider)
-            (if (y-or-n-p (format "Install Limen %s prompt hooks to inject Emacs context? "
-                                  provider))
-                (limen-hooks-install provider)
-              (push provider limen-hooks--declined)))
-        (error
-         (message "Limen hooks: %s" (error-message-string err)))))))
+(defun limen-hooks-remove-events-everywhere (events)
+  "Remove Limen's handlers for the EVENTS named from every provider's settings."
+  (dolist (provider limen-hooks--providers)
+    (condition-case err
+        (when (limen-hooks-any-installed-p provider)
+          (limen-hooks-remove-events provider events))
+      (error
+       (message "Limen hooks: %s" (error-message-string err))))))
 
 ;;; Prompt context
 
@@ -306,7 +291,7 @@ cannot be written is reported and skipped."
 (defun limen-hooks--compose (target text context)
   "Return TEXT alone when CONTEXT will reach TARGET through its prompt hook.
 Return nil to let Herdr append CONTEXT to the message."
-  (when (and limen-hooks-inject-context context)
+  (when (and limen-hooks-mode context)
     (when-let* ((agent-session (condition-case nil
                                    (herdr-agent-resolve-session target)
                                  (error nil)))
@@ -452,10 +437,22 @@ Return nil to let Herdr append CONTEXT to the message."
                                     (additionalContext . ,text)))))
         ""))))
 
-(add-hook 'limen-session-open-hook #'limen-hooks--offer-install)
 (add-hook 'limen-session-close-hook #'limen-hooks--forget)
 (add-hook 'limen-herdr-context-hook #'limen-hooks--draft)
 (add-hook 'herdr-message-compose-functions #'limen-hooks--compose)
+
+;;;###autoload
+(define-minor-mode limen-hooks-mode
+  "Inject Emacs context through agent prompt hooks instead of the message body.
+Enabling installs the context hook events for every provider, and Herdr
+messages to a provider with installed hooks carry only their text;
+disabling removes the context events again."
+  :global t
+  :group 'limen-hooks
+  (if limen-hooks-mode
+      (limen-hooks-install-all)
+    (limen-hooks-remove-events-everywhere
+     (mapcar #'car limen-hooks--base-events))))
 
 (provide 'limen-hooks)
 ;;; limen-hooks.el ends here

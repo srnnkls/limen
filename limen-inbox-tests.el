@@ -143,6 +143,7 @@
                         (concat "CODEX_HOME=" (expand-file-name "codex" directory)))
                   process-environment))
          (limen-hooks-command "limen")
+         (limen-hooks-mode t)
          (limen-hooks-extra-events nil)
          (limen-hooks-event-functions nil)
          (herdr-status-sections-functions nil)
