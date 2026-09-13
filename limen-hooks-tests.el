@@ -337,6 +337,27 @@
       (limen-close-session session)
       (delete-directory root t))))
 
+(ert-deftest limen-hooks-install-all-asks-per-provider-when-interactive ()
+  (limen-hooks-tests--with-settings
+    (let ((noninteractive nil)
+          (answers (list nil t))
+          prompts)
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (prompt) (push prompt prompts) (pop answers))))
+        (should (equal (limen-hooks-install-all t) '(codex)))
+        (should-not (limen-hooks-installed-p 'claude))
+        (should (limen-hooks-installed-p 'codex))
+        (should (= (length prompts) 2))
+        (should (string-match-p "settings\\.json" (cadr prompts)))
+        (should (string-match-p "hooks\\.json" (car prompts)))
+        (setq answers (list nil))
+        (should-not (limen-hooks-install-all t))
+        (should (= (length prompts) 3))
+        (should (equal (limen-hooks-install-all) '(claude)))
+        (should (= (length prompts) 3))
+        (should-not (limen-hooks-install-all t))
+        (should (= (length prompts) 3))))))
+
 (ert-deftest limen-hooks-mode-installs-and-removes-the-context-events ()
   (limen-hooks-tests--with-settings
     (let ((limen-hooks-extra-events '(("Stop"))))

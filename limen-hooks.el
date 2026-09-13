@@ -257,13 +257,17 @@ Return non-nil when the settings changed."
                (limen-hooks-settings-file provider)))
     changed))
 
-(defun limen-hooks-install-all ()
+(defun limen-hooks-install-all (&optional ask)
   "Install the missing events for every provider.
-Return the providers whose settings changed; a provider whose settings
-cannot be written is reported and skipped."
+With ASK in an interactive session, confirm each provider first.  Return
+the providers whose settings changed; a provider whose settings cannot be
+written is reported and skipped."
   (seq-filter (lambda (provider)
                 (condition-case err
                     (and (not (limen-hooks-installed-p provider))
+                         (or (not ask) noninteractive
+                             (y-or-n-p (format "Install Limen hooks into %s? "
+                                               (limen-hooks-settings-file provider))))
                          (limen-hooks-install provider))
                   (error
                    (message "Limen hooks: %s" (error-message-string err))
@@ -447,13 +451,14 @@ Return nil to let Herdr append CONTEXT to the message."
 ;;;###autoload
 (define-minor-mode limen-hooks-mode
   "Inject Emacs context through agent prompt hooks instead of the message body.
-Enabling installs the context hook events for every provider, and Herdr
-messages to a provider with installed hooks carry only their text;
-disabling removes the context events again."
+Enabling installs the context hook events for every provider, asking
+first for each provider whose settings lack them, and Herdr messages to
+a provider with installed hooks carry only their text; disabling removes
+the context events again."
   :global t
   :group 'limen-hooks
   (if limen-hooks-mode
-      (limen-hooks-install-all)
+      (limen-hooks-install-all t)
     (limen-hooks-remove-events-everywhere
      (mapcar #'car limen-hooks--base-events))))
 

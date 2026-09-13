@@ -34,14 +34,14 @@ For Herdr-managed provider sessions, also load the bridge and enable its mode:
 (limen-herdr-mode 1)
 ```
 
-To have every prompt typed into a Claude Code or Codex pane carry Emacs context, load `limen-hooks` and enable its mode. Enabling installs `limen hook` into both providers' user settings; `M-x limen-hooks-uninstall` removes it:
+To have every prompt typed into a Claude Code or Codex pane carry Emacs context, load `limen-hooks` and enable its mode. Enabling asks once per provider whose settings lack `limen hook` and installs it; `M-x limen-hooks-uninstall` removes it:
 
 ```elisp
 (require 'limen-hooks)
 (limen-hooks-mode 1)
 ```
 
-`limen-inbox-mode` lists the questions agents are waiting on in an `Inbox` section at the top of `herdr-status`. Enabling it registers the question hook events and installs Limen's hooks for both providers:
+`limen-inbox-mode` lists the questions agents are waiting on in an `Inbox` section at the top of `herdr-status`. Enabling it registers the question hook events and installs them the same way:
 
 ```elisp
 (require 'limen-inbox)
