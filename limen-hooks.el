@@ -262,13 +262,17 @@ Return non-nil when the settings changed."
                (limen-hooks-settings-file provider)))
     changed))
 
-(defun limen-hooks-complete-installed ()
-  "Add the missing events wherever some Limen hook is already installed.
-Return the providers whose settings changed."
+(defun limen-hooks-install-all ()
+  "Install the missing events for every provider.
+Return the providers whose settings changed; a provider whose settings
+cannot be written is reported and skipped."
   (seq-filter (lambda (provider)
-                (and (limen-hooks-any-installed-p provider)
-                     (not (limen-hooks-installed-p provider))
-                     (limen-hooks-install provider)))
+                (condition-case err
+                    (and (not (limen-hooks-installed-p provider))
+                         (limen-hooks-install provider))
+                  (error
+                   (message "Limen hooks: %s" (error-message-string err))
+                   nil)))
               limen-hooks--providers))
 
 (defun limen-hooks--offer-install (session)

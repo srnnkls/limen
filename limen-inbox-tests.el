@@ -136,7 +136,7 @@
       (should-not (limen-inbox--groups (list beta)))
       (should-not (limen-inbox-questions)))))
 
-(ert-deftest limen-inbox-mode-registers-events-and-completes-installs ()
+(ert-deftest limen-inbox-mode-registers-events-and-installs-hooks ()
   (let* ((directory (make-temp-file "limen-inbox-settings" t))
          (process-environment
           (append (list (concat "CLAUDE_CONFIG_DIR=" directory)
@@ -161,16 +161,18 @@
           (should (memq #'limen-inbox--insert-section
                         herdr-status-sections-functions))
           (should (limen-hooks-installed-p 'claude))
-          (should-not (limen-hooks-any-installed-p 'codex))
+          (should (limen-hooks-installed-p 'codex))
           (limen-inbox-mode -1)
           (should (equal (mapcar #'car (limen-hooks-events))
                          '("UserPromptSubmit" "SessionStart")))
           (should-not (memq #'limen-inbox--on-event limen-hooks-event-functions))
           (should (limen-hooks-installed-p 'claude))
-          (should-not (limen-hooks--event-installed-p
-                       (limen-hooks--read-settings
-                        (limen-hooks-settings-file 'claude))
-                       "PreToolUse" 'claude)))
+          (should (limen-hooks-installed-p 'codex))
+          (dolist (provider '(claude codex))
+            (should-not (limen-hooks--event-installed-p
+                         (limen-hooks--read-settings
+                          (limen-hooks-settings-file provider))
+                         "PreToolUse" provider))))
       (limen-inbox-mode -1)
       (delete-directory directory t))))
 

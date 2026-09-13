@@ -185,9 +185,8 @@ Entries no listed agent asked are dropped."
 ;;;###autoload
 (define-minor-mode limen-inbox-mode
   "List agents' pending questions in the Herdr dashboard.
-Enabling registers the question hook events and adds them to every
-provider whose settings already run Limen's hooks; disabling removes
-them again."
+Enabling registers the question hook events and installs Limen's hooks
+for every provider; disabling removes the question events again."
   :global t
   :group 'limen-hooks
   (cond
@@ -196,7 +195,7 @@ them again."
       (add-to-list 'limen-hooks-extra-events spec t))
     (add-hook 'limen-hooks-event-functions #'limen-inbox--on-event)
     (add-hook 'herdr-status-sections-functions #'limen-inbox--insert-section)
-    (limen-hooks-complete-installed))
+    (limen-hooks-install-all))
    (t
     (remove-hook 'limen-hooks-event-functions #'limen-inbox--on-event)
     (remove-hook 'herdr-status-sections-functions #'limen-inbox--insert-section)
