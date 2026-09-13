@@ -1560,6 +1560,7 @@
           (with-temp-file client
             (insert "#!/bin/sh\nprintf '%s' \"$2\" > \"$LIMEN_CAPTURE\"\n"
                     "[ -z \"$LIMEN_FAIL\" ] || exit 1\n"
+                    "[ -z \"$LIMEN_SLOW\" ] || sleep 5\n"
                     "printf '%s' \"$LIMEN_RESPONSE\"\n"))
           (set-file-modes client #o700)
           (cl-labels
@@ -1571,7 +1572,7 @@
                                       (concat "LIMEN_CAPTURE=" capture)
                                       (concat "LIMEN_RESPONSE=" response)
                                       "LIMEN_SESSION" "HERDR_ENV" "LIMEN_FAIL"
-                                      "HERDR_SOCKET_PATH" "HERDR_PANE_ID")
+                                      "LIMEN_SLOW" "HERDR_SOCKET_PATH" "HERDR_PANE_ID")
                                 process-environment)))
                    (with-temp-buffer
                      (cons (apply #'process-file launcher payload-file t nil arguments)
@@ -1623,6 +1624,33 @@
                               "hook" "claude")))
               (should (= status 0))
               (should (equal text "")))
+            (let ((started (float-time)))
+              (pcase-let ((`(,status . ,text)
+                           (run '("LIMEN_SESSION=limen-1" "LIMEN_SLOW=1"
+                                  "LIMEN_HOOK_TIMEOUT=1")
+                                "hook" "claude")))
+                (should (= status 0))
+                (should (equal text ""))
+                (should (< (- (float-time) started) 4))))
+            (let ((response "*ERROR*: Cannot open load file: limen\n"))
+              (pcase-let ((`(,status . ,text)
+                           (run (list "LIMEN_SESSION=limen-1"
+                                      (concat "LIMEN_RESPONSE=" response))
+                                "hook" "claude")))
+                (should (= status 0))
+                (should (equal text "")))
+              (pcase-let ((`(,status . ,text)
+                           (let ((process-environment
+                                  (append (list (concat "EMACSCLIENT=" client)
+                                                (concat "LIMEN_CAPTURE=" capture)
+                                                (concat "LIMEN_RESPONSE=" response))
+                                          process-environment)))
+                             (with-temp-buffer
+                               (cons (process-file launcher nil '(t t) nil "focus")
+                                     (buffer-string))))))
+                (should (= status 5))
+                (should (string-match-p "Emacs answered Cannot open load file"
+                                        text))))
             (let ((response (format "\"3:%s\"\n"
                                     (base64-encode-string "{\"ok\":false}" t))))
               (pcase-let ((`(,status . ,text)
