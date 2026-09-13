@@ -78,8 +78,13 @@
                      (push state closed)
                      (limen-close-session (limen-claude-state-session state)))))
           (let ((claude (limen-herdr-tests--session "claude" root)))
-            (should (equal (limen-herdr--adapter claude :prepare)
-                           '((CLAUDE_CODE_SSE_PORT . "4200"))))
+            (let ((environment (limen-herdr--adapter claude :prepare)))
+              (should (equal (mapcar #'car environment)
+                             '(CLAUDE_CODE_SSE_PORT LIMEN_SESSION)))
+              (should (equal (alist-get 'LIMEN_SESSION environment)
+                             (limen-session-id
+                              (limen-herdr-state-session
+                               (limen-herdr-state claude))))))
             (should (equal (limen-herdr--adapter claude :arguments '("--flag"))
                            '("--flag")))
             (limen-herdr--adapter claude :attached)
@@ -91,7 +96,8 @@
             (should-not (herdr-agent-session-adapter-state claude)))
           (let ((codex (limen-herdr-tests--session "codex" root)))
             (should (equal (mapcar #'car (limen-herdr--adapter codex :prepare))
-                           '(LIMEN_MCP_URL LIMEN_MCP_TOKEN LIMEN_MCP_SESSION)))
+                           '(LIMEN_MCP_URL LIMEN_MCP_TOKEN LIMEN_MCP_SESSION
+                             LIMEN_SESSION)))
             (let ((arguments (limen-herdr--adapter codex :arguments '("resume"))))
               (should (equal (car arguments) "-c"))
               (should (string-match-p "mcp_servers\\.limen\\.url"
@@ -125,6 +131,9 @@
          (file (expand-file-name "context.el" root))
          (agent-session (limen-herdr-tests--session "claude" root))
          (integration (limen-open-session :provider 'claude :project-root root))
+         (rendered nil)
+         (limen-herdr-context-hook
+          (list (lambda (&rest arguments) (push arguments rendered))))
          buffer resolved)
     (unwind-protect
         (progn
@@ -164,6 +173,12 @@
                           "\nmode: emacs-lisp-mode\nlive: `limen context`"
                           "\n\n```\ngamma\n```")))))
           (should (equal resolved '("/tmp/herdr.sock" . "term-claude")))
+          (should (= (length rendered) 2))
+          (pcase-let ((`(,session ,context ,session-root ,text) (car rendered)))
+            (should (eq session integration))
+            (should (equal (alist-get 'text context) "gamma"))
+            (should (equal session-root (limen-session-project-root integration)))
+            (should (string-prefix-p "Emacs context\nfile: context.el:3:0-3:5" text)))
           (limen-herdr--set-state agent-session nil)
           (should-not
            (limen-herdr-send-context

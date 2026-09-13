@@ -464,6 +464,7 @@
         (should (string-match-p "^  context[[:space:]]" help))
         (should (string-match-p "^  trail[[:space:]]" help))
         (should (string-match-p "^  annotations[[:space:]]" help))
+        (should (string-match-p "^  hook[[:space:]]" help))
         (should-not (string-match-p "registry" help))
         (should-not (string-match-p "limen call" help)))
       (should (equal (run "buffer") (run "help" "buffer")))
@@ -1540,6 +1541,92 @@
                 (pcase-let ((`(,status . ,output) (apply #'run command)))
                   (should (= status 0))
                   (should (string-match-p "expected-tick\\|focus" output)))))))
+      (delete-directory directory t))))
+
+(ert-deftest limen-launcher-hook-frames-the-payload-and-never-fails ()
+  (let* ((directory (make-temp-file "limen-hook-cli" t))
+         (client (expand-file-name "emacsclient" directory))
+         (capture (expand-file-name "expression" directory))
+         (payload-file (expand-file-name "payload.json" directory))
+         (launcher (expand-file-name
+                    "bin/limen"
+                    (file-name-directory (locate-library "limen-tests"))))
+         (payload "{\"hook_event_name\":\"UserPromptSubmit\",\"prompt\":\"hi\"}")
+         (output "{\"hookSpecificOutput\":{\"additionalContext\":\"Emacs context\"}}")
+         (response (format "\"0:%s\"\n" (base64-encode-string output t))))
+    (unwind-protect
+        (progn
+          (with-temp-file payload-file (insert payload))
+          (with-temp-file client
+            (insert "#!/bin/sh\nprintf '%s' \"$2\" > \"$LIMEN_CAPTURE\"\n"
+                    "[ -z \"$LIMEN_FAIL\" ] || exit 1\n"
+                    "printf '%s' \"$LIMEN_RESPONSE\"\n"))
+          (set-file-modes client #o700)
+          (cl-labels
+              ((run (environment &rest arguments)
+                 (when (file-exists-p capture) (delete-file capture))
+                 (let ((process-environment
+                        (append environment
+                                (list (concat "EMACSCLIENT=" client)
+                                      (concat "LIMEN_CAPTURE=" capture)
+                                      (concat "LIMEN_RESPONSE=" response)
+                                      "LIMEN_SESSION" "HERDR_ENV" "LIMEN_FAIL")
+                                process-environment)))
+                   (with-temp-buffer
+                     (cons (apply #'process-file launcher payload-file t nil arguments)
+                           (buffer-string)))))
+               (captured ()
+                 (with-temp-buffer
+                   (insert-file-contents capture)
+                   (should (re-search-forward
+                            "(limen-server-dispatch \\\"\\([A-Za-z0-9+/=]+\\)\\\")"
+                            nil t))
+                   (should (string-match-p "(require 'limen-hooks nil t)"
+                                           (buffer-string)))
+                   (json-parse-string
+                    (decode-coding-string
+                     (base64-decode-string (match-string 1)) 'utf-8)
+                    :object-type 'alist)))
+               (decoded (value)
+                 (decode-coding-string (base64-decode-string value) 'utf-8)))
+            (pcase-let ((`(,status . ,text)
+                         (run '("LIMEN_SESSION=limen-1") "hook" "claude")))
+              (should (= status 0))
+              (should (equal (string-trim text) output))
+              (let ((request (captured)))
+                (should (equal (alist-get 'method request) "hook"))
+                (should (equal (alist-get 'provider request) "claude"))
+                (should (equal (decoded (alist-get 'session_base64 request))
+                               "limen-1"))
+                (should (equal (decoded (alist-get 'payload_base64 request))
+                               payload))))
+            (pcase-let ((`(,status . ,text) (run '("HERDR_ENV=1") "hook" "codex")))
+              (should (= status 0))
+              (should (equal (string-trim text) output))
+              (should (equal (decoded (alist-get 'session_base64 (captured))) "")))
+            (pcase-let ((`(,status . ,text) (run nil "hook" "claude")))
+              (should (= status 0))
+              (should (equal text ""))
+              (should-not (file-exists-p capture)))
+            (pcase-let ((`(,status . ,text)
+                         (run '("LIMEN_SESSION=limen-1" "LIMEN_FAIL=1")
+                              "hook" "claude")))
+              (should (= status 0))
+              (should (equal text "")))
+            (let ((response (format "\"3:%s\"\n"
+                                    (base64-encode-string "{\"ok\":false}" t))))
+              (pcase-let ((`(,status . ,text)
+                           (run (list "LIMEN_SESSION=limen-1"
+                                      (concat "LIMEN_RESPONSE=" response))
+                                "hook" "claude")))
+                (should (= status 0))
+                (should (equal text ""))))
+            (pcase-let ((`(,status . ,_) (run '("LIMEN_SESSION=limen-1")
+                                              "hook" "pi")))
+              (should (= status 2)))
+            (pcase-let ((`(,status . ,text) (run nil "hook" "--help")))
+              (should (= status 0))
+              (should (string-match-p "LIMEN_SESSION" text)))))
       (delete-directory directory t))))
 
 (ert-deftest limen-buffer-open-preserves-retargeted-owned-buffer ()

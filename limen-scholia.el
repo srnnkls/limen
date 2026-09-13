@@ -205,7 +205,7 @@
                             visible))))))
 
 (defun limen-scholia--file-count (name file)
-  "Return how many annotations session NAME holds for FILE."
+  "Return the number of annotations in session NAME for FILE."
   (if-let* ((record (scholia-db-record (scholia-session-file name) file)))
       (length (scholia-db-record-annotations record))
     0))

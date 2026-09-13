@@ -31,6 +31,7 @@
 (declare-function flycheck-error-message "ext:flycheck" (error))
 (declare-function projectile-project-root "ext:projectile" (&optional directory))
 (declare-function projectile-relevant-known-projects "ext:projectile" ())
+(declare-function limen-hooks-output "limen-hooks" (request context))
 (defvar flycheck-current-errors)
 (defvar projectile-require-project-root)
 
@@ -202,6 +203,15 @@ ID and OWNER default to opaque values.  CAPABILITIES describes the transport."
       (puthash session t limen--sessions)
       (run-hook-with-args 'limen-session-open-hook session)
       session)))
+
+(defun limen-find-session (id)
+  "Return the open integration session whose ID matches, or nil."
+  (catch 'found
+    (maphash (lambda (session _)
+               (when (equal (limen-session-id session) id)
+                 (throw 'found session)))
+             limen--sessions)
+    nil))
 
 (defun limen--request-current-p (request)
   "Return non-nil when REQUEST still belongs to its live generation."
@@ -1657,6 +1667,10 @@ Each function returns a JSON value, or nil to omit the section.")
                                       (limen--decode-cli-arguments arguments)
                                       context)))))
               ("skill" (cons 0 (limen-skill context)))
+              ("hook"
+               (unless (fboundp 'limen-hooks-output)
+                 (signal 'limen-invalid-request '("Prompt hooks are unavailable")))
+               (cons 0 (limen-hooks-output request context)))
               (_ (signal 'limen-invalid-request '("Unknown method"))))))
       (error (limen--dispatch-error condition operation)))))
 

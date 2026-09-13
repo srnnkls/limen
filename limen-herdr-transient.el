@@ -10,6 +10,7 @@
 
 (require 'limen-herdr)
 (require 'limen-herdr-claude)
+(require 'limen-hooks)
 (require 'transient)
 
 (autoload 'limen-claude-debug-open-log "limen-claude-debug" nil t)
@@ -67,7 +68,8 @@
   [["Integration"
     ("p" "push context" limen-herdr-transient--push-context)
     ("s" "status" limen-herdr-transient--status)
-    ("r" "reconnect" limen-herdr-transient--reconnect)]
+    ("r" "reconnect" limen-herdr-transient--reconnect)
+    ("h" "install hooks" limen-hooks-install)]
    ["Claude Code"
     ("a" "adopt" limen-herdr-claude-adopt)
     ("c" "connect" limen-herdr-claude-connect

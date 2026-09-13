@@ -21,6 +21,7 @@ Commands:
   diagnostics  List Flymake diagnostics
   projects     List known projects
   skill        Generate agent instructions
+  hook         Answer an agent prompt hook with Emacs context
   eval         Evaluate explicitly enabled Emacs Lisp
   help         Print help for a command
 
@@ -34,6 +35,24 @@ skill_help() {
 Generate agent instructions for available Emacs commands.
 
 Usage: limen skill
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+hook_help() {
+    cat <<'EOF'
+Answer a Claude Code or Codex prompt hook with Emacs context.
+
+Reads the hook payload from standard input and prints the hook's JSON
+output.  Does nothing unless LIMEN_SESSION or HERDR_ENV=1 is set, and
+never fails the prompt: every error exits 0 without output.
+
+Usage: limen hook <PROVIDER>
+
+Arguments:
+  <PROVIDER>  claude or codex
 
 Options:
   -h, --help  Print help
@@ -324,6 +343,7 @@ show_help() {
                 diagnostics) diagnostics_help ;;
                 projects) projects_help ;;
                 skill) skill_help ;;
+                hook) hook_help ;;
                 eval) eval_help ;;
                 *) usage help ;;
             esac
@@ -392,6 +412,15 @@ add_integer_argument() {
 method=
 operation=
 arguments='{}'
+quiet=
+
+fail() {
+    if [ -n "$quiet" ]; then
+        exit 0
+    fi
+    printf '%s\n' "$1" >&2
+    exit "$2"
+}
 
 case ${1-} in
     ''|-h|--help)
@@ -411,6 +440,21 @@ case ${1-} in
             *) usage skill_help ;;
         esac
         method=skill
+        ;;
+    hook)
+        case ${2-} in
+            -h|--help) [ "$#" -eq 2 ] || usage hook_help; hook_help; exit 0 ;;
+            claude|codex) [ "$#" -eq 2 ] || usage hook_help ;;
+            *) usage hook_help ;;
+        esac
+        if [ -z "${LIMEN_SESSION:-}" ] && [ "${HERDR_ENV:-}" != 1 ]; then
+            exit 0
+        fi
+        method=hook
+        provider=$2
+        quiet=true
+        payload_base64=$(encode)
+        session_base64=$(printf '%s' "${LIMEN_SESSION:-}" | encode)
         ;;
     focus)
         case ${2-} in
@@ -841,6 +885,10 @@ case $method in
         request=$(printf '{"version":1,"method":"call","operation":"%s","arguments":%s,"cwd_base64":"%s"}' \
             "$operation" "$arguments" "$cwd_base64")
         ;;
+    hook)
+        request=$(printf '{"version":1,"method":"hook","provider":"%s","session_base64":"%s","payload_base64":"%s","cwd_base64":"%s"}' \
+            "$provider" "$session_base64" "$payload_base64" "$cwd_base64")
+        ;;
     *)
         request=$(printf '{"version":1,"method":"%s","cwd_base64":"%s"}' \
             "$method" "$cwd_base64")
@@ -849,10 +897,7 @@ esac
 
 encoded=$(printf '%s' "$request" | encode)
 case $encoded in
-    *[!A-Za-z0-9+/=]*)
-        printf '%s\n' 'limen: failed to encode request' >&2
-        exit 5
-        ;;
+    *[!A-Za-z0-9+/=]*) fail 'limen: failed to encode request' 5 ;;
 esac
 
 case $operation in
@@ -872,38 +917,38 @@ case $operation in
         expression="(progn (require 'limen) (limen-server-dispatch \"$encoded\"))"
         ;;
 esac
+case $method in
+    hook)
+        expression="(progn (require 'limen) (require 'limen-hooks nil t) (limen-server-dispatch \"$encoded\"))"
+        ;;
+esac
 if ! response=$("$emacsclient" --eval "$expression"); then
-    printf '%s\n' 'limen: local Emacs server or interface unavailable' >&2
-    exit 4
+    fail 'limen: local Emacs server or interface unavailable' 4
 fi
 
 response=${response#\"}
 response=${response%\"}
 case $response in
     [0-9]*:*) ;;
-    *)
-        printf '%s\n' 'limen: malformed response from Emacs' >&2
-        exit 5
-        ;;
+    *) fail 'limen: malformed response from Emacs' 5 ;;
 esac
 status=${response%%:*}
 payload=${response#*:}
 case $status in
-    *[!0-9]*|'')
-        printf '%s\n' 'limen: malformed response status' >&2
-        exit 5
-        ;;
+    *[!0-9]*|'') fail 'limen: malformed response status' 5 ;;
 esac
 case $payload in
-    *[!A-Za-z0-9+/=]*)
-        printf '%s\n' 'limen: malformed response payload' >&2
-        exit 5
-        ;;
+    *[!A-Za-z0-9+/=]*) fail 'limen: malformed response payload' 5 ;;
 esac
 
 if ! decoded=$(printf '%s' "$payload" | decode); then
-    printf '%s\n' 'limen: malformed response encoding' >&2
-    exit 5
+    fail 'limen: malformed response encoding' 5
+fi
+if [ -n "$quiet" ]; then
+    if [ "$status" -eq 0 ] && [ -n "$decoded" ]; then
+        printf '%s\n' "$decoded"
+    fi
+    exit 0
 fi
 printf '%s\n' "$decoded"
 exit "$status"

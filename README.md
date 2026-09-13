@@ -34,13 +34,20 @@ For Herdr-managed provider sessions, also load the bridge and enable its mode:
 (limen-herdr-mode 1)
 ```
 
+To have every prompt typed into a Claude Code or Codex pane carry Emacs context, load `limen-hooks` and switch injection on. The first session of each provider then offers to install `limen hook` into its user settings; `M-x limen-hooks-install` does the same on demand:
+
+```elisp
+(require 'limen-hooks)
+(setq limen-hooks-inject-context t)
+```
+
 Limen installs no global keybinding.
 
 ## Command line
 
 Put `bin/limen` on `PATH`. Run `limen` for the canonical command index and `limen help COMMAND` for command-specific arguments.
 
-`context` returns the project, focus, windows, buffers, compilations, and trail in one call; `--section` narrows it. `trail` lists recently visited buffers with settled point traces while `limen-trail-mode` is enabled. `annotations` lists scholia sessions, lists project-confined annotations, or renders a session in an export format; it answers `unknown_operation` until `limen-scholia` is loaded. `projects` uses Projectile when available and falls back to `project.el`. `compile` observes existing Emacs compilation buffers without starting work. `skill` generates instructions from the live operation registry. `eval -` reads source from standard input; evaluation remains disabled unless explicitly enabled in Emacs.
+`context` returns the project, focus, windows, buffers, compilations, and trail in one call; `--section` narrows it. `trail` lists recently visited buffers with settled point traces while `limen-trail-mode` is enabled. `annotations` lists scholia sessions, lists project-confined annotations, or renders a session in an export format; it answers `unknown_operation` until `limen-scholia` is loaded. `projects` uses Projectile when available and falls back to `project.el`. `compile` observes existing Emacs compilation buffers without starting work. `skill` generates instructions from the live operation registry. `hook claude` and `hook codex` answer the providers' `SessionStart` and `UserPromptSubmit` hooks from standard input; they act only inside Limen-launched or Herdr-hosted panes and exit silently otherwise. `eval -` reads source from standard input; evaluation remains disabled unless explicitly enabled in Emacs.
 
 ## Lisp interface
 
@@ -50,7 +57,7 @@ Register coarse operations with `limen-register-operation`, open integrations wi
 
 ## Provider integrations
 
-Claude Code, Codex, and Pi can use Limen through their native transports. The optional `limen-herdr-mode` injects launch and lifecycle wiring into Herdr without making either package depend on the other at runtime. `M-x limen-herdr-transient` exposes status, context push, reconnect, adoption, and protocol diagnostics. Herdr's message and send commands receive Limen's snapshot for any project-confined buffer, virtual ones included, with a `live: \`limen context\`` field pointing at the full state.
+Claude Code, Codex, and Pi can use Limen through their native transports. The optional `limen-herdr-mode` injects launch and lifecycle wiring into Herdr without making either package depend on the other at runtime. `M-x limen-herdr-transient` exposes status, context push, reconnect, adoption, and protocol diagnostics. Herdr's message and send commands receive Limen's snapshot for any project-confined buffer, virtual ones included, with a `live: \`limen context\`` field pointing at the full state. With `limen-hooks-inject-context` and the provider's hooks installed, that snapshot and the recent buffer trail reach the agent through its prompt hook instead of the message body.
 
 See [docs/integrations.md](docs/integrations.md) for the canonical capability, disclosure, and lifecycle contract. Claude's fixed wire evidence is recorded in [docs/claude-integration-parity.md](docs/claude-integration-parity.md).
 

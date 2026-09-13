@@ -797,14 +797,16 @@ DISCOVERY-DIRECTORY, TOOL-LIST, and TOOL-CALL override transport defaults."
         (setf (limen-claude-state-state state) 'stopped))))
   state)
 
+(defun limen-claude-config-directory ()
+  "Return Claude Code's configuration directory."
+  (let ((configured (getenv "CLAUDE_CONFIG_DIR")))
+    (if (and configured (not (string= configured "")))
+        configured
+      (expand-file-name ".claude" (or (getenv "HOME") "~")))))
+
 (defun limen-claude-discovery-directory ()
   "Return Claude Code's IDE discovery directory."
-  (let ((configured (getenv "CLAUDE_CONFIG_DIR")))
-    (expand-file-name
-     "ide"
-     (if (and configured (not (string= configured "")))
-         configured
-       (expand-file-name ".claude" (or (getenv "HOME") "~"))))))
+  (expand-file-name "ide" (limen-claude-config-directory)))
 
 (defun limen-claude-environment (state)
   "Return launch environment entries for Claude transport STATE."

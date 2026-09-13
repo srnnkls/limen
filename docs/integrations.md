@@ -18,6 +18,7 @@ Limen operations/events ├─ Codex MCP Streamable HTTP
 | Operations | fixed Claude compatibility catalog | registry-derived MCP tools | registry-derived Pi tools |
 | Passive selection | native `selection_changed` | subscribed MCP resource update | latest update injected once before the next turn |
 | Explicit context push | primary item through native `at_mentioned` | submitted through the Herdr terminal | model-visible extension message |
+| Prompt hooks | `UserPromptSubmit` and `SessionStart` in user settings | `UserPromptSubmit` and `SessionStart` in `hooks.json` | none |
 | Interactive diffs | fixed compatibility tools | registry-derived MCP tools | registry-derived Pi tools |
 | Launch wiring | `/ide` discovery and environment | per-launch MCP URL and bearer token | per-launch packaged extension and MCP environment |
 | Adopted external process | full integration | CLI only | CLI only |
@@ -60,6 +61,12 @@ Diagnostics merge existing Flymake results with Flycheck only when Flycheck is a
 ### Annotations
 
 `limen-scholia.el` registers `annotation.sessions`, `annotation.list`, and `annotation.export` for CLI and MCP, disabled until scholia loads. Sessions report whether they are active and whether they are the global or project write target, and count only files allowed below the request root. Listing defaults to the sessions visible in the current buffer, confines every file, and caps with `limit`; export renders one file or a whole session through scholia's own formatters. `context.get` gains an `annotations` section while any session is visible, and a Herdr message header carries `annotations: review (3), perf — \`limen annotations list\`` through `limen-herdr-context-fields-functions`, so the agent learns that annotations exist without receiving them.
+
+### Prompt hooks
+
+`limen-hooks.el` answers Claude Code and Codex hooks so prompts typed into an agent pane carry editor context without altering their text. `limen hook PROVIDER` reads the hook payload from standard input and prints `hookSpecificOutput.additionalContext`; it acts only when `LIMEN_SESSION`, set by the launch environment, or `HERDR_ENV=1` is present, and every failure exits 0 without output so a prompt is never blocked. `SessionStart` injects the `limen skill` reference, which Claude repeats after `/clear` and compaction. `UserPromptSubmit` injects an `Emacs context` block: the pending Herdr message context when one exists (`file:`, `mode:`, and the excerpt), the `limen-herdr-context-fields-functions` lines, a `recent:` line naming up to `limen-hooks-recent-limit` trail entries with their newest settled line, and the `live:` pointer. An unchanged block collapses to one line on later prompts.
+
+The session is resolved by `LIMEN_SESSION`, then by the open session rooted at the hook's working directory. Hooks are installed per provider into `$CLAUDE_CONFIG_DIR/settings.json` or `$CODEX_HOME/hooks.json` by `limen-hooks-install`, which preserves the file's other handlers and keys; `limen-hooks-uninstall` removes only Limen's entries. With `limen-hooks-inject-context` set, the first Claude or Codex session offers the install once per provider and Emacs session. A Herdr message sent to a provider with installed hooks carries only its text: `limen-herdr-context-hook` records the rendered context as a draft, `herdr-message-compose-functions` promotes it to the pending context when the message is sent, and the next `UserPromptSubmit` consumes it. Cancelled messages never promote.
 
 ### Compilation observation
 
@@ -119,7 +126,7 @@ The loopback listener, opaque route, token, project confinement, and owner-local
 `M-x limen-herdr-transient` opens the integration menu:
 
 ```text
-Integration:  p push context    s status    r reconnect
+Integration:  p push context    s status    r reconnect    h install hooks
 Claude:       a adopt           c connect   m auto-adopt
 Diagnostics:  l protocol log    d enable    D disable
 ```

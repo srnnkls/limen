@@ -81,11 +81,14 @@
 
 (defun limen-herdr--environment (state)
   "Return launch environment for bridge STATE."
-  (cond
-   ((limen-herdr-state-route state)
-    (limen-herdr--mcp-environment (limen-herdr-state-route state)))
-   ((limen-herdr-state-transport state)
-    (limen-claude-environment (limen-herdr-state-transport state)))))
+  (append
+   (cond
+    ((limen-herdr-state-route state)
+     (limen-herdr--mcp-environment (limen-herdr-state-route state)))
+    ((limen-herdr-state-transport state)
+     (limen-claude-environment (limen-herdr-state-transport state))))
+   (when-let* ((session (limen-herdr-state-session state)))
+     `((LIMEN_SESSION . ,(limen-session-id session))))))
 
 (defun limen-herdr--instance-name (session)
   "Return a plain Claude instance name for Herdr SESSION."
@@ -345,6 +348,11 @@ project-confined buffers report their name, mode, and text at point."
               (limen-herdr--virtual-context)
             (limen-herdr--current-context session)))))))
 
+(defvar limen-herdr-context-hook nil
+  "Functions run after a Herdr context is rendered for an integrated agent.
+Each receives the Limen session, the context alist, the session root, and
+the rendered text.")
+
 (defun limen-herdr-send-context (entry)
   "Return rich context for the integrated Herdr agent ENTRY, or nil."
   (condition-case nil
@@ -359,7 +367,10 @@ project-confined buffers report their name, mode, and text at point."
               (root (limen-session-project-root session)))
           (unless (or (alist-get 'items context) (alist-get 'buffer context))
             (push (cons 'major_mode (symbol-name major-mode)) context))
-          (limen-herdr--context-text context root t)))
+          (let ((text (limen-herdr--context-text context root t)))
+            (run-hook-with-args 'limen-herdr-context-hook
+                                session context root text)
+            text)))
     (user-error nil)))
 
 ;;;###autoload
