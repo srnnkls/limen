@@ -55,8 +55,16 @@ Nil resolves `limen' on variable `exec-path', then the package's bin/limen."
 (defconst limen-hooks--providers '(claude codex)
   "Providers whose prompt hooks Limen can answer.")
 
-(defconst limen-hooks--events '("UserPromptSubmit" "SessionStart")
-  "Hook events the installed handlers answer.")
+(defconst limen-hooks--base-events '(("UserPromptSubmit") ("SessionStart"))
+  "Hook events context injection needs.")
+
+(defvar limen-hooks-extra-events nil
+  "Further (EVENT . MATCHER) specs consumers need installed.
+MATCHER is nil or the provider's tool matcher string.")
+
+(defun limen-hooks-events ()
+  "Return every (EVENT . MATCHER) spec the installed hooks must cover."
+  (append limen-hooks--base-events limen-hooks-extra-events))
 
 (defconst limen-hooks--timeout 5
   "Seconds a provider waits for the hook before continuing without it.")
@@ -64,6 +72,12 @@ Nil resolves `limen' on variable `exec-path', then the package's bin/limen."
 (defconst limen-hooks--live-line
   "live: `limen context`; `limen --help` lists every command"
   "Header line pointing at the CLI.")
+
+(defvar limen-hooks-event-functions nil
+  "Functions run for every answered hook event.
+Each receives the provider name, the decoded payload extended with the
+`server' and `pane' of the Herdr pane, the resolved Limen session or nil,
+and the request context.")
 
 (defvar limen-hooks--declined nil
   "Providers whose install offer was declined in this Emacs session.")
@@ -155,9 +169,22 @@ Nil resolves `limen' on variable `exec-path', then the package's bin/limen."
   "Return non-nil when PROVIDER's settings run Limen's hooks for every event."
   (let ((settings (limen-hooks--read-settings
                    (limen-hooks-settings-file provider))))
-    (seq-every-p (lambda (event)
-                   (limen-hooks--event-installed-p settings event provider))
-                 limen-hooks--events)))
+    (seq-every-p (lambda (spec)
+                   (limen-hooks--event-installed-p settings (car spec) provider))
+                 (limen-hooks-events))))
+
+(defun limen-hooks--settings-events (settings)
+  "Return the names of every event SETTINGS registers handlers for."
+  (mapcar (lambda (entry) (symbol-name (car entry)))
+          (alist-get 'hooks settings)))
+
+(defun limen-hooks-any-installed-p (provider)
+  "Return non-nil when PROVIDER's settings run Limen's hook for some event."
+  (let ((settings (limen-hooks--read-settings
+                   (limen-hooks-settings-file provider))))
+    (seq-some (lambda (event)
+                (limen-hooks--event-installed-p settings event provider))
+              (limen-hooks--settings-events settings))))
 
 (defun limen-hooks--read-provider ()
   "Read a hook provider from the minibuffer."
@@ -173,11 +200,13 @@ Nil resolves `limen' on variable `exec-path', then the package's bin/limen."
          (settings (limen-hooks--read-settings file))
          (hooks (alist-get 'hooks settings))
          changed)
-    (dolist (event limen-hooks--events)
+    (pcase-dolist (`(,event . ,matcher) (limen-hooks-events))
       (unless (limen-hooks--event-installed-p settings event provider)
         (setf (alist-get (intern event) hooks)
               (vconcat (limen-hooks--event-groups settings event)
-                       (vector `((hooks . ,(vector (limen-hooks--handler provider))))))
+                       (vector
+                        (append (and matcher `((matcher . ,matcher)))
+                                `((hooks . ,(vector (limen-hooks--handler provider)))))))
               changed t)
         (setf (alist-get 'hooks settings) hooks)))
     (when changed
@@ -187,15 +216,14 @@ Nil resolves `limen' on variable `exec-path', then the package's bin/limen."
                (if changed "installed" "already present") file))
     changed))
 
-;;;###autoload
-(defun limen-hooks-uninstall (provider)
-  "Remove Limen's prompt hooks from PROVIDER's settings."
-  (interactive (limen-hooks--read-provider))
+(defun limen-hooks-remove-events (provider events)
+  "Remove Limen's handlers for the EVENTS named from PROVIDER's settings.
+Return non-nil when the settings changed."
   (let* ((file (limen-hooks-settings-file provider))
          (settings (limen-hooks--read-settings file))
          (hooks (alist-get 'hooks settings))
          changed)
-    (dolist (event limen-hooks--events)
+    (dolist (event events)
       (when (limen-hooks--event-installed-p settings event provider)
         (let ((groups
                (seq-remove
@@ -217,15 +245,36 @@ Nil resolves `limen' on variable `exec-path', then the package's bin/limen."
           (setf (alist-get 'hooks settings) hooks)
         (setq settings (assq-delete-all 'hooks settings)))
       (limen-hooks--write-settings file settings))
+    changed))
+
+;;;###autoload
+(defun limen-hooks-uninstall (provider)
+  "Remove Limen's prompt hooks from PROVIDER's settings."
+  (interactive (limen-hooks--read-provider))
+  (let ((changed (limen-hooks-remove-events
+                  provider
+                  (limen-hooks--settings-events
+                   (limen-hooks--read-settings
+                    (limen-hooks-settings-file provider))))))
     (when (called-interactively-p 'any)
       (message "Limen %s hooks %s in %s" provider
-               (if changed "removed" "not present") file))
+               (if changed "removed" "not present")
+               (limen-hooks-settings-file provider)))
     changed))
+
+(defun limen-hooks-complete-installed ()
+  "Add the missing events wherever some Limen hook is already installed.
+Return the providers whose settings changed."
+  (seq-filter (lambda (provider)
+                (and (limen-hooks-any-installed-p provider)
+                     (not (limen-hooks-installed-p provider))
+                     (limen-hooks-install provider)))
+              limen-hooks--providers))
 
 (defun limen-hooks--offer-install (session)
   "Offer to install prompt hooks for SESSION's provider on its first use."
   (let ((provider (limen-session-provider session)))
-    (when (and limen-hooks-inject-context
+    (when (and (or limen-hooks-inject-context limen-hooks-extra-events)
                (memq provider limen-hooks--providers)
                (not noninteractive)
                (not (memq provider limen-hooks--declined)))
@@ -381,6 +430,14 @@ Return nil to let Herdr append CONTEXT to the message."
            (root (if session
                      (limen-session-project-root session)
                    (limen-request-project-root context)))
+           (payload (append
+                     payload
+                     `((server . ,(limen-hooks--decode
+                                   (alist-get 'server_base64 request)))
+                       (pane . ,(limen-hooks--decode
+                                 (alist-get 'pane_base64 request))))))
+           (_ (run-hook-with-args 'limen-hooks-event-functions
+                                  provider payload session context))
            (text (pcase event
                    ("SessionStart" (limen-skill context))
                    ("UserPromptSubmit" (limen-hooks--prompt-context session root))

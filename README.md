@@ -41,6 +41,13 @@ To have every prompt typed into a Claude Code or Codex pane carry Emacs context,
 (setq limen-hooks-inject-context t)
 ```
 
+`limen-inbox-mode` lists the questions agents are waiting on in an `Inbox` section at the top of `herdr-status`. Enabling it registers the question hook events and adds them to every provider whose settings already run Limen's hooks:
+
+```elisp
+(require 'limen-inbox)
+(limen-inbox-mode 1)
+```
+
 Limen installs no global keybinding.
 
 ## Command line

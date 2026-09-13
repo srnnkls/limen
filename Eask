@@ -19,6 +19,9 @@
 (depends-on "websocket" "1.12")
 (depends-on "transient" "0.9.0")
 
+(development
+ (depends-on "magit-section" "4.0.0"))
+
 (load-paths ".")
 
 (files "limen*.el" "bin/limen" "license"

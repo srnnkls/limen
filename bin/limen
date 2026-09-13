@@ -455,6 +455,8 @@ case ${1-} in
         quiet=true
         payload_base64=$(encode)
         session_base64=$(printf '%s' "${LIMEN_SESSION:-}" | encode)
+        server_base64=$(printf '%s' "${HERDR_SOCKET_PATH:-}" | encode)
+        pane_base64=$(printf '%s' "${HERDR_PANE_ID:-}" | encode)
         ;;
     focus)
         case ${2-} in
@@ -886,8 +888,8 @@ case $method in
             "$operation" "$arguments" "$cwd_base64")
         ;;
     hook)
-        request=$(printf '{"version":1,"method":"hook","provider":"%s","session_base64":"%s","payload_base64":"%s","cwd_base64":"%s"}' \
-            "$provider" "$session_base64" "$payload_base64" "$cwd_base64")
+        request=$(printf '{"version":1,"method":"hook","provider":"%s","session_base64":"%s","server_base64":"%s","pane_base64":"%s","payload_base64":"%s","cwd_base64":"%s"}' \
+            "$provider" "$session_base64" "$server_base64" "$pane_base64" "$payload_base64" "$cwd_base64")
         ;;
     *)
         request=$(printf '{"version":1,"method":"%s","cwd_base64":"%s"}' \
