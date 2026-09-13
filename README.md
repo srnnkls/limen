@@ -34,7 +34,7 @@ For Herdr-managed provider sessions, also load the bridge and enable its mode:
 (limen-herdr-mode 1)
 ```
 
-To have every prompt typed into a Claude Code or Codex pane carry Emacs context, load `limen-hooks` and enable its mode. Enabling asks once per provider whose settings lack `limen hook` and installs it; `M-x limen-hooks-uninstall` removes it:
+To have every prompt typed into a Claude Code or Codex pane carry Emacs context, load `limen-hooks` and enable its mode. Enabling asks once per provider whose settings lack `limen hook` and installs it; modes enabled by the same command share that prompt. `M-x limen-hooks-uninstall` removes it:
 
 ```elisp
 (require 'limen-hooks)

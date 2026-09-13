@@ -257,22 +257,50 @@ Return non-nil when the settings changed."
                (limen-hooks-settings-file provider)))
     changed))
 
-(defun limen-hooks-install-all (&optional ask)
+(defun limen-hooks-install-all (&optional ask features)
   "Install the missing events for every provider.
-With ASK in an interactive session, confirm each provider first.  Return
-the providers whose settings changed; a provider whose settings cannot be
-written is reported and skipped."
+With ASK in an interactive session, confirm each provider first, naming
+FEATURES in the question.  Return the providers whose settings changed; a
+provider whose settings cannot be written is reported and skipped."
   (seq-filter (lambda (provider)
                 (condition-case err
                     (and (not (limen-hooks-installed-p provider))
                          (or (not ask) noninteractive
-                             (y-or-n-p (format "Install Limen hooks into %s? "
+                             (y-or-n-p (format "Install Limen %shooks into %s? "
+                                               (if features
+                                                   (concat (string-join features " and ") " ")
+                                                 "")
                                                (limen-hooks-settings-file provider))))
                          (limen-hooks-install provider))
                   (error
                    (message "Limen hooks: %s" (error-message-string err))
                    nil)))
               limen-hooks--providers))
+
+(defvar limen-hooks--requests nil
+  "Features whose hooks wait for the next coalesced install.")
+
+(defvar limen-hooks--request-timer nil
+  "Timer running the coalesced install after the current command.")
+
+(defun limen-hooks--run-requests ()
+  "Install the hooks every pending feature asked for, prompting once per provider."
+  (let ((features (nreverse limen-hooks--requests)))
+    (setq limen-hooks--requests nil
+          limen-hooks--request-timer nil)
+    (when features
+      (limen-hooks-install-all t features))))
+
+(defun limen-hooks-request-install (feature)
+  "Install the missing hooks FEATURE needs.
+Requests made by the same command, or during startup, share one prompt
+per provider; in batch they install at once."
+  (cl-pushnew feature limen-hooks--requests :test #'equal)
+  (cond
+   (noninteractive (limen-hooks--run-requests))
+   ((null limen-hooks--request-timer)
+    (setq limen-hooks--request-timer
+          (run-with-timer 0 nil #'limen-hooks--run-requests)))))
 
 (defun limen-hooks-remove-events-everywhere (events)
   "Remove Limen's handlers for the EVENTS named from every provider's settings."
@@ -451,14 +479,14 @@ Return nil to let Herdr append CONTEXT to the message."
 ;;;###autoload
 (define-minor-mode limen-hooks-mode
   "Inject Emacs context through agent prompt hooks instead of the message body.
-Enabling installs the context hook events for every provider, asking
-first for each provider whose settings lack them, and Herdr messages to
-a provider with installed hooks carry only their text; disabling removes
-the context events again."
+Enabling requests the context hook events for every provider, which
+asks once per provider whose settings lack them after the current
+command, and Herdr messages to a provider with installed hooks carry
+only their text; disabling removes the context events again."
   :global t
   :group 'limen-hooks
   (if limen-hooks-mode
-      (limen-hooks-install-all t)
+      (limen-hooks-request-install "context")
     (limen-hooks-remove-events-everywhere
      (mapcar #'car limen-hooks--base-events))))
 
