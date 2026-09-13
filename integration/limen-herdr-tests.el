@@ -230,6 +230,37 @@
       (delete-directory root t)
       (delete-directory outside t))))
 
+(ert-deftest limen-herdr-context-fields-functions-extend-the-header ()
+  (let* ((root (file-truename (make-temp-file "limen-herdr-fields" t)))
+         (file (expand-file-name "noted.el" root))
+         (entry '((server_key . "/tmp/herdr.sock") (terminal_id . "term-codex")))
+         (agent-session (limen-herdr-tests--session "codex" root))
+         (integration (limen-open-session :provider 'codex :project-root root))
+         (limen-herdr-context-fields-functions
+          (list (lambda (context fields-root)
+                  (should (equal fields-root root))
+                  (should (alist-get 'path context))
+                  (list "annotations: review (1)"))))
+         buffer)
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "alpha\n"))
+          (setq buffer (find-file-noselect file))
+          (limen-herdr--set-state
+           agent-session
+           (make-limen-herdr-state :provider 'codex :session integration))
+          (cl-letf (((symbol-function 'herdr-agent-resolve-session)
+                     (lambda (_target) agent-session)))
+            (with-current-buffer buffer
+              (goto-char (point-min))
+              (should (string-match-p
+                       "\\`Emacs context\nfile: noted.el:1:0-1:5\nmode: [a-z-]+\nannotations: review (1)\nlive: `limen context`\n"
+                       (limen-herdr-send-context entry))))))
+      (when (buffer-live-p buffer) (kill-buffer buffer))
+      (unless (limen-session-closed-p integration)
+        (limen-close-session integration))
+      (delete-directory root t))))
+
 (ert-deftest limen-herdr-claude-auto-adoption-observes-herdr-events ()
   (let ((agent '((agent . "claude") (pane_id . "pane-1")
                  (terminal_id . "term-1") (cwd . "/tmp")

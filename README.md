@@ -20,6 +20,12 @@ Recent-buffer tracking is opt-in. Load `limen-trail` and enable its mode to expo
 (limen-trail-mode 1)
 ```
 
+With [scholia](https://github.com/srnnkls/scholia) installed, `limen-scholia` exposes annotation sessions as `annotation.*` operations and names the visible sessions in Herdr message headers:
+
+```elisp
+(require 'limen-scholia)
+```
+
 For Herdr-managed provider sessions, also load the bridge and enable its mode:
 
 ```elisp
@@ -34,7 +40,7 @@ Limen installs no global keybinding.
 
 Put `bin/limen` on `PATH`. Run `limen` for the canonical command index and `limen help COMMAND` for command-specific arguments.
 
-`context` returns the project, focus, windows, buffers, compilations, and trail in one call; `--section` narrows it. `trail` lists recently visited buffers with settled point traces while `limen-trail-mode` is enabled. `projects` uses Projectile when available and falls back to `project.el`. `compile` observes existing Emacs compilation buffers without starting work. `skill` generates instructions from the live operation registry. `eval -` reads source from standard input; evaluation remains disabled unless explicitly enabled in Emacs.
+`context` returns the project, focus, windows, buffers, compilations, and trail in one call; `--section` narrows it. `trail` lists recently visited buffers with settled point traces while `limen-trail-mode` is enabled. `annotations` lists scholia sessions, lists project-confined annotations, or renders a session in an export format; it answers `unknown_operation` until `limen-scholia` is loaded. `projects` uses Projectile when available and falls back to `project.el`. `compile` observes existing Emacs compilation buffers without starting work. `skill` generates instructions from the live operation registry. `eval -` reads source from standard input; evaluation remains disabled unless explicitly enabled in Emacs.
 
 ## Lisp interface
 

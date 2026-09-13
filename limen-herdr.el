@@ -232,6 +232,11 @@ Paths outside ROOT stay absolute."
     (concat "- " (limen-herdr--context-path (alist-get 'path item) root)
             (if position (concat ":" position) ""))))
 
+(defvar limen-herdr-context-fields-functions nil
+  "Functions returning extra header lines for a sent context.
+Each receives the context alist and the session root and returns a list
+of \"key: value\" strings, or nil.")
+
 (defun limen-herdr--context-fields (context root)
   "Return the key-value header lines for single-buffer CONTEXT below ROOT."
   (let ((path (limen-herdr--context-path (alist-get 'path context) root))
@@ -260,6 +265,11 @@ With LIVE, add the `limen context' pointer to the header block."
                             items "\n"))
        (concat
         (string-join (append (limen-herdr--context-fields context root)
+                             (and live
+                                  (mapcan (lambda (function)
+                                            (copy-sequence
+                                             (funcall function context root)))
+                                          limen-herdr-context-fields-functions))
                              (and live-line (list live-line)))
                      "\n")
         (if (and text (not (string-empty-p text)))

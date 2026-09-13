@@ -16,6 +16,7 @@ Commands:
   trail        List recently visited Emacs buffers
   buffer       Work with Emacs buffers
   compile      Inspect Emacs compilation buffers
+  annotations  Inspect scholia annotation sessions
   windows      List Emacs windows
   diagnostics  List Flymake diagnostics
   projects     List known projects
@@ -113,6 +114,61 @@ Arguments:
 
 Options:
   -h, --help  Print help
+EOF
+}
+
+annotations_help() {
+    cat <<'EOF'
+Inspect scholia annotation sessions.
+
+Usage: limen annotations <COMMAND>
+
+Commands:
+  sessions          List sessions with project-confined file counts
+  list [OPTIONS]    List annotations from visible or named sessions
+  export [OPTIONS]  Render a session's annotations in an export format
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+annotations_sessions_help() {
+    cat <<'EOF'
+List scholia sessions with project-confined file counts.
+
+Usage: limen annotations sessions
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+annotations_list_help() {
+    cat <<'EOF'
+List scholia annotations, confined to the project.
+
+Usage: limen annotations list [OPTIONS]
+
+Options:
+      --session <NAME>  Session name; omit for the visible sessions
+      --path <PATH>     Project-relative or absolute file path
+      --limit <N>       Return at most N annotations
+  -h, --help            Print help
+EOF
+}
+
+annotations_export_help() {
+    cat <<'EOF'
+Render a scholia session's project-confined annotations.
+
+Usage: limen annotations export --session <NAME> [OPTIONS]
+
+Options:
+      --session <NAME>   Session name
+      --path <PATH>      Restrict the rendering to one file
+      --format <FORMAT>  rustc (default), diff, or integrate
+  -h, --help             Print help
 EOF
 }
 
@@ -263,6 +319,7 @@ show_help() {
                 trail) trail_help ;;
                 buffer) buffer_help ;;
                 compile) compile_help ;;
+                annotations) annotations_help ;;
                 windows) windows_help ;;
                 diagnostics) diagnostics_help ;;
                 projects) projects_help ;;
@@ -279,6 +336,9 @@ show_help() {
                 "buffer save") buffer_save_help ;;
                 "compile list") compile_list_help ;;
                 "compile read") compile_read_help ;;
+                "annotations sessions") annotations_sessions_help ;;
+                "annotations list") annotations_list_help ;;
+                "annotations export") annotations_export_help ;;
                 *) usage help ;;
             esac
             ;;
@@ -448,6 +508,102 @@ case ${1-} in
                 esac
                 ;;
             *) usage compile_help ;;
+        esac
+        ;;
+    annotations)
+        case ${2-} in
+            ''|-h|--help)
+                [ "$#" -le 2 ] || usage annotations_help
+                annotations_help
+                exit 0
+                ;;
+            sessions)
+                case ${3-} in
+                    '') [ "$#" -eq 2 ] || usage annotations_sessions_help ;;
+                    -h|--help)
+                        [ "$#" -eq 3 ] || usage annotations_sessions_help
+                        annotations_sessions_help
+                        exit 0
+                        ;;
+                    *) usage annotations_sessions_help ;;
+                esac
+                method=call
+                operation=annotation.sessions
+                ;;
+            list)
+                case ${3-} in -h|--help) [ "$#" -eq 3 ] || usage annotations_list_help; annotations_list_help; exit 0 ;; esac
+                method=call
+                operation=annotation.list
+                argument_fields=
+                session_seen=
+                path_seen=
+                limit_seen=
+                shift 2
+                while [ "$#" -gt 0 ]; do
+                    case $1 in
+                        --session)
+                            [ "$#" -ge 2 ] && [ -z "$session_seen" ] || usage annotations_list_help
+                            session_seen=true
+                            add_string_argument session "$2"
+                            shift 2
+                            ;;
+                        --path)
+                            [ "$#" -ge 2 ] && [ -z "$path_seen" ] || usage annotations_list_help
+                            path_seen=true
+                            add_string_argument path "$2"
+                            shift 2
+                            ;;
+                        --limit)
+                            [ "$#" -ge 2 ] && [ -z "$limit_seen" ] || usage annotations_list_help
+                            limit_seen=true
+                            add_integer_argument limit "$2" annotations_list_help
+                            shift 2
+                            ;;
+                        *) usage annotations_list_help ;;
+                    esac
+                done
+                arguments="{$argument_fields}"
+                ;;
+            export)
+                case ${3-} in -h|--help) [ "$#" -eq 3 ] || usage annotations_export_help; annotations_export_help; exit 0 ;; esac
+                method=call
+                operation=annotation.export
+                argument_fields=
+                session_seen=
+                path_seen=
+                format_seen=
+                shift 2
+                while [ "$#" -gt 0 ]; do
+                    case $1 in
+                        --session)
+                            [ "$#" -ge 2 ] && [ -z "$session_seen" ] || usage annotations_export_help
+                            session_seen=true
+                            add_string_argument session "$2"
+                            shift 2
+                            ;;
+                        --path)
+                            [ "$#" -ge 2 ] && [ -z "$path_seen" ] || usage annotations_export_help
+                            path_seen=true
+                            add_string_argument path "$2"
+                            shift 2
+                            ;;
+                        --format)
+                            [ "$#" -ge 2 ] && [ -z "$format_seen" ] || usage annotations_export_help
+                            case $2 in
+                                rustc|diff|integrate) ;;
+                                *) usage annotations_export_help ;;
+                            esac
+                            format_seen=true
+                            append_argument "\"format\":\"$2\""
+                            shift 2
+                            ;;
+                        *) usage annotations_export_help ;;
+                    esac
+                done
+                [ -n "$session_seen" ] || usage annotations_export_help
+                arguments="{$argument_fields}"
+                ;;
+            *) usage annotations_help ;;
         esac
         ;;
     buffer)
@@ -706,8 +862,11 @@ case $operation in
     trail.*)
         expression="(progn (require 'limen) (require 'limen-trail) (limen-server-dispatch \"$encoded\"))"
         ;;
+    annotation.*)
+        expression="(progn (require 'limen) (require 'limen-scholia nil t) (limen-server-dispatch \"$encoded\"))"
+        ;;
     context.*)
-        expression="(progn (require 'limen) (require 'limen-compile) (require 'limen-trail) (limen-server-dispatch \"$encoded\"))"
+        expression="(progn (require 'limen) (require 'limen-compile) (require 'limen-trail) (require 'limen-scholia nil t) (limen-server-dispatch \"$encoded\"))"
         ;;
     *)
         expression="(progn (require 'limen) (limen-server-dispatch \"$encoded\"))"

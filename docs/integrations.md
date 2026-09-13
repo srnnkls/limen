@@ -30,7 +30,7 @@ Codex and Pi startup wiring cannot be retrofitted into an externally started pro
 
 `limen.el` owns operation, event, request, and integration-session contracts without depending on Herdr or a provider.
 
-Operations have a dotted ID, description, recursive parameter schema, effect, interface visibility, enable predicate, and optional deferred completion. Registry-derived MCP operations cover one-call context, live buffers, selected-window focus, windows, the opt-in recent-buffer trail, computed diagnostics, editable diffs, and existing compilation buffers. `project.list` stays CLI-only. `elisp.eval` remains CLI-only, hidden, and disabled unless `limen-enable-elisp-eval` is non-nil.
+Operations have a dotted ID, description, recursive parameter schema, effect, interface visibility, enable predicate, and optional deferred completion. Registry-derived MCP operations cover one-call context, live buffers, selected-window focus, windows, the opt-in recent-buffer trail, computed diagnostics, editable diffs, existing compilation buffers, and scholia annotation sessions when `limen-scholia` is loaded. `project.list` stays CLI-only. `elisp.eval` remains CLI-only, hidden, and disabled unless `limen-enable-elisp-eval` is non-nil.
 
 Two normalized events carry editor context:
 
@@ -56,6 +56,10 @@ Virtual-buffer metadata remains listable. Content and positional state are denie
 Buffer records include kind, modification tick, modified state, major mode, and narrowing bounds. `buffer.read` returns live unsaved text and respects narrowing unless `widen` is explicit. `expected_tick` rejects stale reads. `buffer.save` requires a matching tick and unchanged on-disk state, then revalidates the destination after save hooks. Conflicts never prompt or overwrite silently.
 
 Diagnostics merge existing Flymake results with Flycheck only when Flycheck is already loaded. URI filtering, path policy, deterministic deduplication, one-based lines, and zero-based logical character columns apply to the normalized records.
+
+### Annotations
+
+`limen-scholia.el` registers `annotation.sessions`, `annotation.list`, and `annotation.export` for CLI and MCP, disabled until scholia loads. Sessions report whether they are active and whether they are the global or project write target, and count only files allowed below the request root. Listing defaults to the sessions visible in the current buffer, confines every file, and caps with `limit`; export renders one file or a whole session through scholia's own formatters. `context.get` gains an `annotations` section while any session is visible, and a Herdr message header carries `annotations: review (3), perf — \`limen annotations list\`` through `limen-herdr-context-fields-functions`, so the agent learns that annotations exist without receiving them.
 
 ### Compilation observation
 
