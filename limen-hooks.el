@@ -64,6 +64,10 @@ MATCHER is nil or the provider's tool matcher string.")
 (defconst limen-hooks--timeout 5
   "Seconds a provider waits for the hook before continuing without it.")
 
+(defconst limen-hooks--session-end-timeout 1
+  "Seconds a provider waits for the SessionEnd hook.
+Claude shares 1.5 s among every SessionEnd hook and Codex clamps them to 3 s.")
+
 (defconst limen-hooks--live-line
   "live: `limen context`; `limen --help` lists every command"
   "Header line pointing at the CLI.")
@@ -113,11 +117,13 @@ and the request context.")
   (format "%s hook %s" (or limen-hooks-command (limen-hooks--default-command))
           provider))
 
-(defun limen-hooks--handler (provider)
-  "Return the hook handler record installed for PROVIDER."
+(defun limen-hooks--handler (provider event)
+  "Return the hook handler record installed for PROVIDER's EVENT."
   `((type . "command")
     (command . ,(limen-hooks-command-line provider))
-    (timeout . ,limen-hooks--timeout)))
+    (timeout . ,(if (equal event "SessionEnd")
+                    limen-hooks--session-end-timeout
+                  limen-hooks--timeout))))
 
 (defun limen-hooks--handler-p (handler provider)
   "Return non-nil when HANDLER is Limen's hook for PROVIDER."
@@ -198,7 +204,7 @@ and the request context.")
               (vconcat (limen-hooks--event-groups settings event)
                        (vector
                         (append (and matcher `((matcher . ,matcher)))
-                                `((hooks . ,(vector (limen-hooks--handler provider)))))))
+                                `((hooks . ,(vector (limen-hooks--handler provider event)))))))
               changed t)
         (setf (alist-get 'hooks settings) hooks)))
     (when changed

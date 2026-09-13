@@ -110,6 +110,13 @@
         (dolist (event '("Stop" "SessionEnd"))
           (should (equal (limen-hooks-tests--commands settings event)
                          '("limen hook claude"))))
+        (cl-flet ((timeout (event)
+                    (alist-get 'timeout
+                               (aref (alist-get 'hooks
+                                                (aref (alist-get event (alist-get 'hooks settings)) 0))
+                                     0))))
+          (should (= (timeout 'SessionEnd) 1))
+          (should (= (timeout 'Stop) 5)))
         (should (equal (mapcar #'car settings) '(model env flag hooks))))
       (should-not (limen-hooks-install 'claude))
       (should (limen-hooks-uninstall 'claude))
