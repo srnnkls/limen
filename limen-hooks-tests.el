@@ -90,7 +90,7 @@
       (with-temp-file file
         (insert "{\n  \"model\": \"opus\",\n  \"env\": {\"A\": \"1\", \"B\": null},\n"
                 "  \"flag\": false,\n"
-                "  \"hooks\": {\n    \"UserPromptSubmit\": [\n      {\"hooks\": [{\"type\": \"command\", \"command\": \"fas eval\"}]}\n    ]\n  }\n}\n"))
+                "  \"hooks\": {\n    \"UserPromptSubmit\": [\n      {\"matcher\": \"\", \"hooks\": [{\"type\": \"command\", \"command\": \"fas eval\"}]}\n    ]\n  }\n}\n"))
       (should-not (limen-hooks-installed-p 'claude))
       (should (limen-hooks-install 'claude))
       (should (limen-hooks-installed-p 'claude))
@@ -117,6 +117,10 @@
       (let ((settings (limen-hooks-tests--read file)))
         (should (equal (limen-hooks-tests--commands settings "UserPromptSubmit")
                        '("fas eval")))
+        (should (equal (mapcar #'car (aref (alist-get 'UserPromptSubmit
+                                                      (alist-get 'hooks settings))
+                                           0))
+                       '(matcher hooks)))
         (should (equal (mapcar #'car (alist-get 'hooks settings))
                        '(UserPromptSubmit))))
       (should-not (limen-hooks-uninstall 'claude))

@@ -225,8 +225,11 @@ Return non-nil when the settings changed."
                                        (lambda (handler)
                                          (limen-hooks--handler-p handler provider))
                                        (alist-get 'hooks group))))
-                            (cons (cons 'hooks (vconcat kept))
-                                  (assq-delete-all 'hooks (copy-sequence group)))))
+                            (mapcar (lambda (entry)
+                                      (if (eq (car entry) 'hooks)
+                                          (cons 'hooks (vconcat kept))
+                                        entry))
+                                    group)))
                         (limen-hooks--event-groups settings event)))))
           (if groups
               (setf (alist-get (intern event) hooks) (vconcat groups))
