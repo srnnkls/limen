@@ -30,6 +30,11 @@
   :type '(repeat string)
   :group 'limen-hooks)
 
+(defcustom limen-inbox-transcript-tail-bytes 262144
+  "How many bytes from the end of a Codex transcript are scanned for questions."
+  :type '(integer 1024)
+  :group 'limen-hooks)
+
 (defconst limen-inbox--events
   '(("PreToolUse" . "AskUserQuestion|request_user_input")
     ("PostToolUse" . "AskUserQuestion|request_user_input")
@@ -60,10 +65,13 @@
     (file-truename (expand-file-name path))))
 
 (defun limen-inbox--question (record)
-  "Return the question fields kept from the tool input RECORD."
+  "Return the question fields kept from the tool input RECORD.
+Claude names the text `question' and its options carry a `label';
+Codex names it `title' and may list its options as plain strings."
   `((header . ,(alist-get 'header record))
-    (question . ,(alist-get 'question record))
-    (options . ,(mapcar (lambda (option) (alist-get 'label option))
+    (question . ,(or (alist-get 'question record) (alist-get 'title record)))
+    (options . ,(mapcar (lambda (option)
+                          (if (stringp option) option (alist-get 'label option)))
                         (append (alist-get 'options record) nil)))
     (multi . ,(eq (alist-get 'multiSelect record) t))
     (other . ,(eq (alist-get 'isOther record) t))))
@@ -102,8 +110,65 @@
        (limen-inbox--remove-if
         (lambda (entry) (equal (alist-get 'agent_session entry) agent)))))
 
-(defun limen-inbox--on-event (_provider payload _session _request)
-  "Track the question tool call reported by hook PAYLOAD."
+(defun limen-inbox--transcript-lines (path)
+  "Return the complete lines in the tail of the transcript PATH."
+  (when (and (stringp path) (file-readable-p path))
+    (let* ((size (file-attribute-size (file-attributes path)))
+           (start (max 0 (- size limen-inbox-transcript-tail-bytes))))
+      (with-temp-buffer
+        (insert-file-contents path nil start size)
+        (goto-char (point-min))
+        (when (> start 0)
+          (forward-line 1))
+        (split-string (buffer-substring (point) (point-max)) "\n" t)))))
+
+(defun limen-inbox--transcript-call (line turn)
+  "Return (CALL-ID . QUESTIONS) when LINE records a question call in TURN."
+  (when (string-match-p "request_user_input" line)
+    (when-let* ((record (ignore-errors
+                          (json-parse-string line :object-type 'alist)))
+                (payload (alist-get 'payload record))
+                ((equal (alist-get 'type record) "response_item"))
+                ((equal (alist-get 'type payload) "function_call"))
+                ((string-prefix-p "request_user_input"
+                                  (or (alist-get 'name payload) "")))
+                (call-turn (alist-get
+                            'turn_id
+                            (alist-get 'internal_chat_message_metadata_passthrough
+                                       payload)
+                            turn))
+                ((or (null turn) (equal call-turn turn)))
+                (arguments (ignore-errors
+                             (json-parse-string (alist-get 'arguments payload)
+                                                :object-type 'alist)))
+                (questions (alist-get 'questions arguments))
+                ((vectorp questions))
+                ((> (length questions) 0)))
+      (cons (alist-get 'call_id payload)
+            (mapcar #'limen-inbox--question (append questions nil))))))
+
+(defun limen-inbox--add-transcript-questions (payload)
+  "Add the questions the turn ending with hook PAYLOAD asked asynchronously.
+Codex answers `request_user_input_async' at once and ends the turn, so
+the call only shows in the transcript; return non-nil when any was added."
+  (let ((agent (alist-get 'session_id payload))
+        (turn (alist-get 'turn_id payload))
+        added)
+    (dolist (line (limen-inbox--transcript-lines
+                   (alist-get 'transcript_path payload)))
+      (when-let* ((call (limen-inbox--transcript-call line turn)))
+        (limen-inbox--add
+         `((id . ,(or (car call) (format "%s:%s" agent (float-time))))
+           (agent_session . ,agent)
+           (server . ,(limen-inbox--server (alist-get 'server payload)))
+           (pane . ,(alist-get 'pane payload))
+           (asked . ,(current-time))
+           (questions . ,(cdr call))))
+        (setq added t)))
+    added))
+
+(defun limen-inbox--on-event (provider payload _session _request)
+  "Track the question tool call reported by PROVIDER's hook PAYLOAD."
   (let ((event (alist-get 'hook_event_name payload))
         (tool (alist-get 'tool_name payload))
         (id (alist-get 'tool_use_id payload))
@@ -119,7 +184,12 @@
                    (limen-inbox--remove-if
                     (lambda (entry) (equal (alist-get 'id entry) id)))
                  (limen-inbox--remove-agent agent))))
-            ((or "UserPromptSubmit" "Stop" "SessionEnd")
+            ("Stop"
+             (let ((removed (limen-inbox--remove-agent agent))
+                   (added (and (equal provider "codex")
+                               (limen-inbox--add-transcript-questions payload))))
+               (or removed added)))
+            ((or "UserPromptSubmit" "SessionEnd")
              (limen-inbox--remove-agent agent)))
       (limen-inbox--refresh))))
 

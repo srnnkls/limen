@@ -19,7 +19,7 @@ Limen operations/events ├─ Codex MCP Streamable HTTP
 | Passive selection | native `selection_changed` | subscribed MCP resource update | latest update injected once before the next turn |
 | Explicit context push | primary item through native `at_mentioned` | submitted through the Herdr terminal | model-visible extension message |
 | Prompt hooks | `UserPromptSubmit` and `SessionStart` in user settings | `UserPromptSubmit` and `SessionStart` in `hooks.json` | none |
-| Question inbox | `AskUserQuestion` through `PreToolUse`/`PostToolUse` | `request_user_input` through `PreToolUse`/`PostToolUse` | none |
+| Question inbox | `AskUserQuestion` through `PreToolUse`/`PostToolUse` | `request_user_input_async` read from the transcript on `Stop` | none |
 | Interactive diffs | fixed compatibility tools | registry-derived MCP tools | registry-derived Pi tools |
 | Launch wiring | `/ide` discovery and environment | per-launch MCP URL and bearer token | per-launch packaged extension and MCP environment |
 | Adopted external process | full integration | CLI only | CLI only |
@@ -73,7 +73,9 @@ The session is resolved by `LIMEN_SESSION`, then by the open session rooted at t
 
 `limen-inbox.el` keeps the questions agents are waiting on and lists them at the top of `herdr-status`. `limen-inbox-mode` is the switch: enabling it adds `PreToolUse` and `PostToolUse` with the matcher `AskUserQuestion|request_user_input`, `Stop`, and `SessionEnd` to `limen-hooks-extra-events`, requests the install under the feature name `inbox`, and registers with `limen-hooks-event-functions` and `herdr-status-sections-functions`; disabling removes those handlers from the providers' settings again. Claude's matcher reads the `|` list as exact tool names, Codex's as a regex.
 
-A `PreToolUse` for a tool in `limen-inbox-question-tools` records the call's `tool_use_id`, agent `session_id`, Herdr server and pane, and its questions with `header`, `question`, option labels, `multiSelect`, and `isOther`. The matching `PostToolUse` removes it; because a dismissed dialog is not documented to fire one, the agent's next `UserPromptSubmit`, its `Stop`, its `SessionEnd`, and a redraw that finds no dashboard agent on that server and pane remove it too. Every change requests a dashboard redraw through `herdr-status-request-refresh`.
+A `PreToolUse` for a tool in `limen-inbox-question-tools` records the call's `tool_use_id`, agent `session_id`, Herdr server and pane, and its questions with `header`, `question`, option labels, `multiSelect`, and `isOther`. The matching `PostToolUse` removes it; because a dismissed dialog is not documented to fire one, the agent's next `UserPromptSubmit`, its `Stop`, its `SessionEnd`, and a redraw that finds no dashboard agent on that server and pane remove it too.
+
+Codex does not run its tool hooks for `request_user_input_async`: the call is accepted at once, the turn ends, and the question is shown afterwards. The `Stop` payload carries the turn id and the rollout path, so the inbox scans the last `limen-inbox-transcript-tail-bytes` of that transcript for this turn's `request_user_input*` function calls and lists their questions, which name the text `title` and may list options as plain strings. The answer is the user's next prompt, so `UserPromptSubmit` clears them. Every change requests a dashboard redraw through `herdr-status-request-refresh`.
 
 The section is inserted through `herdr-status-sections-functions` before the recent agents and only while a question is pending. Each asking agent is a `herdr-status-agent` section drawn with `herdr-status-agent-row`, so `RET`, `o`, `P`, `x`, and `R` act on it, and its body lists `header: question`, `(multi)` or `(or other)`, and the options joined by ` · `. Answering stays in the pane.
 

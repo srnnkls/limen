@@ -108,6 +108,70 @@
     (limen-inbox-clear)
     (should-not (limen-inbox-questions))))
 
+(defconst limen-inbox-tests--transcript-lines
+  (list
+   "{\"timestamp\":\"t\",\"type\":\"turn_context\",\"payload\":{\"turn_id\":\"turn-1\"}}"
+   (concat "{\"timestamp\":\"t\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\","
+           "\"name\":\"request_user_input_async\",\"arguments\":\"{\\\"questions\\\":[{\\\"title\\\":\\\"Old?\\\",\\\"options\\\":[\\\"a\\\"]}]}\","
+           "\"call_id\":\"call_old\",\"internal_chat_message_metadata_passthrough\":{\"turn_id\":\"turn-1\"}}}")
+   "{\"timestamp\":\"t\",\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"item\":{\"questions\":[{\"title\":\"noise request_user_input\"}]}}}"
+   (concat "{\"timestamp\":\"t\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\","
+           "\"name\":\"request_user_input_async\",\"arguments\":\"{\\\"questions\\\":[{\\\"title\\\":\\\"Which cache?\\\",\\\"options\\\":[\\\"Redis\\\",\\\"Memory\\\"]}]}\","
+           "\"call_id\":\"call_new\",\"internal_chat_message_metadata_passthrough\":{\"turn_id\":\"turn-2\"}}}")
+   (concat "{\"timestamp\":\"t\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\","
+           "\"name\":\"request_user_input\",\"arguments\":\"{\\\"questions\\\":[{\\\"id\\\":\\\"q\\\",\\\"header\\\":\\\"Scope\\\",\\\"question\\\":\\\"Tests?\\\",\\\"options\\\":[{\\\"label\\\":\\\"Yes\\\"}],\\\"isOther\\\":true}]}\","
+           "\"call_id\":\"call_sync\",\"internal_chat_message_metadata_passthrough\":{\"turn_id\":\"turn-2\"}}}")
+   "{\"timestamp\":\"t\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call_new\",\"output\":\"{\\\"accepted\\\":true}\"}}"
+   "{\"timestamp\":\"t\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"turn-2\"}}"))
+
+(ert-deftest limen-inbox-reads-codex-questions-from-the-transcript-on-stop ()
+  (limen-inbox-tests--with-inbox
+    (let ((transcript (make-temp-file "limen-inbox-rollout" nil ".jsonl"))
+          (limen-inbox-transcript-tail-bytes 4096))
+      (unwind-protect
+          (progn
+            (with-temp-file transcript
+              (dotimes (_ 200)
+                (insert "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"filler\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}}\n"))
+              (insert (string-join limen-inbox-tests--transcript-lines "\n") "\n"))
+            (limen-inbox--on-event "codex"
+                                   (limen-inbox-tests--payload
+                                    "Stop" '(session_id . "codex-1") '(turn_id . "turn-2")
+                                    (cons 'transcript_path transcript))
+                                   nil nil)
+            (should (= refreshes 1))
+            (should (equal (mapcar (lambda (entry)
+                                     (list (alist-get 'id entry)
+                                           (alist-get 'agent_session entry)
+                                           (mapcar (lambda (question)
+                                                     (list (alist-get 'header question)
+                                                           (alist-get 'question question)
+                                                           (alist-get 'options question)
+                                                           (alist-get 'other question)))
+                                                   (alist-get 'questions entry))))
+                                   (limen-inbox-questions))
+                           '(("call_new" "codex-1" ((nil "Which cache?" ("Redis" "Memory") nil)))
+                             ("call_sync" "codex-1" (("Scope" "Tests?" ("Yes") t))))))
+            (limen-inbox--on-event "codex"
+                                   (limen-inbox-tests--payload
+                                    "Stop" '(session_id . "codex-1") '(turn_id . "turn-3")
+                                    (cons 'transcript_path transcript))
+                                   nil nil)
+            (should-not (limen-inbox-questions))
+            (limen-inbox--on-event "claude"
+                                   (limen-inbox-tests--payload
+                                    "Stop" '(session_id . "codex-1") '(turn_id . "turn-2")
+                                    (cons 'transcript_path transcript))
+                                   nil nil)
+            (should-not (limen-inbox-questions))
+            (limen-inbox--on-event "codex"
+                                   (limen-inbox-tests--payload
+                                    "Stop" '(session_id . "codex-1") '(turn_id . "turn-2")
+                                    '(transcript_path . "/nonexistent/rollout.jsonl"))
+                                   nil nil)
+            (should-not (limen-inbox-questions)))
+        (delete-file transcript)))))
+
 (ert-deftest limen-inbox-groups-questions-by-dashboard-agent-and-prunes-the-rest ()
   (limen-inbox-tests--with-inbox
     (let ((alpha `((server_key . "/tmp/alpha.sock") (pane_id . "%1") (name . "api")))
