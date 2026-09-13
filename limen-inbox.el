@@ -35,6 +35,12 @@
   :type '(integer 1024)
   :group 'limen-hooks)
 
+(defcustom limen-inbox-settle-seconds 10
+  "Seconds a transcript-sourced question is kept before its agent must be blocked.
+Herdr detects the question UI on screen a moment after the turn ends."
+  :type 'number
+  :group 'limen-hooks)
+
 (defconst limen-inbox--events
   '(("PreToolUse" . "AskUserQuestion|request_user_input")
     ("PostToolUse" . "AskUserQuestion|request_user_input")
@@ -163,6 +169,7 @@ the call only shows in the transcript; return non-nil when any was added."
            (server . ,(limen-inbox--server (alist-get 'server payload)))
            (pane . ,(alist-get 'pane payload))
            (asked . ,(current-time))
+           (source . transcript)
            (questions . ,(cdr call))))
         (setq added t)))
     added))
@@ -206,12 +213,22 @@ the call only shows in the transcript; return non-nil when any was added."
                               server)))
                 agents))))
 
+(defun limen-inbox--stale-p (entry agent)
+  "Return non-nil when ENTRY's question is no longer showing in AGENT's pane.
+Only transcript-sourced questions have no answering hook; they are stale
+once AGENT is not blocked and ENTRY is older than `limen-inbox-settle-seconds'."
+  (and (eq (alist-get 'source entry) 'transcript)
+       (not (equal (alist-get 'agent_status agent) "blocked"))
+       (> (float-time (time-since (alist-get 'asked entry)))
+          limen-inbox-settle-seconds)))
+
 (defun limen-inbox--groups (agents)
   "Return the pending questions grouped by their asking agent among AGENTS.
-Entries no listed agent asked are dropped."
+Entries no listed agent asked, or whose question left the screen, are dropped."
   (let (groups)
     (dolist (entry limen-inbox--questions)
-      (if-let* ((agent (limen-inbox--agent-for entry agents)))
+      (if-let* ((agent (limen-inbox--agent-for entry agents))
+                ((not (limen-inbox--stale-p entry agent))))
           (let ((group (assoc agent groups)))
             (if group
                 (setcdr group (append (cdr group) (alist-get 'questions entry)))
