@@ -2,3 +2,6 @@
 .eask/
 /dist/
 /checkpoint.yaml
+
+# phora-vendored third-party sources (regenerated from phora.lock)
+/resources/

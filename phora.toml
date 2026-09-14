@@ -1,0 +1,17 @@
+version = 1
+
+[sources.jupyter]
+git = "https://github.com/emacs-jupyter/jupyter.git"
+
+[sources.agent-shell]
+git = "https://github.com/xenodium/agent-shell.git"
+
+[targets."resources/emacs-jupyter"]
+path = "./resources/emacs-jupyter"
+layout = "flat"
+sources = ["jupyter"]
+
+[targets."resources/agent-shell"]
+path = "./resources/agent-shell"
+layout = "flat"
+sources = ["agent-shell"]

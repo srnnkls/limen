@@ -1,0 +1,17 @@
+version = 1
+
+[[sources]]
+name = "jupyter"
+git = "https://github.com/emacs-jupyter/jupyter.git"
+resolved = "default"
+commit = "05ea84067f784fb7cd1f829d7a0fadcad20466aa"
+digest = "blake3:da9d94771469bedba99cc1acc95ccc08ccb388699af0381d6856abc2d0a625dd"
+config_digest = "blake3:7b7015bb92cf0b318037702a6cdd81dee41224f734684c2c122cd6359cb1ee63"
+
+[[sources]]
+name = "agent-shell"
+git = "https://github.com/xenodium/agent-shell.git"
+resolved = "default"
+commit = "6b983d11c737325f5c5f5ffcffbf930032d6abf4"
+digest = "blake3:8753fad49ef3816cc1295ff853dd260940cf26bb20a943463e8d1a4ff2a6f8a1"
+config_digest = "blake3:7b7015bb92cf0b318037702a6cdd81dee41224f734684c2c122cd6359cb1ee63"
