@@ -265,5 +265,95 @@
       (limen-inbox-mode -1)
       (delete-directory directory t))))
 
+(ert-deftest limen-inbox-numbers-questions-with-a-stable-qid ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox-tests--event "PreToolUse" '(tool_name . "AskUserQuestion")
+                              '(tool_use_id . "t1")
+                              (cons 'tool_input limen-inbox-tests--claude-input))
+    (let ((questions (alist-get 'questions (car (limen-inbox-questions)))))
+      (should (equal (mapcar (lambda (q) (alist-get 'qid q)) questions)
+                     '("t1#0" "t1#1")))
+      (should (equal (mapcar (lambda (q) (alist-get 'answerable q)) questions)
+                     '(t t))))))
+
+(ert-deftest limen-inbox-marks-transcript-questions-unanswerable ()
+  (limen-inbox-tests--with-inbox
+    (let ((transcript (make-temp-file "limen-inbox-rollout" nil ".jsonl")))
+      (unwind-protect
+          (progn
+            (with-temp-file transcript
+              (insert (string-join limen-inbox-tests--transcript-lines "\n") "\n"))
+            (limen-inbox--on-event "codex"
+                                   (limen-inbox-tests--payload
+                                    "Stop" '(session_id . "codex-1")
+                                    '(turn_id . "turn-2")
+                                    (cons 'transcript_path transcript))
+                                   nil nil)
+            (let ((questions (alist-get 'questions (car (limen-inbox-questions)))))
+              (should (equal (alist-get 'qid (car questions)) "call_new#0"))
+              (should-not (alist-get 'answerable (car questions)))))
+        (delete-file transcript)))))
+
+(ert-deftest limen-inbox-renders-a-read-only-line-with-the-flag-off ()
+  (let ((limen-inbox-answer nil))
+    (with-temp-buffer
+      (limen-inbox--insert-question
+       '((qid . "t1#0") (answerable . t) (header . "Database")
+         (question . "Which?") (options "PostgreSQL" "MongoDB") (multi) (other))
+       '("/tmp/alpha.sock" . "t1"))
+      (should (string-match-p "PostgreSQL · MongoDB" (buffer-string)))
+      (should-not (string-match-p "[○●]" (buffer-string))))))
+
+(defmacro limen-inbox-tests--with-value (value &rest body)
+  "Run BODY with `limen-inbox--value' returning VALUE and a fake herdr-agent."
+  (declare (indent 1) (debug t))
+  `(let (sent)
+     (cl-letf (((symbol-function 'limen-inbox--value) (lambda (_type) ,value))
+               ((symbol-function 'herdr-agent-prompt)
+                (lambda (target text) (setq sent (list target text)))))
+       ,@body)))
+
+(ert-deftest limen-inbox-answers-a-single-select-option ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox--add '((id . "t1") (agent_session . "a")
+                        (questions . (((qid . "t1#0"))))))
+    (limen-inbox-tests--with-value
+        '(:qid "t1#0" :label "PostgreSQL" :target ("/tmp/alpha.sock" . "t1"))
+      (limen-inbox-answer-at-point)
+      (should (equal sent '(("/tmp/alpha.sock" . "t1") "PostgreSQL")))
+      (should-not (limen-inbox-questions)))))
+
+(ert-deftest limen-inbox-toggles-multi-select-then-submits ()
+  (limen-inbox-tests--with-inbox
+    (clrhash limen-inbox--selected)
+    (limen-inbox--add '((id . "t1") (agent_session . "a")
+                        (questions . (((qid . "t1#0"))))))
+    (limen-inbox-tests--with-value
+        '(:qid "t1#0" :label "Yes" :target ("/tmp/alpha.sock" . "t1") :multi t)
+      (limen-inbox-answer-at-point)
+      (should (equal (gethash "t1#0" limen-inbox--selected) '("Yes")))
+      (should-not sent)
+      (limen-inbox-answer-at-point)
+      (should-not (gethash "t1#0" limen-inbox--selected)))
+    (puthash "t1#0" '("Yes" "No") limen-inbox--selected)
+    (limen-inbox-tests--with-value
+        '(:qid "t1#0" :target ("/tmp/alpha.sock" . "t1"))
+      (limen-inbox-submit-at-point)
+      (should (equal sent '(("/tmp/alpha.sock" . "t1") "Yes\nNo")))
+      (should-not (limen-inbox-questions))
+      (should-not (gethash "t1#0" limen-inbox--selected)))))
+
+(ert-deftest limen-inbox-refuses-to-answer-without-herdr-agent ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox--add '((id . "t1") (agent_session . "a")
+                        (questions . (((qid . "t1#0"))))))
+    (cl-letf (((symbol-function 'limen-inbox--value)
+               (lambda (_type)
+                 '(:qid "t1#0" :label "PostgreSQL"
+                   :target ("/tmp/alpha.sock" . "t1")))))
+      (when (fboundp 'herdr-agent-prompt) (fmakunbound 'herdr-agent-prompt))
+      (limen-inbox-answer-at-point)
+      (should (limen-inbox-questions)))))
+
 (provide 'limen-inbox-tests)
 ;;; limen-inbox-tests.el ends here
