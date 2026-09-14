@@ -261,7 +261,7 @@
                         (buffer-modified-p))))
           (let* ((context (limen-make-request :interface 'cli
                                               :project-root root))
-                 (limen-virtual-buffer-read-allow-condition
+                 (limen-readable-virtual-buffer-condition
                   (concat "\\`" (regexp-quote (buffer-name inside)) "\\'"))
                  (record
                   (limen-compile-tests--without-process-actions
@@ -328,7 +328,7 @@
           (let* ((context (limen-make-request :interface 'cli
                                               :project-root root))
                  (name (buffer-name visible))
-                 (limen-virtual-buffer-read-allow-condition nil))
+                 (limen-readable-virtual-buffer-condition nil))
             (setq observations
                   (list
                    (and (limen-compile-tests--record
@@ -339,7 +339,7 @@
                          (limen-call "compile.read" `((name . ,name)) context)
                          'readable)
                      (limen-operation-failed 'denied))
-                   (let ((limen-virtual-buffer-read-allow-condition
+                   (let ((limen-readable-virtual-buffer-condition
                           "\\`different compilation buffer\\'"))
                      (condition-case nil
                          (progn
@@ -347,12 +347,12 @@
                             "compile.read" `((name . ,name)) context)
                            'readable)
                        (limen-operation-failed 'denied)))
-                   (let ((limen-virtual-buffer-read-allow-condition
+                   (let ((limen-readable-virtual-buffer-condition
                           (concat "\\`" (regexp-quote name) "\\'")))
                      (alist-get
                       'text
                       (limen-call "compile.read" `((name . ,name)) context)))
-                   (let ((limen-virtual-buffer-read-allow-condition t)
+                   (let ((limen-readable-virtual-buffer-condition t)
                          (internal-name (buffer-name internal)))
                      (condition-case nil
                          (progn
@@ -394,7 +394,7 @@
                                               :project-root root))
                  (outside-name (buffer-name outside))
                  (virtual-name (buffer-name virtual))
-                 (limen-virtual-buffer-read-allow-condition
+                 (limen-readable-virtual-buffer-condition
                   (concat "\\`\\(?:" (regexp-quote outside-name)
                           "\\|" (regexp-quote virtual-name) "\\)\\'"))
                  (records

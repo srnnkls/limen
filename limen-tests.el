@@ -1082,8 +1082,8 @@
                                (extra . t))]))
               context)
              :type 'limen-invalid-arguments)
-            (should (boundp 'limen-virtual-buffer-read-allow-condition))
-            (should-not limen-virtual-buffer-read-allow-condition)
+            (should (boundp 'limen-readable-virtual-buffer-condition))
+            (should-not limen-readable-virtual-buffer-condition)
             (should (boundp 'limen-project-path-deny-regexps))
             (with-temp-file file (insert "one\ntwo\nthree\n"))
             (with-temp-file denied-file (insert "secret\n"))
@@ -1111,7 +1111,7 @@
                          `((name . ,(buffer-name virtual))) context)
              :type 'limen-operation-failed)
             (dolist (condition '(t "allowed\\'" (derived-mode . prog-mode)))
-              (let ((limen-virtual-buffer-read-allow-condition condition))
+              (let ((limen-readable-virtual-buffer-condition condition))
                 (ert-info ((format "allow condition=%S" condition))
                   (should
                    (equal
@@ -1120,7 +1120,7 @@
                      (limen-call
                       "buffer.read" `((name . ,(buffer-name virtual))) context))
                     "virtual text")))))
-            (let ((limen-virtual-buffer-read-allow-condition t))
+            (let ((limen-readable-virtual-buffer-condition t))
               (dolist (name (list (buffer-name outside-buffer)
                                   (buffer-name internal)))
                 (should-error

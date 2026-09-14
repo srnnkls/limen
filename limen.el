@@ -44,7 +44,7 @@
   :type 'boolean
   :group 'limen)
 
-(defcustom limen-virtual-buffer-read-allow-condition nil
+(defcustom limen-readable-virtual-buffer-condition nil
   "Buffer match condition allowing project-confined virtual buffer content.
 A nil or invalid condition denies access.  The value t explicitly allows all
 project-confined non-internal virtual buffers."
@@ -658,8 +658,8 @@ PATH identifies a containing object when validation is recursive."
 (defun limen--virtual-buffer-readable-p (buffer)
   "Return non-nil when BUFFER's virtual content is explicitly allowed."
   (condition-case nil
-      (and limen-virtual-buffer-read-allow-condition
-           (buffer-match-p limen-virtual-buffer-read-allow-condition buffer))
+      (and limen-readable-virtual-buffer-condition
+           (buffer-match-p limen-readable-virtual-buffer-condition buffer))
     (error nil)))
 
 (defun limen--buffer-readable-p (buffer root)

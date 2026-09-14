@@ -212,7 +212,7 @@
                 (should-not (assq 'points redacted))
                 (should-not (assq 'narrowing redacted))
                 (should (= (alist-get 'visits redacted) 1))))
-            (let ((limen-virtual-buffer-read-allow-condition t))
+            (let ((limen-readable-virtual-buffer-condition t))
               (let ((record (cadr (append (limen-call "trail.list" nil context)
                                           nil))))
                 (should-not (assq 'redacted record))
