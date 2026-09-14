@@ -384,7 +384,8 @@
     (limen-inbox-tests--with-value
         '(:qid "t1#1" :options ("A" "B") :last t
           :target ("/tmp/alpha.sock" . "t1"))
-      (let ((prompts 0))
+      (let ((prompts 0)
+            (limen-inbox-answer-submit-eagerly t))
         (cl-letf (((symbol-function 'y-or-n-p)
                    (lambda (_) (cl-incf prompts) nil)))
           (limen-inbox-commit-at-point)
@@ -428,6 +429,161 @@
           (should (eq (gethash "t1" limen-inbox--tabs) 'unknown))
           (should-error (limen-inbox-commit-at-point) :type 'user-error)
           (should (= calls 2)))))))
+
+(ert-deftest limen-inbox-dismisses-from-submit-tab-and-attaches ()
+  (dolist (multi '(nil t))
+    (limen-inbox-tests--with-inbox
+      (limen-inbox--add '((id . "t1")
+                          (questions ((qid . "t1#0")) ((qid . "t1#1")))))
+      (puthash "t1" 2 limen-inbox--tabs)
+      (puthash "t1#0" '("A") limen-inbox--selected)
+      (puthash "t1#1" '("B") limen-inbox--sent)
+      (limen-inbox-tests--with-value
+          (list :qid "t1#0" :options '("A" "B" "C") :multi multi
+                :target '("/tmp/alpha.sock" . "t1"))
+        (let (attached)
+          (cl-letf (((symbol-function 'herdr-agent-switch)
+                     (lambda (target)
+                       (should (equal sent '("left" "left" "5")))
+                       (should-not (limen-inbox-questions))
+                       (setq attached target))))
+            (limen-inbox-dismiss-at-point))
+          (should (equal attached '("/tmp/alpha.sock" . "t1")))
+          (should (= (hash-table-count limen-inbox--selected) 0))
+          (should (= (hash-table-count limen-inbox--sent) 0))
+          (should (= (hash-table-count limen-inbox--tabs) 0)))))))
+
+(ert-deftest limen-inbox-dismissal-without-attachment-api-sends-nothing ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox-tests--with-value
+        '(:qid "t1#0" :options ("A" "B") :target ("/tmp/alpha.sock" . "t1"))
+      (cl-letf (((symbol-function 'herdr-agent-switch) nil))
+        (should-error (limen-inbox-dismiss-at-point) :type 'user-error))
+      (should-not sent))))
+
+(ert-deftest limen-inbox-failed-dismissal-keeps-entry-and-does-not-attach ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox--add '((id . "t1") (questions ((qid . "t1#0")))))
+    (limen-inbox-tests--with-value
+        '(:qid "t1#0" :options ("A" "B") :target ("/tmp/alpha.sock" . "t1"))
+      (cl-letf (((symbol-function 'herdr-agent-send-keys)
+                 (lambda (&rest _) (error "Disconnected")))
+                ((symbol-function 'herdr-agent-switch)
+                 (lambda (_) (ert-fail "Must not attach after a failed dismissal"))))
+        (should-error (limen-inbox-dismiss-at-point)))
+      (should (limen-inbox-questions))
+      (should (eq (gethash "t1" limen-inbox--tabs) 'unknown)))))
+
+(ert-deftest limen-inbox-dismissal-without-target-keeps-entry ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox--add '((id . "t1") (questions ((qid . "t1#0")))))
+    (limen-inbox-tests--with-value '(:qid "t1#0" :options ("A" "B"))
+      (cl-letf (((symbol-function 'herdr-agent-switch)
+                 (lambda (_) (ert-fail "Must not attach without a target"))))
+        (limen-inbox-dismiss-at-point))
+      (should-not sent)
+      (should (limen-inbox-questions)))))
+
+(ert-deftest limen-inbox-eager-submit-is-opt-in-for-single-and-multiple-questions ()
+  (dolist (eager '(nil t))
+    (dolist (count '(1 2))
+      (limen-inbox-tests--with-inbox
+        (let ((limen-inbox-answer-submit-eagerly eager)
+              (prompts 0)
+              (last-qid (format "t1#%d" (1- count))))
+          (limen-inbox--add
+           `((id . "t1")
+             (questions . ,(cl-loop for index below count
+                                    collect `((qid . ,(format "t1#%d" index)))))))
+          (when (= count 2)
+            (puthash "t1#0" '("A") limen-inbox--selected)
+            (puthash "t1#0" '("A") limen-inbox--sent))
+          (puthash last-qid '("B") limen-inbox--selected)
+          (limen-inbox-tests--with-value
+              (list :qid last-qid :options '("A" "B") :last t
+                    :target '("/tmp/alpha.sock" . "t1"))
+            (cl-letf (((symbol-function 'y-or-n-p)
+                       (lambda (_) (cl-incf prompts) t)))
+              (limen-inbox-commit-at-point))
+            (should (= prompts (if eager 1 0)))
+            (should (equal sent
+                           (append (when (= count 2) '("right"))
+                                   '("2" "right")
+                                   (when eager '("return" "return")))))
+            (if eager
+                (should-not (limen-inbox-questions))
+              (should (limen-inbox-questions))
+              (should (limen-inbox--committed-p last-qid))
+              (should (= (gethash "t1" limen-inbox--tabs) count)))))))))
+
+(ert-deftest limen-inbox-confirmation-decline-or-interruption-allows-retry ()
+  (dolist (response '(no quit error))
+    (limen-inbox-tests--with-inbox
+      (let ((limen-inbox-answer-submit-eagerly t))
+        (limen-inbox--add '((id . "t1") (questions ((qid . "t1#0")))))
+        (puthash "t1#0" '("A") limen-inbox--selected)
+        (limen-inbox-tests--with-value
+            '(:qid "t1#0" :options ("A" "B") :last t
+              :target ("/tmp/alpha.sock" . "t1"))
+          (cl-letf (((symbol-function 'y-or-n-p)
+                     (lambda (_)
+                       (pcase response
+                         ('no nil)
+                         ('quit (signal 'quit nil))
+                         ('error (error "Confirmation interrupted"))))))
+            (pcase response
+              ('no (limen-inbox-commit-at-point))
+              ('quit (should (condition-case nil
+                                 (progn (limen-inbox-commit-at-point) nil)
+                               (quit t))))
+              ('error (should-error (limen-inbox-commit-at-point)))))
+          (should (equal sent '("1" "right")))
+          (should (= (gethash "t1" limen-inbox--tabs) 1))
+          (should (limen-inbox--committed-p "t1#0"))
+          (should (limen-inbox-questions))
+          (setq sent nil)
+          (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+            (limen-inbox-commit-at-point))
+          (should (equal sent '("left" "right" "return" "return")))
+          (should-not (limen-inbox-questions)))))))
+
+(ert-deftest limen-inbox-eager-submit-after-out-of-order-commits ()
+  (dolist (confirm '(nil t))
+    (limen-inbox-tests--with-inbox
+      (let ((limen-inbox-answer-submit-eagerly t)
+            (prompts 0)
+            (current 2))
+        (limen-inbox--add
+         '((id . "t1")
+           (questions ((qid . "t1#0")) ((qid . "t1#1")) ((qid . "t1#2")))))
+        (dolist (qid '("t1#0" "t1#1" "t1#2"))
+          (puthash qid '("A") limen-inbox--selected))
+        (limen-inbox-tests--with-value
+            (list :qid (format "t1#%d" current) :options '("A" "B")
+                  :last (= current 2) :target '("/tmp/alpha.sock" . "t1"))
+          (cl-letf (((symbol-function 'y-or-n-p)
+                     (lambda (_) (cl-incf prompts) confirm)))
+            (limen-inbox-commit-at-point)
+            (should (= prompts 0))
+            (setq current 1)
+            (limen-inbox-commit-at-point)
+            (should (= prompts 0))
+            (setq current 0 sent nil)
+            (limen-inbox-commit-at-point)
+            (should (= prompts 1))
+            (should (equal sent
+                           (append '("left" "left" "1" "right")
+                                   (when confirm
+                                     '("right" "right" "return" "return"))))))
+          (if confirm
+              (should-not (limen-inbox-questions))
+            (should (limen-inbox--ready-p "t1"))
+            (should (= (gethash "t1" limen-inbox--tabs) 1))
+            (setq sent nil)
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+              (limen-inbox-commit-at-point))
+            (should (equal sent '("left" "right" "right" "right" "return" "return")))
+            (should-not (limen-inbox-questions))))))))
 
 (provide 'limen-inbox-tests)
 ;;; limen-inbox-tests.el ends here

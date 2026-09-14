@@ -24,6 +24,7 @@
 (declare-function herdr-status-agent-row "ext:herdr-status" (entry widths workspaces))
 (declare-function herdr-status-request-refresh "ext:herdr-status" ())
 (declare-function herdr-agent-send-keys "ext:herdr-agent" (target keys))
+(declare-function herdr-agent-switch "ext:herdr-agent" (target))
 (defvar herdr-status-sections-functions)
 
 (defcustom limen-inbox-question-tools '("AskUserQuestion" "request_user_input")
@@ -48,6 +49,15 @@ When nil the options render as one read-only line.  When non-nil each
 option is its own line.  Selection stays local until
 `limen-inbox-commit-at-point' commits and advances the question.
 Submission requires confirmation."
+  :type 'boolean
+  :group 'limen-hooks)
+
+(defcustom limen-inbox-answer-submit-eagerly nil
+  "Whether completing all question commits offers to submit the answers.
+When non-nil, any question's commit can offer submission once every
+current choice is committed, regardless of tab order.  Confirmation is
+required before navigating to Submit and sending the whole block.
+When nil, commits only advance to the next tab."
   :type 'boolean
   :group 'limen-hooks)
 
@@ -277,18 +287,24 @@ pause in between."
   :type 'number
   :group 'limen-hooks)
 
-(defun limen-inbox--send-keys (target keys)
-  "Send KEYS, a list of key names, one at a time to the agent at TARGET.
-Return non-nil when they were sent."
+(defun limen-inbox--send-keys (target keys id)
+  "Send KEYS individually to TARGET for entry ID.
+Return non-nil on success.  Mark ID out of sync only if sending fails."
   (cond
    ((not (fboundp 'herdr-agent-send-keys))
     (message "herdr-agent is not available") nil)
    ((not target)
     (message "This question has no live agent pane") nil)
-   (t (dolist (key keys)
-        (herdr-agent-send-keys target (list key))
-        (sleep-for limen-inbox-key-delay))
-      t)))
+   (t (condition-case err
+          (progn
+            (dolist (key keys)
+              (herdr-agent-send-keys target (list key))
+              (sleep-for limen-inbox-key-delay))
+            t)
+        ((error quit)
+         (puthash id 'unknown limen-inbox--tabs)
+         (limen-inbox--refresh)
+         (signal (car err) (cdr err)))))))
 
 (defun limen-inbox--answered (qid)
   "Drop the entry owning QID and its selection, then redraw."
@@ -321,12 +337,15 @@ MULTI toggles LABEL in the set; otherwise LABEL becomes the sole choice."
          (null (seq-difference sent chosen #'equal))
          (null (seq-difference chosen sent #'equal)))))
 
+(defun limen-inbox--entry-questions (id)
+  "Return the questions belonging to entry ID."
+  (alist-get 'questions
+             (seq-find (lambda (entry) (equal (alist-get 'id entry) id))
+                       limen-inbox--questions)))
+
 (defun limen-inbox--ready-p (id)
   "Return non-nil when every question of entry ID is committed."
-  (let ((questions (alist-get 'questions
-                              (seq-find (lambda (entry)
-                                          (equal (alist-get 'id entry) id))
-					limen-inbox--questions))))
+  (let ((questions (limen-inbox--entry-questions id)))
     (and questions
          (seq-every-p (lambda (question)
 			(limen-inbox--committed-p (alist-get 'qid question)))
@@ -339,7 +358,7 @@ MULTI toggles LABEL in the set; otherwise LABEL becomes the sole choice."
       (user-error "Pane position unknown; finish this question in the agent window"))
     (when (limen-inbox--send-keys
            target (make-list (abs (- index current))
-                             (if (< index current) "left" "right")))
+                             (if (< index current) "left" "right")) id)
       (puthash id index limen-inbox--tabs)
       t)))
 
@@ -365,8 +384,9 @@ MULTI toggles LABEL in the set; otherwise LABEL becomes the sole choice."
 
 (defun limen-inbox-commit-at-point ()
   "Commit the question at point and advance to the next tab.
-Revisited questions send only changed choices.  The last question asks
-for submission only when every question has its current choices committed."
+Revisited questions send only changed choices.  With
+`limen-inbox-answer-submit-eagerly', any commit offers submission
+when every question has its current choices committed."
   (interactive)
   (let* ((value (or (limen-inbox--value 'limen-inbox-question)
                     (user-error "No inbox question at point")))
@@ -387,22 +407,49 @@ for submission only when every question has its current choices committed."
                               (1+ (seq-position options label #'equal)))))
                          options)))
     (unless chosen (user-error "No options selected"))
-    (condition-case err
-        (when (and (limen-inbox--goto-tab target id index)
-                   (limen-inbox--send-keys target keys))
-          (puthash qid (copy-sequence chosen) limen-inbox--sent)
-          (when (limen-inbox--goto-tab target id (1+ index))
-            (limen-inbox--refresh)
-            (if (plist-get value :last)
-                (when (and (limen-inbox--ready-p id)
-                           (y-or-n-p "Submit all answers? ")
-                           (limen-inbox--send-keys target '("return" "return")))
-                  (limen-inbox--answered qid))
-              (limen-inbox--next-question qid))))
-      ((error quit)
-       (puthash id 'unknown limen-inbox--tabs)
-       (limen-inbox--refresh)
-       (signal (car err) (cdr err))))))
+    (when (and (limen-inbox--goto-tab target id index)
+               (limen-inbox--send-keys target keys id))
+      (puthash qid (copy-sequence chosen) limen-inbox--sent)
+      (when (limen-inbox--goto-tab target id (1+ index))
+        (limen-inbox--refresh)
+        (cond
+         ((and limen-inbox-answer-submit-eagerly
+               (limen-inbox--ready-p id)
+               (y-or-n-p "Submit all answers? ")
+               (limen-inbox--goto-tab
+                target id (length (limen-inbox--entry-questions id)))
+               (limen-inbox--send-keys target '("return" "return") id))
+          (limen-inbox--answered qid))
+         ((not (plist-get value :last))
+          (limen-inbox--next-question qid)))))))
+
+(defun limen-inbox-attach-at-point ()
+  "Open the agent for the question at point without changing its answers."
+  (interactive)
+  (let* ((value (or (limen-inbox--value 'limen-inbox-question)
+                    (user-error "No inbox question at point")))
+         (target (plist-get value :target)))
+    (unless target (user-error "This question has no live agent pane"))
+    (unless (fboundp 'herdr-agent-switch)
+      (user-error "Herdr-agent is not available"))
+    (herdr-agent-switch target)))
+
+(defun limen-inbox-dismiss-at-point ()
+  "Choose Chat about this for the question at point and open its agent."
+  (interactive)
+  (let* ((value (or (limen-inbox--value 'limen-inbox-question)
+                    (user-error "No inbox question at point")))
+         (qid (plist-get value :qid))
+         (id (limen-inbox--entry-id qid))
+         (index (string-to-number (car (last (split-string qid "#")))))
+         (target (plist-get value :target))
+         (chat-key (number-to-string (+ 2 (length (plist-get value :options))))))
+    (unless (fboundp 'herdr-agent-switch)
+      (user-error "Herdr-agent is not available"))
+    (when (and (limen-inbox--goto-tab target id index)
+               (limen-inbox--send-keys target (list chat-key) id))
+      (limen-inbox--answered qid)
+      (herdr-agent-switch target))))
 
 (defun limen-inbox-toggle-index ()
   "Toggle the option whose number is the digit key that called this."
@@ -422,7 +469,9 @@ for submission only when every question has its current choices committed."
 
 (defvar-keymap magit-limen-inbox-question-section-map
   :doc "Keymap on an inbox question tab."
+  "RET" #'limen-inbox-attach-at-point
   "C-c C-c" #'limen-inbox-commit-at-point
+  "C-c C-d" #'limen-inbox-dismiss-at-point
   "1" #'limen-inbox-toggle-index
   "2" #'limen-inbox-toggle-index
   "3" #'limen-inbox-toggle-index
@@ -433,6 +482,9 @@ for submission only when every question has its current choices committed."
   "8" #'limen-inbox-toggle-index
   "9" #'limen-inbox-toggle-index)
 
+(set-keymap-parent magit-limen-inbox-option-section-map
+                   magit-limen-inbox-question-section-map)
+
 (defun limen-inbox--insert-options (qid options multi)
   "Insert OPTIONS of question QID as togglable circle lines.
 MULTI is threaded onto each option so toggling knows the question kind."
@@ -442,7 +494,7 @@ MULTI is threaded onto each option so toggling knows the question kind."
        (magit-insert-section
            (limen-inbox-option
             (list :qid qid :label label :multi multi :index (1+ index)))
-         (insert "      "
+         (insert (format "      %d. " (1+ index))
                  (if (member label chosen) "● " "○ ")
                  (propertize label 'font-lock-face 'herdr-status-meta)
                  "\n")))
