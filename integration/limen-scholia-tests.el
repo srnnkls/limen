@@ -11,7 +11,7 @@
   (declare (indent 1) (debug (symbolp body)))
   `(scholia-test-with-session-directory
      (let ((,root (file-truename (make-temp-file "limen-scholia-root" t)))
-           (scholia-active-sessions nil)
+           (scholia-visible-sessions nil)
            (scholia-project-sessions nil)
            (limen-project-path-deny-regexps nil))
        (unwind-protect
@@ -57,7 +57,7 @@
             (limen-scholia-tests--annotate inside "review" 1 6 "check")
             (limen-scholia-tests--annotate away "review" 1 6 "far")
             (limen-scholia-tests--annotate inside "perf" 7 11 "slow")
-            (let ((scholia-active-sessions '("perf"))
+            (let ((scholia-visible-sessions '("perf"))
                   (scholia-project-sessions (list (cons root "review"))))
               (let* ((records (limen-call "annotation.sessions" nil context))
                      (review (seq-find (lambda (r) (equal (alist-get 'name r) "review"))
@@ -109,7 +109,7 @@
                                            '((session . "review") (path . "inside.el"))
                                            context))
                        2))
-            (let ((scholia-active-sessions '("review")))
+            (let ((scholia-visible-sessions '("review")))
               (should (= (length (limen-call "annotation.list" nil context)) 2)))
             (should (= (length (limen-call "annotation.list" nil context)) 0))
             (should-error (limen-call "annotation.list" '((session . "missing"))
@@ -161,11 +161,11 @@
       (with-current-buffer buffer
         (should (equal (limen-scholia--context-field nil root)
                        '("annotations: review (1) — `limen annotations list`")))
-        (let ((scholia-active-sessions '("review")))
+        (let ((scholia-visible-sessions '("review")))
           (limen-scholia-tests--annotate
            (limen-scholia-tests--write (expand-file-name "other.el" root) "x\n")
            "perf" 1 2 "slow")
-          (let ((scholia-active-sessions '("review" "perf")))
+          (let ((scholia-visible-sessions '("review" "perf")))
             (should (equal (limen-scholia--context-field nil root)
                            '("annotations: review (1), perf — `limen annotations list`")))
             (should (equal (limen-scholia-tests--names

@@ -43,8 +43,7 @@
                   (sessions &optional target format))
 (declare-function scholia-export--session-record "ext:scholia-export"
                   (record cache format))
-(defvar scholia-mode)
-(defvar scholia-active-sessions)
+(defvar scholia-visible-sessions)
 (defvar scholia-project-sessions)
 
 (defconst limen-scholia-available-p
@@ -66,19 +65,13 @@
   "Return every session name scholia knows."
   (scholia-session-list))
 
-(defun limen-scholia--existing-active-sessions ()
-  "Return the globally active sessions that exist on disk."
-  (seq-filter (lambda (name)
-                (and (scholia-session-name-p name)
-                     (file-exists-p (scholia-session-file name))))
-              scholia-active-sessions))
-
 (defun limen-scholia--visible-sessions (&optional buffer)
-  "Return the sessions visible in BUFFER, or globally when it has none."
+  "Return the sessions drawn in BUFFER that exist on disk."
   (with-current-buffer (or buffer (current-buffer))
-    (if (bound-and-true-p scholia-mode)
-        (scholia-effective-sessions)
-      (limen-scholia--existing-active-sessions))))
+    (seq-filter (lambda (name)
+                  (and (scholia-session-name-p name)
+                       (file-exists-p (scholia-session-file name))))
+                (scholia-effective-sessions))))
 
 (defun limen-scholia--target-p (name root)
   "Return non-nil when NAME is the global or ROOT project write target."
@@ -100,7 +93,7 @@
 (defun limen-scholia--session-record (name root)
   "Return the JSON record for session NAME confined to ROOT."
   `((name . ,name)
-    (active . ,(if (member name scholia-active-sessions) t :json-false))
+    (active . ,(if (member name scholia-visible-sessions) t :json-false))
     (target . ,(if (limen-scholia--target-p name root) t :json-false))
     (files . ,(length (limen-scholia--confined-files name root)))))
 
