@@ -76,7 +76,8 @@ Claude shares 1.5 s among every SessionEnd hook and Codex clamps them to 3 s.")
   "Functions run for every answered hook event.
 Each receives the provider name, the decoded payload extended with the
 `server' and `pane' of the Herdr pane, the resolved Limen session or nil,
-and the request context.")
+and the request context.  A string one returns for a `UserPromptSubmit'
+event is added to the context the prompt carries.")
 
 (defvar limen-hooks--drafts (make-hash-table :test #'eq)
   "Rendered text and context of the latest Herdr context per session.")
@@ -309,13 +310,44 @@ per provider; in batch they install at once."
           (run-with-timer 0 nil #'limen-hooks--run-requests)))))
 
 (defun limen-hooks-remove-events-everywhere (events)
-  "Remove Limen's handlers for the EVENTS named from every provider's settings."
-  (dolist (provider limen-hooks--providers)
-    (condition-case err
-        (when (limen-hooks-any-installed-p provider)
-          (limen-hooks-remove-events provider events))
-      (error
-       (message "Limen hooks: %s" (error-message-string err))))))
+  "Remove Limen's handlers for the EVENTS named from every provider's settings.
+An event another consumer still lists in `limen-hooks-events' stays."
+  (let* ((needed (mapcar #'car (limen-hooks-events)))
+         (events (seq-remove (lambda (event) (member event needed)) events)))
+    (when events
+      (dolist (provider limen-hooks--providers)
+        (condition-case err
+            (when (limen-hooks-any-installed-p provider)
+              (limen-hooks-remove-events provider events))
+          (error
+           (message "Limen hooks: %s" (error-message-string err))))))))
+
+;;; Herdr panes
+
+(defun limen-hooks-server-key (path)
+  "Return the canonical identity of the Herdr socket PATH, or nil."
+  (when (and (stringp path) (not (string-empty-p path)))
+    (file-truename (expand-file-name path))))
+
+(defun limen-hooks-agent-for (payload agents)
+  "Return the Herdr agent entry among AGENTS whose hook sent PAYLOAD, or nil.
+The pane and server the hook ran in identify it; failing those, the
+harness session id Herdr reports for the agent."
+  (let ((pane (alist-get 'pane payload))
+        (server (limen-hooks-server-key (alist-get 'server payload)))
+        (session (alist-get 'session_id payload)))
+    (or (when (and (stringp pane) (not (string-empty-p pane)))
+          (seq-find (lambda (agent)
+                      (and (equal (alist-get 'pane_id agent) pane)
+                           (equal (limen-hooks-server-key
+                                   (alist-get 'server_key agent))
+                                  server)))
+                    agents))
+        (when (and (stringp session) (not (string-empty-p session)))
+          (seq-find (lambda (agent)
+                      (equal (alist-get 'value (alist-get 'agent_session agent))
+                             session))
+                    agents)))))
 
 ;;; Prompt context
 
@@ -466,11 +498,20 @@ Return nil to let Herdr append CONTEXT to the message."
                                    (alist-get 'server_base64 request)))
                        (pane . ,(limen-hooks--decode
                                  (alist-get 'pane_base64 request))))))
-           (_ (run-hook-with-args 'limen-hooks-event-functions
-                                  provider payload session context))
+           (extra (delq nil
+                        (mapcar (lambda (function)
+                                  (let ((value (funcall function provider payload
+                                                        session context)))
+                                    (and (stringp value)
+                                         (not (string-empty-p value))
+                                         value)))
+                                limen-hooks-event-functions)))
            (text (pcase event
                    ("SessionStart" (limen-skill context))
-                   ("UserPromptSubmit" (limen-hooks--prompt-context session root))
+                   ("UserPromptSubmit"
+                    (string-join
+                     (cons (limen-hooks--prompt-context session root) extra)
+                     "\n\n"))
                    (_ nil))))
       (if (and text (not (string-empty-p text)))
           (json-serialize

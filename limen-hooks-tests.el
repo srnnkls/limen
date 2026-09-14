@@ -266,6 +266,68 @@
           (should (equal (car seen) `("codex" "Stop" nil nil nil nil ,root))))
       (delete-directory root t))))
 
+(ert-deftest limen-hooks-output-adds-what-event-functions-return-to-a-prompt ()
+  (let* ((root (file-truename (make-temp-file "limen-hooks-extra" t)))
+         (limen-trail-mode nil)
+         (limen-herdr-context-fields-functions nil)
+         (limen-hooks--pending (make-hash-table :test #'eq))
+         (limen-hooks--last (make-hash-table :test #'eq))
+         (limen-hooks-event-functions
+          (list (lambda (&rest _) "[herd limen] one finished. No reply needed.")
+                (lambda (&rest _) nil)
+                (lambda (&rest _) "")
+                (lambda (&rest _) 42))))
+    (unwind-protect
+        (let ((context (alist-get
+                        'additionalContext
+                        (alist-get 'hookSpecificOutput
+                                   (json-parse-string
+                                    (limen-hooks-output
+                                     (limen-hooks-tests--hook-request
+                                      "claude" "UserPromptSubmit" nil root)
+                                     (limen-hooks-tests--request root))
+                                    :object-type 'alist)))))
+          (should (string-suffix-p "\n\n[herd limen] one finished. No reply needed."
+                                   context))
+          (should (string-prefix-p "Emacs context" context))
+          (should (equal (limen-hooks-output
+                          (limen-hooks-tests--hook-request "claude" "Stop" nil root)
+                          (limen-hooks-tests--request root))
+                         "")))
+      (delete-directory root t))))
+
+(ert-deftest limen-hooks-agent-for-matches-pane-then-session ()
+  (let* ((socket (make-temp-file "limen-hooks-socket"))
+         (agents `(((pane_id . "%1") (server_key . ,socket)
+                    (agent_session . ((value . "s1"))))
+                   ((pane_id . "%2") (server_key . ,socket)
+                    (agent_session . ((value . "s2")))))))
+    (unwind-protect
+        (progn
+          (should (eq (limen-hooks-agent-for
+                       `((pane . "%2") (server . ,socket) (session_id . "s1"))
+                       agents)
+                      (cadr agents)))
+          (should (eq (limen-hooks-agent-for
+                       `((pane . "") (server . "") (session_id . "s1")) agents)
+                      (car agents)))
+          (should (eq (limen-hooks-agent-for '((session_id . "s2")) agents)
+                      (cadr agents)))
+          (should-not (limen-hooks-agent-for
+                       `((pane . "%9") (server . ,socket) (session_id . "s9"))
+                       agents)))
+      (delete-file socket))))
+
+(ert-deftest limen-hooks-removing-events-keeps-what-others-still-list ()
+  (limen-hooks-tests--with-settings
+    (limen-hooks-install 'claude)
+    (setq limen-hooks-extra-events '(("Stop")))
+    (limen-hooks-remove-events-everywhere '("Stop" "SessionEnd"))
+    (let ((settings (limen-hooks--read-settings (limen-hooks-settings-file 'claude))))
+      (should (limen-hooks--event-installed-p settings "Stop" 'claude))
+      (should-not (limen-hooks--event-installed-p settings "SessionEnd" 'claude))
+      (should (limen-hooks--event-installed-p settings "UserPromptSubmit" 'claude)))))
+
 (ert-deftest limen-hooks-output-resolves-session-by-id-then-root ()
   (let* ((root (file-truename (make-temp-file "limen-hooks-resolve" t)))
          (other (file-truename (make-temp-file "limen-hooks-other" t)))

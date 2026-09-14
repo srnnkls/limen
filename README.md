@@ -48,6 +48,13 @@ To have every prompt typed into a Claude Code or Codex pane carry Emacs context,
 (limen-inbox-mode 1)
 ```
 
+`limen-herd-mode` tells the members of a Herdr herd what the others do, as their hooks report it: came online, started a prompt, finished one, exited. Each member receives only the kinds it subscribed to, chosen with `n` in `herdr-status`, and a member mid-turn reads its notices with its next prompt instead of being interrupted:
+
+```elisp
+(require 'limen-herd)
+(limen-herd-mode 1)
+```
+
 Limen installs no global keybinding.
 
 ## Command line

@@ -65,11 +65,6 @@ Herdr detects the question UI on screen a moment after the turn ends."
   (when (fboundp 'herdr-status-request-refresh)
     (herdr-status-request-refresh)))
 
-(defun limen-inbox--server (path)
-  "Return the canonical server identity for socket PATH, or nil."
-  (when (and (stringp path) (not (string-empty-p path)))
-    (file-truename (expand-file-name path))))
-
 (defun limen-inbox--question (record)
   "Return the question fields kept from the tool input RECORD.
 Claude names the text `question' and its options carry a `label';
@@ -90,7 +85,7 @@ Codex names it `title' and may list its options as plain strings."
       `((id . ,(or (alist-get 'tool_use_id payload)
                    (format "%s:%s" agent (float-time))))
         (agent_session . ,agent)
-        (server . ,(limen-inbox--server (alist-get 'server payload)))
+        (server . ,(limen-hooks-server-key (alist-get 'server payload)))
         (pane . ,(alist-get 'pane payload))
         (asked . ,(current-time))
         (questions . ,(mapcar #'limen-inbox--question (append questions nil)))))))
@@ -166,7 +161,7 @@ the call only shows in the transcript; return non-nil when any was added."
         (limen-inbox--add
          `((id . ,(or (car call) (format "%s:%s" agent (float-time))))
            (agent_session . ,agent)
-           (server . ,(limen-inbox--server (alist-get 'server payload)))
+           (server . ,(limen-hooks-server-key (alist-get 'server payload)))
            (pane . ,(alist-get 'pane payload))
            (asked . ,(current-time))
            (source . transcript)
@@ -204,14 +199,10 @@ the call only shows in the transcript; return non-nil when any was added."
 
 (defun limen-inbox--agent-for (entry agents)
   "Return the dashboard agent among AGENTS that asked ENTRY, or nil."
-  (let ((pane (alist-get 'pane entry))
-        (server (alist-get 'server entry)))
-    (when (and (stringp pane) (not (string-empty-p pane)))
-      (seq-find (lambda (agent)
-                  (and (equal (alist-get 'pane_id agent) pane)
-                       (equal (limen-inbox--server (alist-get 'server_key agent))
-                              server)))
-                agents))))
+  (limen-hooks-agent-for `((pane . ,(alist-get 'pane entry))
+                           (server . ,(alist-get 'server entry))
+                           (session_id . ,(alist-get 'agent_session entry)))
+                         agents))
 
 (defun limen-inbox--stale-p (entry agent)
   "Return non-nil when ENTRY's question is no longer showing in AGENT's pane.
