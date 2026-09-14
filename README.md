@@ -48,7 +48,7 @@ To have every prompt typed into a Claude Code or Codex pane carry Emacs context,
 (limen-inbox-mode 1)
 ```
 
-`limen-herd-mode` tells the members of a Herdr herd what the others do, as their hooks report it: came online, started a prompt, finished one, exited. Each member receives only the kinds it subscribed to, chosen with `n` in `herdr-status`, and a member mid-turn reads its notices with its next prompt instead of being interrupted:
+`limen-herd-mode` tells the members of a Herdr herd what the others do: came online, started a prompt, finished one, exited. Herdr's own agent states report those for any harness; a member whose hooks reach Emacs reports the same turns with the prompt text instead. Each member receives only the kinds it subscribed to, chosen with `n` in `herdr-status`, and a member mid-turn is not interrupted: its notices wait until herdr sees it idle or its next prompt carries them:
 
 ```elisp
 (require 'limen-herd)

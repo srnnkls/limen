@@ -10,12 +10,15 @@
 
 ;;; Commentary:
 
-;; Tells the members of a Herdr herd what the others do, as their hooks
-;; report it: a member came online, started a prompt, finished one, or
-;; exited.  A member receives only the kinds of notice it subscribed to,
-;; which its pane label records next to the herd, and `limen-herd-mode'
-;; gates the whole thing.  A member mid-turn is not interrupted: its
-;; notices wait for its next prompt and arrive as hook context.
+;; Tells the members of a Herdr herd what the others do: a member came
+;; online, started a prompt, finished one, or exited.  Herdr's own agent
+;; states report those for any harness; where a member's hooks reach
+;; Emacs they report the same turns earlier and with the prompt text, and
+;; a hooked turn silences its state change.  A member receives only the
+;; kinds of notice it subscribed to, which its pane label records next to
+;; the herd, and `limen-herd-mode' gates the whole thing.  A member
+;; mid-turn is not interrupted: its notices wait, and reach it with its
+;; next prompt as hook context or as soon as herdr sees it idle.
 
 ;;; Code:
 
@@ -41,8 +44,14 @@
 (declare-function herdr-herd--read-session "ext:herdr-herd" (&optional prompt))
 (declare-function herdr-herd--read-entries "ext:herdr-herd" (session &optional prompt))
 (declare-function herdr-agent-prompt "ext:herdr-agent" (target text))
+(declare-function herdr-agent--subscribe-if-live "ext:herdr-agent" (server-key))
+(declare-function herdr-all-sessions "ext:herdr" ())
+(declare-function herdr-server-key "ext:herdr-core" ())
 (declare-function herdr--entry-target "ext:herdr" (entry))
 (defvar herdr-herd-protocol-functions)
+(defvar herdr-herd-sent-functions)
+(defvar herdr-agent-event-functions)
+(defvar herdr-session)
 (defvar herdr-status-mode-map)
 
 (defgroup limen-herd nil
@@ -89,6 +98,15 @@ answer notices.  Keep `herdr-herd-notice-prefix' among them."
   :type 'string
   :group 'limen-herd)
 
+(defcustom limen-herd-fallback-delay 5
+  "Seconds a herdr state change waits for a hook to report the same turn.
+A hook event of the same kind for the same pane within that time after
+the change, or shortly before it, makes the notice instead; none makes
+the state change itself the notice, with no prompt text to repeat.  Zero
+makes the state change the notice at once unless a hook came first."
+  :type 'number
+  :group 'limen-herd)
+
 (defconst limen-herd--events '(("Stop") ("SessionEnd"))
   "Hook events the notices need beyond the context ones.")
 
@@ -100,6 +118,18 @@ answer notices.  Keep `herdr-herd-notice-prefix' among them."
 
 (defvar limen-herd--names (make-hash-table :test #'equal)
   "The name each agent session's harness gave it.")
+
+(defvar limen-herd--states (make-hash-table :test #'equal)
+  "The status herdr last reported for each (SERVER . PANE), with its agent entry.")
+
+(defvar limen-herd--hooked (make-hash-table :test #'equal)
+  "When a hook last reported each ((SERVER . PANE) . KIND).")
+
+(defvar limen-herd--timers (make-hash-table :test #'equal)
+  "The fallback notice waiting for each ((SERVER . PANE) . KIND).")
+
+(defvar limen-herd--chatter (make-hash-table :test #'equal)
+  "The (SERVER . PANE) keys whose current turn a herd prompt started.")
 
 ;;; Subscriptions
 
@@ -194,12 +224,22 @@ answer notices.  Keep `herdr-herd-notice-prefix' among them."
   "Return the name a notice gives the agent of ENTRY."
   (or (alist-get 'name entry) (alist-get 'agent entry) "an agent"))
 
-(defun limen-herd--recipients (payload kind)
+(defun limen-herd--pane-key (server pane)
+  "Return the key of the pane PANE on the Herdr socket SERVER, or nil."
+  (when (and (stringp pane) (not (string-empty-p pane)))
+    (cons (limen-hooks-server-key server) pane)))
+
+(defun limen-herd--entry-key (entry)
+  "Return the pane key of the Herdr agent ENTRY, or nil."
+  (limen-herd--pane-key (alist-get 'server_key entry) (alist-get 'pane_id entry)))
+
+(defun limen-herd--recipients (payload kind &optional self)
   "Return the herd, the sender, and the members to tell about KIND for PAYLOAD.
-Nil where the hook's agent is in no herd or nobody subscribed."
+SELF is the sender's entry where the caller has it, else PAYLOAD names it.
+Nil where the sender is in no herd or nobody subscribed."
   (when (featurep 'herdr-herd)
     (when-let* ((agents (herdr-herd-live-agents))
-                (self (limen-hooks-agent-for payload agents))
+                (self (or self (limen-hooks-agent-for payload agents)))
                 (herd (herdr-herd-of-entry self))
                 (recipients
                  (seq-filter (lambda (member)
@@ -211,22 +251,31 @@ Nil where the hook's agent is in no herd or nobody subscribed."
                              (herdr-herd-member-entries herd agents))))
       (list herd self recipients))))
 
+(defun limen-herd--prompt (member text)
+  "Send MEMBER the prompt TEXT and note that its next turn is herd traffic."
+  (condition-case err
+      (progn
+        (herdr-agent-prompt (herdr--entry-target member) text)
+        (when-let* ((key (limen-herd--entry-key member)))
+          (puthash key t limen-herd--chatter)))
+    (error (message "Limen herd: %s" (error-message-string err)))))
+
 (defun limen-herd--deliver (member text)
-  "Send MEMBER the notice TEXT now, or hold it for its next prompt."
+  "Send MEMBER the notice TEXT now, or hold it until it is free."
   (cond
    ((not (herdr-herd--busy-p member))
-    (condition-case err
-        (herdr-agent-prompt (herdr--entry-target member) text)
-      (error (message "Limen herd: %s" (error-message-string err)))))
+    (limen-herd--prompt member text))
    (limen-herd-hold-for-busy
     (when-let* ((id (alist-get 'value (alist-get 'agent_session member))))
       (puthash id (append (gethash id limen-herd--held) (list text))
                limen-herd--held)))))
 
-(defun limen-herd--broadcast (payload kind text-function)
+(defun limen-herd--broadcast (payload kind text-function &optional self)
   "Send KIND's subscribers a notice about PAYLOAD's agent from TEXT-FUNCTION.
-TEXT-FUNCTION receives the sender's name and returns the notice text."
-  (pcase-let ((`(,herd ,self ,recipients) (limen-herd--recipients payload kind)))
+TEXT-FUNCTION receives the sender's name and returns the notice text.
+SELF is the sender's entry where the caller has it."
+  (pcase-let ((`(,herd ,self ,recipients)
+               (limen-herd--recipients payload kind self)))
     (when recipients
       (let ((text (herdr-herd-notice
                    herd (funcall text-function (limen-herd--agent-name self)))))
@@ -258,12 +307,23 @@ RECORD is the prompt the turn worked on and PAYLOAD the Stop hook's."
               suffix
               (if excerpt (format " Said: \"%s\"" excerpt) "")))))
 
+(defun limen-herd--hook-seen (payload kind)
+  "Note that a hook reported KIND for PAYLOAD's pane, dropping any fallback."
+  (when-let* ((key (limen-herd--pane-key (alist-get 'server payload)
+                                         (alist-get 'pane payload))))
+    (puthash (cons key kind) (float-time) limen-herd--hooked)
+    (when-let* ((timer (gethash (cons key kind) limen-herd--timers)))
+      (cancel-timer timer)
+      (remhash (cons key kind) limen-herd--timers))))
+
 (defun limen-herd--on-event (provider payload _session _request)
   "Turn PROVIDER's hook PAYLOAD into notices for the agent's herd.
 Return the notices held for the agent on a prompt, or nil."
+  (limen-herd--subscribe)
   (let ((id (alist-get 'session_id payload)))
     (pcase (alist-get 'hook_event_name payload)
       ("SessionStart"
+       (limen-herd--hook-seen payload 'online)
        (when (member (alist-get 'source payload) '("startup" "resume"))
          (limen-herd--broadcast
           payload 'online
@@ -272,6 +332,7 @@ Return the notices held for the agent on a prompt, or nil."
                     (limen-herd--session-suffix provider id)))))
        nil)
       ("UserPromptSubmit"
+       (limen-herd--hook-seen payload 'prompt)
        (let* ((prompt (alist-get 'prompt payload))
               (chatter (limen-herd--chatter-p prompt)))
          (puthash id (cons prompt chatter) limen-herd--prompts)
@@ -282,6 +343,7 @@ Return the notices held for the agent on a prompt, or nil."
               (lambda (name) (format "%s started: \"%s\"." name clipped)))))
          (limen-herd--take-held id)))
       ("Stop"
+       (limen-herd--hook-seen payload 'finished)
        (let ((record (gethash id limen-herd--prompts)))
          (unless (or (eq (alist-get 'stop_hook_active payload) t) (cdr record))
            (limen-herd--broadcast
@@ -289,12 +351,136 @@ Return the notices held for the agent on a prompt, or nil."
             (limen-herd--finished-text provider id record payload))))
        nil)
       ("SessionEnd"
+       (limen-herd--hook-seen payload 'exited)
        (limen-herd--broadcast
         payload 'exited
         (lambda (name)
           (format "%s exited (%s)." name (or (alist-get 'reason payload) "ended"))))
        (limen-herd--forget provider id)
        nil))))
+
+;;; Herdr state changes
+
+(defun limen-herd--subscribe ()
+  "Hear herdr's pane events from every session Emacs may talk to."
+  (when (featurep 'herdr-agent)
+    (dolist (session (herdr-all-sessions))
+      (condition-case nil
+          (let ((herdr-session session))
+            (herdr-agent--subscribe-if-live (herdr-server-key)))
+        (error nil)))))
+
+(defconst limen-herd--hook-lookback 10
+  "Seconds before a herdr state change during which a hook counts as its report.")
+
+(defun limen-herd--seed ()
+  "Record the status herdr reports now for every live agent, telling nobody."
+  (when (fboundp 'herdr-herd-live-agents)
+    (condition-case nil
+        (dolist (entry (herdr-herd-live-agents))
+          (when-let* ((key (limen-herd--entry-key entry)))
+            (puthash key (cons (alist-get 'agent_status entry) entry)
+                     limen-herd--states)))
+      (error nil))))
+
+(defun limen-herd--entry-for (key)
+  "Return the live Herdr agent entry of the pane KEY names, or nil."
+  (when (fboundp 'herdr-herd-live-agents)
+    (condition-case nil
+        (limen-hooks-agent-for `((server . ,(car key)) (pane . ,(cdr key)))
+                               (herdr-herd-live-agents))
+      (error nil))))
+
+(defun limen-herd--transition (previous status)
+  "Return the notice kind going from status PREVIOUS to STATUS means, or nil."
+  (cond
+   ((equal status "unknown") nil)
+   ((or (null previous) (equal previous "unknown"))
+    (and (member status '("idle" "working" "blocked")) 'online))
+   ((equal status "done") 'exited)
+   ((and (equal status "working") (equal previous "idle")) 'prompt)
+   ((and (equal status "idle") (member previous '("working" "blocked")))
+    'finished)))
+
+(defun limen-herd--fallback-text (kind)
+  "Return the notice text for KIND as a function of the sender's name."
+  (lambda (name)
+    (pcase kind
+      ('online (format "%s is online." name))
+      ('prompt (format "%s started a turn." name))
+      ('finished (format "%s finished a turn." name))
+      ('exited (format "%s exited." name)))))
+
+(defun limen-herd--fallback (key kind entry started)
+  "Send the KIND notice for the pane KEY's agent ENTRY unless a hook did.
+STARTED is when herdr reported the change."
+  (remhash (cons key kind) limen-herd--timers)
+  (let ((hooked (gethash (cons key kind) limen-herd--hooked)))
+    (unless (and hooked (>= hooked (- started limen-herd--hook-lookback)))
+      (limen-herd--broadcast nil kind (limen-herd--fallback-text kind) entry))))
+
+(defun limen-herd--schedule (key kind entry)
+  "Have the KIND notice for the pane KEY's agent ENTRY sent after the delay."
+  (when-let* ((timer (gethash (cons key kind) limen-herd--timers)))
+    (cancel-timer timer))
+  (let ((started (float-time)))
+    (if (<= limen-herd-fallback-delay 0)
+        (limen-herd--fallback key kind entry started)
+      (puthash (cons key kind)
+               (run-with-timer limen-herd-fallback-delay nil
+                               #'limen-herd--fallback key kind entry started)
+               limen-herd--timers))))
+
+(defun limen-herd--flush (entry)
+  "Send ENTRY's agent the notices held for it, now that it is free."
+  (when-let* ((id (alist-get 'value (alist-get 'agent_session entry)))
+              (text (limen-herd--take-held id)))
+    (limen-herd--prompt entry text)))
+
+(defun limen-herd--observe (server pane status)
+  "Act on herdr reporting STATUS for PANE on the socket SERVER."
+  (when-let* ((key (limen-herd--pane-key server pane))
+              (previous (gethash key limen-herd--states 'unseen))
+              ((not (equal (car-safe previous) status))))
+    (let* ((known (and (consp previous) (cdr previous)))
+           (entry (or (and (not (equal status "done")) (limen-herd--entry-for key))
+                      known))
+           (kind (and entry
+                      (limen-herd--transition (car-safe previous) status))))
+      (if (equal status "done")
+          (remhash key limen-herd--states)
+        (puthash key (cons status entry) limen-herd--states))
+      (when (and kind (gethash key limen-herd--chatter))
+        (when (memq kind '(finished exited))
+          (remhash key limen-herd--chatter))
+        (setq kind nil))
+      (when kind
+        (limen-herd--schedule key kind entry))
+      (when (and entry (member status '("idle" "done")))
+        (limen-herd--flush entry)))))
+
+(defun limen-herd--on-herdr-event (server-key type data)
+  "Read the agent status out of herdr's TYPE event DATA from SERVER-KEY."
+  (pcase type
+    ((or "pane.updated" "pane.agent_detected" "pane.moved")
+     (let ((pane (or (alist-get 'pane data) data)))
+       (when-let* ((status (alist-get 'agent_status pane)))
+         (limen-herd--observe server-key (alist-get 'pane_id pane) status))))
+    ((or "pane.exited" "pane.closed")
+     (limen-herd--observe server-key (alist-get 'pane_id data) "done"))))
+
+(defun limen-herd--on-sent (entry _text)
+  "Mark the turn the herd prompt ENTRY just received as herd traffic."
+  (when-let* ((key (limen-herd--entry-key entry)))
+    (puthash key t limen-herd--chatter)))
+
+(defun limen-herd--reset ()
+  "Drop every notice, timer, and remembered state."
+  (maphash (lambda (_key timer) (cancel-timer timer)) limen-herd--timers)
+  (dolist (table (list limen-herd--prompts limen-herd--held limen-herd--names
+                       limen-herd--states limen-herd--hooked limen-herd--timers
+                       limen-herd--chatter))
+    (clrhash table)))
 
 (defun limen-herd--protocol (_herd)
   "Return the protocol paragraph telling a joining member about notices."
@@ -464,19 +650,23 @@ the events again where nothing else needs them."
       (add-to-list 'limen-hooks-extra-events spec t))
     (add-hook 'limen-hooks-event-functions #'limen-herd--on-event)
     (add-hook 'herdr-herd-protocol-functions #'limen-herd--protocol)
+    (add-hook 'herdr-herd-sent-functions #'limen-herd--on-sent)
+    (add-hook 'herdr-agent-event-functions #'limen-herd--on-herdr-event)
+    (limen-herd--seed)
+    (limen-herd--subscribe)
     (limen-herd--attach-when-loaded)
     (limen-hooks-request-install "herd"))
    (t
     (remove-hook 'limen-hooks-event-functions #'limen-herd--on-event)
     (remove-hook 'herdr-herd-protocol-functions #'limen-herd--protocol)
+    (remove-hook 'herdr-herd-sent-functions #'limen-herd--on-sent)
+    (remove-hook 'herdr-agent-event-functions #'limen-herd--on-herdr-event)
     (limen-herd--detach-menu)
     (setq limen-hooks-extra-events
           (seq-remove (lambda (spec) (member spec limen-herd--events))
                       limen-hooks-extra-events))
     (limen-hooks-remove-events-everywhere (mapcar #'car limen-herd--events))
-    (clrhash limen-herd--prompts)
-    (clrhash limen-herd--held)
-    (clrhash limen-herd--names))))
+    (limen-herd--reset))))
 
 (provide 'limen-herd)
 ;;; limen-herd.el ends here
