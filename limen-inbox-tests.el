@@ -28,6 +28,10 @@
 (defmacro limen-inbox-tests--with-inbox (&rest body)
   (declare (indent 0) (debug t))
   `(let ((limen-inbox--questions nil)
+         (limen-inbox--selected (make-hash-table :test 'equal))
+         (limen-inbox--sent (make-hash-table :test 'equal))
+         (limen-inbox--tabs (make-hash-table :test 'equal))
+         (limen-inbox-key-delay 0)
          (refreshes 0))
      (cl-letf (((symbol-function 'herdr-status-request-refresh)
                 (lambda () (cl-incf refreshes))))
@@ -300,60 +304,130 @@
       (limen-inbox--insert-question
        '((qid . "t1#0") (answerable . t) (header . "Database")
          (question . "Which?") (options "PostgreSQL" "MongoDB") (multi) (other))
-       '("/tmp/alpha.sock" . "t1"))
+       '("/tmp/alpha.sock" . "t1") t)
       (should (string-match-p "PostgreSQL · MongoDB" (buffer-string)))
       (should-not (string-match-p "[○●]" (buffer-string))))))
 
 (defmacro limen-inbox-tests--with-value (value &rest body)
-  "Run BODY with `limen-inbox--value' returning VALUE and a fake herdr-agent."
+  "Run BODY with section VALUE and recorded individual pane keys."
   (declare (indent 1) (debug t))
   `(let (sent)
      (cl-letf (((symbol-function 'limen-inbox--value) (lambda (_type) ,value))
-               ((symbol-function 'herdr-agent-prompt)
-                (lambda (target text) (setq sent (list target text)))))
+               ((symbol-function 'herdr-agent-send-keys)
+                (lambda (target keys)
+                  (should (equal target '("/tmp/alpha.sock" . "t1")))
+                  (should (= (length keys) 1))
+                  (setq sent (append sent keys))))
+               ((symbol-function 'limen-inbox--next-question) #'ignore)
+               ((symbol-function 'y-or-n-p) (lambda (_) nil)))
        ,@body)))
 
-(ert-deftest limen-inbox-answers-a-single-select-option ()
+(ert-deftest limen-inbox-toggles-without-sending ()
   (limen-inbox-tests--with-inbox
-    (limen-inbox--add '((id . "t1") (agent_session . "a")
-                        (questions . (((qid . "t1#0"))))))
-    (limen-inbox-tests--with-value
-        '(:qid "t1#0" :label "PostgreSQL" :target ("/tmp/alpha.sock" . "t1"))
-      (limen-inbox-answer-at-point)
-      (should (equal sent '(("/tmp/alpha.sock" . "t1") "PostgreSQL")))
-      (should-not (limen-inbox-questions)))))
-
-(ert-deftest limen-inbox-toggles-multi-select-then-submits ()
-  (limen-inbox-tests--with-inbox
-    (clrhash limen-inbox--selected)
-    (limen-inbox--add '((id . "t1") (agent_session . "a")
-                        (questions . (((qid . "t1#0"))))))
-    (limen-inbox-tests--with-value
-        '(:qid "t1#0" :label "Yes" :target ("/tmp/alpha.sock" . "t1") :multi t)
-      (limen-inbox-answer-at-point)
+    (limen-inbox-tests--with-value '(:qid "t1#0" :label "Yes" :multi t)
+      (limen-inbox-toggle-at-point)
       (should (equal (gethash "t1#0" limen-inbox--selected) '("Yes")))
-      (should-not sent)
-      (limen-inbox-answer-at-point)
-      (should-not (gethash "t1#0" limen-inbox--selected)))
-    (puthash "t1#0" '("Yes" "No") limen-inbox--selected)
-    (limen-inbox-tests--with-value
-        '(:qid "t1#0" :target ("/tmp/alpha.sock" . "t1"))
-      (limen-inbox-submit-at-point)
-      (should (equal sent '(("/tmp/alpha.sock" . "t1") "Yes\nNo")))
-      (should-not (limen-inbox-questions))
-      (should-not (gethash "t1#0" limen-inbox--selected)))))
+      (limen-inbox-toggle-at-point)
+      (should-not (gethash "t1#0" limen-inbox--selected))
+      (should-not sent))))
 
-(ert-deftest limen-inbox-refuses-to-answer-without-herdr-agent ()
+(ert-deftest limen-inbox-recommits-only-the-multi-select-difference ()
   (limen-inbox-tests--with-inbox
-    (limen-inbox--add '((id . "t1") (agent_session . "a")
-                        (questions . (((qid . "t1#0"))))))
-    (cl-letf (((symbol-function 'limen-inbox--value)
-               (lambda (_type)
-                 '(:qid "t1#0" :label "PostgreSQL"
-                   :target ("/tmp/alpha.sock" . "t1")))))
-      (when (fboundp 'herdr-agent-prompt) (fmakunbound 'herdr-agent-prompt))
-      (limen-inbox-answer-at-point)
-      (should (limen-inbox-questions)))))
+    (limen-inbox-tests--with-value
+        '(:qid "t1#0" :options ("A" "B" "C") :multi t
+          :target ("/tmp/alpha.sock" . "t1"))
+      (puthash "t1#0" '("A" "B") limen-inbox--selected)
+      (limen-inbox-commit-at-point)
+      (should (equal sent '("1" "2" "right")))
+      (should (limen-inbox--committed-p "t1#0"))
+      (limen-inbox--toggle "t1#0" "A" t)
+      (limen-inbox--toggle "t1#0" "C" t)
+      (should-not (limen-inbox--committed-p "t1#0"))
+      (setq sent nil)
+      (limen-inbox-commit-at-point)
+      (should (equal sent '("left" "1" "3" "right")))
+      (should (equal (gethash "t1#0" limen-inbox--sent) '("B" "C")))
+      (setq sent nil)
+      (limen-inbox-commit-at-point)
+      (should (equal sent '("left" "right"))))))
+
+(ert-deftest limen-inbox-replaces-single-select-without-toggling-old-choice ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox-tests--with-value
+        '(:qid "t1#0" :options ("A" "B")
+          :target ("/tmp/alpha.sock" . "t1"))
+      (puthash "t1#0" '("A") limen-inbox--selected)
+      (limen-inbox-commit-at-point)
+      (limen-inbox--toggle "t1#0" "B" nil)
+      (setq sent nil)
+      (limen-inbox-commit-at-point)
+      (should (equal sent '("left" "2" "right"))))))
+
+(ert-deftest limen-inbox-navigates-out-of-order-and-isolates-entries ()
+  (limen-inbox-tests--with-inbox
+    (puthash "other" 4 limen-inbox--tabs)
+    (limen-inbox-tests--with-value
+        '(:qid "t1#2" :options ("A" "B")
+          :target ("/tmp/alpha.sock" . "t1"))
+      (puthash "t1#2" '("B") limen-inbox--selected)
+      (limen-inbox-commit-at-point)
+      (should (equal sent '("right" "right" "2" "right")))
+      (should (= (gethash "t1" limen-inbox--tabs) 3))
+      (should (= (gethash "other" limen-inbox--tabs) 4)))))
+
+(ert-deftest limen-inbox-submission-requires-every-current-selection-committed ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox--add '((id . "t1")
+                        (questions ((qid . "t1#0")) ((qid . "t1#1")))) )
+    (puthash "t1#0" '("A") limen-inbox--selected)
+    (puthash "t1#1" '("B") limen-inbox--selected)
+    (limen-inbox-tests--with-value
+        '(:qid "t1#1" :options ("A" "B") :last t
+          :target ("/tmp/alpha.sock" . "t1"))
+      (let ((prompts 0))
+        (cl-letf (((symbol-function 'y-or-n-p)
+                   (lambda (_) (cl-incf prompts) nil)))
+          (limen-inbox-commit-at-point)
+          (should (= prompts 0))
+          (puthash "t1#0" '("A") limen-inbox--sent)
+          (limen-inbox-commit-at-point)
+          (should (= prompts 1))
+          (should (limen-inbox-questions))
+          (limen-inbox--toggle "t1#0" "B" nil)
+          (limen-inbox-commit-at-point)
+          (should (= prompts 1))
+          (puthash "t1#0" '("B") limen-inbox--sent))
+        (setq sent nil)
+        (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t)))
+          (limen-inbox-commit-at-point))
+        (should (equal sent '("left" "right" "return" "return")))
+        (should-not (limen-inbox-questions))
+        (should (= (hash-table-count limen-inbox--sent) 0))
+        (should (= (hash-table-count limen-inbox--selected) 0))
+        (should (= (hash-table-count limen-inbox--tabs) 0))))))
+
+(ert-deftest limen-inbox-refuses-to-commit-without-herdr-agent ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox-tests--with-value
+        '(:qid "t1#0" :options ("A") :target ("/tmp/alpha.sock" . "t1"))
+      (puthash "t1#0" '("A") limen-inbox--selected)
+      (cl-letf (((symbol-function 'herdr-agent-send-keys) nil))
+        (limen-inbox-commit-at-point))
+      (should-not (gethash "t1#0" limen-inbox--sent)))))
+
+(ert-deftest limen-inbox-blocks-replay-after-partial-send-failure ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox-tests--with-value
+        '(:qid "t1#0" :options ("A" "B") :multi t
+          :target ("/tmp/alpha.sock" . "t1"))
+      (puthash "t1#0" '("A" "B") limen-inbox--selected)
+      (let ((calls 0))
+        (cl-letf (((symbol-function 'herdr-agent-send-keys)
+                   (lambda (&rest _) (when (= (cl-incf calls) 2) (error "Disconnected")))))
+          (should-error (limen-inbox-commit-at-point))
+          (should (eq (gethash "t1" limen-inbox--tabs) 'unknown))
+          (should-error (limen-inbox-commit-at-point) :type 'user-error)
+          (should (= calls 2)))))))
 
 (provide 'limen-inbox-tests)
 ;;; limen-inbox-tests.el ends here

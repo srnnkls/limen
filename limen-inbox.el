@@ -23,7 +23,7 @@
 
 (declare-function herdr-status-agent-row "ext:herdr-status" (entry widths workspaces))
 (declare-function herdr-status-request-refresh "ext:herdr-status" ())
-(declare-function herdr-agent-prompt "ext:herdr-agent" (target text))
+(declare-function herdr-agent-send-keys "ext:herdr-agent" (target keys))
 (defvar herdr-status-sections-functions)
 
 (defcustom limen-inbox-question-tools '("AskUserQuestion" "request_user_input")
@@ -45,9 +45,9 @@ Herdr detects the question UI on screen a moment after the turn ends."
 (defcustom limen-inbox-answer nil
   "Whether inbox options are selectable lines that answer into the agent's pane.
 When nil the options render as one read-only line.  When non-nil each
-option is its own line: RET on a single-select option sends its label to
-the agent, and a multi-select question toggles options with circles and
-sends the checked labels from its submit line."
+option is its own line.  Selection stays local until
+`limen-inbox-commit-at-point' commits and advances the question.
+Submission requires confirmation."
   :type 'boolean
   :group 'limen-hooks)
 
@@ -62,6 +62,12 @@ sends the checked labels from its submit line."
 
 (defvar limen-inbox--selected (make-hash-table :test 'equal)
   "Chosen labels of each multi-select question, keyed by its qid.")
+
+(defvar limen-inbox--sent (make-hash-table :test 'equal)
+  "Last committed selections, keyed by question id.")
+
+(defvar limen-inbox--tabs (make-hash-table :test 'equal)
+  "Current pane tab index per entry, or `unknown' after a send error.")
 
 (defun limen-inbox-questions ()
   "Return the pending question entries, oldest first."
@@ -129,6 +135,11 @@ The qid is \"ID#INDEX\", so an answer can recover its entry id from it."
   "Drop the entries satisfying PREDICATE; return non-nil when any did."
   (let ((kept (seq-remove predicate limen-inbox--questions)))
     (prog1 (not (eq (length kept) (length limen-inbox--questions)))
+      (dolist (entry (seq-difference limen-inbox--questions kept))
+        (remhash (alist-get 'id entry) limen-inbox--tabs)
+        (dolist (question (alist-get 'questions entry))
+          (remhash (alist-get 'qid question) limen-inbox--selected)
+          (remhash (alist-get 'qid question) limen-inbox--sent)))
       (setq limen-inbox--questions kept))))
 
 (defun limen-inbox--remove-agent (agent)
@@ -259,29 +270,40 @@ Entries no listed agent asked, or whose question left the screen, are dropped."
   "Return the entry id encoded in QID."
   (car (split-string qid "#")))
 
-(defun limen-inbox--send (target text)
-  "Send TEXT to the agent at TARGET; return non-nil when it was sent."
+(defcustom limen-inbox-key-delay 0.05
+  "Seconds to wait between keys sent to an agent pane.
+A burst sent at once drops keys, so each is sent on its own with this
+pause in between."
+  :type 'number
+  :group 'limen-hooks)
+
+(defun limen-inbox--send-keys (target keys)
+  "Send KEYS, a list of key names, one at a time to the agent at TARGET.
+Return non-nil when they were sent."
   (cond
-   ((not (fboundp 'herdr-agent-prompt))
+   ((not (fboundp 'herdr-agent-send-keys))
     (message "herdr-agent is not available") nil)
    ((not target)
     (message "This question has no live agent pane") nil)
-   (t (herdr-agent-prompt target text) t)))
+   (t (dolist (key keys)
+        (herdr-agent-send-keys target (list key))
+        (sleep-for limen-inbox-key-delay))
+      t)))
 
 (defun limen-inbox--answered (qid)
   "Drop the entry owning QID and its selection, then redraw."
-  (remhash qid limen-inbox--selected)
   (let ((id (limen-inbox--entry-id qid)))
     (limen-inbox--remove-if (lambda (entry) (equal (alist-get 'id entry) id))))
   (limen-inbox--refresh))
 
-(defun limen-inbox--toggle (qid label)
-  "Toggle LABEL in the chosen set of the question QID."
+(defun limen-inbox--toggle (qid label multi)
+  "Choose LABEL for the question QID.
+MULTI toggles LABEL in the set; otherwise LABEL becomes the sole choice."
   (let ((chosen (gethash qid limen-inbox--selected)))
     (puthash qid
-             (if (member label chosen)
-                 (remove label chosen)
-               (append chosen (list label)))
+             (cond ((not multi) (list label))
+                   ((member label chosen) (remove label chosen))
+                   (t (append chosen (list label))))
              limen-inbox--selected)))
 
 (defun limen-inbox--value (type)
@@ -291,91 +313,186 @@ Entries no listed agent asked, or whose question left the screen, are dropped."
       (setq section (oref section parent)))
     (and section (oref section value))))
 
-(defun limen-inbox-answer-at-point ()
-  "Answer the single-select option at point, or toggle a multi-select one."
+(defun limen-inbox--committed-p (qid)
+  "Return non-nil if QID's current selection matches its committed one."
+  (let ((sent (gethash qid limen-inbox--sent 'missing))
+        (chosen (gethash qid limen-inbox--selected)))
+    (and (listp sent) chosen
+         (null (seq-difference sent chosen #'equal))
+         (null (seq-difference chosen sent #'equal)))))
+
+(defun limen-inbox--ready-p (id)
+  "Return non-nil when every question of entry ID is committed."
+  (let ((questions (alist-get 'questions
+                              (seq-find (lambda (entry)
+                                          (equal (alist-get 'id entry) id))
+					limen-inbox--questions))))
+    (and questions
+         (seq-every-p (lambda (question)
+			(limen-inbox--committed-p (alist-get 'qid question)))
+                      questions))))
+
+(defun limen-inbox--goto-tab (target id index)
+  "Move TARGET's entry ID to tab INDEX from its tracked position."
+  (let ((current (gethash id limen-inbox--tabs 0)))
+    (when (eq current 'unknown)
+      (user-error "Pane position unknown; finish this question in the agent window"))
+    (when (limen-inbox--send-keys
+           target (make-list (abs (- index current))
+                             (if (< index current) "left" "right")))
+      (puthash id index limen-inbox--tabs)
+      t)))
+
+(defun limen-inbox--next-question (qid)
+  "Move point to the question section following QID."
+  (let ((section (magit-current-section)))
+    (while (and section
+                (not (and (eq (oref section type) 'limen-inbox-question)
+                          (equal (plist-get (oref section value) :qid) qid))))
+      (setq section (oref section parent)))
+    (when section
+      (goto-char (oref section end)))))
+
+(defun limen-inbox-toggle-at-point ()
+  "Toggle the inbox option at point in its question's selection."
   (interactive)
   (let ((value (or (limen-inbox--value 'limen-inbox-option)
                    (user-error "No inbox option at point"))))
-    (let ((qid (plist-get value :qid))
-          (label (plist-get value :label))
-          (target (plist-get value :target)))
-      (cond
-       ((plist-get value :other)
-        (let ((text (read-string "Answer: ")))
-          (when (and (not (string-empty-p text)) (limen-inbox--send target text))
-            (limen-inbox--answered qid))))
-       ((plist-get value :multi)
-        (limen-inbox--toggle qid label)
-        (limen-inbox--refresh))
-       ((limen-inbox--send target label)
-        (limen-inbox--answered qid))))))
+    (limen-inbox--toggle (plist-get value :qid)
+                         (plist-get value :label)
+                         (plist-get value :multi))
+    (limen-inbox--refresh)))
 
-(defun limen-inbox-submit-at-point ()
-  "Send the checked labels of the multi-select question at point."
+(defun limen-inbox-commit-at-point ()
+  "Commit the question at point and advance to the next tab.
+Revisited questions send only changed choices.  The last question asks
+for submission only when every question has its current choices committed."
   (interactive)
-  (let ((value (or (limen-inbox--value 'limen-inbox-submit)
-                   (user-error "No inbox submit at point"))))
-    (let* ((qid (plist-get value :qid))
-           (chosen (gethash qid limen-inbox--selected)))
-      (if (null chosen)
-          (message "No options selected")
-        (when (limen-inbox--send (plist-get value :target)
-                                 (string-join chosen "\n"))
-          (limen-inbox--answered qid))))))
+  (let* ((value (or (limen-inbox--value 'limen-inbox-question)
+                    (user-error "No inbox question at point")))
+         (qid (plist-get value :qid))
+         (id (limen-inbox--entry-id qid))
+         (index (string-to-number (car (last (split-string qid "#")))))
+         (target (plist-get value :target))
+         (options (plist-get value :options))
+         (chosen (gethash qid limen-inbox--selected))
+         (sent (gethash qid limen-inbox--sent))
+         (changed (if (plist-get value :multi)
+                      (append (seq-difference sent chosen #'equal)
+                              (seq-difference chosen sent #'equal))
+                    (unless (equal sent chosen) chosen)))
+         (keys (seq-keep (lambda (label)
+                           (when (member label changed)
+                             (number-to-string
+                              (1+ (seq-position options label #'equal)))))
+                         options)))
+    (unless chosen (user-error "No options selected"))
+    (condition-case err
+        (when (and (limen-inbox--goto-tab target id index)
+                   (limen-inbox--send-keys target keys))
+          (puthash qid (copy-sequence chosen) limen-inbox--sent)
+          (when (limen-inbox--goto-tab target id (1+ index))
+            (limen-inbox--refresh)
+            (if (plist-get value :last)
+                (when (and (limen-inbox--ready-p id)
+                           (y-or-n-p "Submit all answers? ")
+                           (limen-inbox--send-keys target '("return" "return")))
+                  (limen-inbox--answered qid))
+              (limen-inbox--next-question qid))))
+      ((error quit)
+       (puthash id 'unknown limen-inbox--tabs)
+       (limen-inbox--refresh)
+       (signal (car err) (cdr err))))))
+
+(defun limen-inbox-toggle-index ()
+  "Toggle the option whose number is the digit key that called this."
+  (interactive)
+  (let* ((value (or (limen-inbox--value 'limen-inbox-question)
+                    (user-error "No inbox question at point")))
+         (number (- last-command-event ?0))
+         (label (nth (1- number) (plist-get value :options))))
+    (unless label (user-error "No option %d" number))
+    (limen-inbox--toggle (plist-get value :qid) label (plist-get value :multi))
+    (limen-inbox--refresh)))
 
 (defvar-keymap magit-limen-inbox-option-section-map
   :doc "Keymap on an inbox option line."
-  "RET" #'limen-inbox-answer-at-point)
+  "RET" #'limen-inbox-toggle-at-point
+  "SPC" #'limen-inbox-toggle-at-point)
 
-(defvar-keymap magit-limen-inbox-submit-section-map
-  :doc "Keymap on the inbox submit line."
-  "RET" #'limen-inbox-submit-at-point)
+(defvar-keymap magit-limen-inbox-question-section-map
+  :doc "Keymap on an inbox question tab."
+  "C-c C-c" #'limen-inbox-commit-at-point
+  "1" #'limen-inbox-toggle-index
+  "2" #'limen-inbox-toggle-index
+  "3" #'limen-inbox-toggle-index
+  "4" #'limen-inbox-toggle-index
+  "5" #'limen-inbox-toggle-index
+  "6" #'limen-inbox-toggle-index
+  "7" #'limen-inbox-toggle-index
+  "8" #'limen-inbox-toggle-index
+  "9" #'limen-inbox-toggle-index)
 
-(defun limen-inbox--insert-options (question target)
-  "Insert QUESTION's options as selectable lines answering into TARGET."
-  (let* ((qid (alist-get 'qid question))
-         (multi (alist-get 'multi question))
-         (chosen (gethash qid limen-inbox--selected)))
-    (dolist (label (alist-get 'options question))
-      (magit-insert-section
-          (limen-inbox-option
-           (list :qid qid :label label :target target :multi multi))
-        (insert "      "
-                (if multi (if (member label chosen) "● " "○ ") "")
-                (propertize label 'font-lock-face 'herdr-status-meta)
-                "\n")))
-    (when (alist-get 'other question)
-      (magit-insert-section
-          (limen-inbox-option (list :qid qid :target target :other t))
-        (insert "      "
-                (if multi "○ " "")
-                (propertize "other…" 'font-lock-face 'herdr-status-meta)
-                "\n")))
-    (when multi
-      (magit-insert-section (limen-inbox-submit (list :qid qid :target target))
-        (insert "      "
-                (propertize (format "↵ send %d selected" (length chosen))
-                            'font-lock-face 'herdr-status-label)
-                "\n")))))
+(defun limen-inbox--insert-options (qid options multi)
+  "Insert OPTIONS of question QID as togglable circle lines.
+MULTI is threaded onto each option so toggling knows the question kind."
+  (let ((chosen (gethash qid limen-inbox--selected)))
+    (seq-map-indexed
+     (lambda (label index)
+       (magit-insert-section
+           (limen-inbox-option
+            (list :qid qid :label label :multi multi :index (1+ index)))
+         (insert "      "
+                 (if (member label chosen) "● " "○ ")
+                 (propertize label 'font-lock-face 'herdr-status-meta)
+                 "\n")))
+     options)))
 
-(defun limen-inbox--insert-question (question target)
-  "Insert QUESTION under its agent row; TARGET answers it, or nil to read only."
-  (insert "    "
-          (propertize (concat (alist-get 'header question)
-                              (if (alist-get 'header question) ": " "")
-                              (alist-get 'question question))
-                      'font-lock-face 'herdr-status-label)
-          (cond ((alist-get 'multi question) "  (multi)")
-                ((alist-get 'other question) "  (or other)")
-                (t ""))
-          "\n")
-  (if (and limen-inbox-answer (alist-get 'answerable question))
-      (limen-inbox--insert-options question target)
-    (when-let* ((options (alist-get 'options question)))
-      (insert "      "
-              (propertize (string-join options " · ")
-                          'font-lock-face 'herdr-status-meta)
-              "\n"))))
+(defun limen-inbox--question-heading (question)
+  "Return QUESTION's header and text as one label line."
+  (concat (alist-get 'header question)
+          (if (alist-get 'header question) ": " "")
+          (alist-get 'question question)))
+
+(defun limen-inbox--insert-question (question target last)
+  "Insert QUESTION under its agent row.
+With `limen-inbox-answer' and an answerable QUESTION, render a togglable
+tab whose options answer into TARGET; LAST submits the whole call.  Any
+other case renders the question read-only."
+  (let ((qid (alist-get 'qid question))
+        (multi (alist-get 'multi question))
+        (options (alist-get 'options question)))
+    (if (not (and limen-inbox-answer (alist-get 'answerable question)))
+        (progn
+          (insert "    "
+                  (propertize (limen-inbox--question-heading question)
+                              'font-lock-face 'herdr-status-label)
+                  (cond (multi "  (multi)")
+                        ((alist-get 'other question) "  (or other)")
+                        (t ""))
+                  "\n")
+          (when options
+            (insert "      "
+                    (propertize (string-join options " · ")
+                                'font-lock-face 'herdr-status-meta)
+                    "\n")))
+      (magit-insert-section (limen-inbox-question
+                             (list :qid qid :target target
+                                   :options options :multi multi :last last))
+	(magit-insert-heading
+	  "    "
+	  (propertize (limen-inbox--question-heading question)
+		      'font-lock-face 'herdr-status-label)
+	  (cond ((eq (gethash (limen-inbox--entry-id qid) limen-inbox--tabs)
+		     'unknown)
+		 (propertize "  pane out of sync" 'font-lock-face 'warning))
+		((limen-inbox--committed-p qid)
+		 (propertize "  ✓ sent" 'font-lock-face 'success))
+		((gethash qid limen-inbox--sent)
+		 (propertize "  changed" 'font-lock-face 'warning))
+		(multi (propertize "  (multi)" 'font-lock-face 'herdr-status-meta))
+		(t "")))
+	(limen-inbox--insert-options qid options multi)))))
 
 (defun limen-inbox--agent-target (agent)
   "Return AGENT's (server . terminal) target, or nil when it lacks one."
@@ -388,17 +505,31 @@ Entries no listed agent asked, or whose question left the screen, are dropped."
   (when-let* ((groups (limen-inbox--groups agents)))
     (magit-insert-section (limen-inbox)
       (magit-insert-heading
-        (propertize (format "Inbox %d"
-                            (apply #'+ (mapcar (lambda (group) (length (cdr group)))
-                                               groups)))
-                    'font-lock-face 'magit-section-heading))
+	(propertize (format "Inbox %d"
+			    (apply #'+ (mapcar (lambda (group) (length (cdr group)))
+					       groups)))
+		    'font-lock-face 'magit-section-heading))
       (pcase-dolist (`(,agent . ,questions) groups)
-        (let ((target (limen-inbox--agent-target agent)))
-          (magit-insert-section (herdr-status-agent agent)
-            (magit-insert-heading (herdr-status-agent-row agent widths workspaces))
-            (magit-insert-section-body
-              (dolist (question questions)
-                (limen-inbox--insert-question question target)))))))))
+	(let ((target (limen-inbox--agent-target agent))
+	      (last-qids (limen-inbox--last-qids questions)))
+	  (magit-insert-section (herdr-status-agent agent)
+	    (magit-insert-heading (herdr-status-agent-row agent widths workspaces))
+	    (magit-insert-section-body
+	      (dolist (question questions)
+		(limen-inbox--insert-question
+		 question target
+		 (and (member (alist-get 'qid question) last-qids) t))))))))))
+
+(defun limen-inbox--last-qids (questions)
+  "Return the qid of the final question of each entry among QUESTIONS."
+  (let ((seen (make-hash-table :test 'equal))
+        (last nil))
+    (dolist (question (reverse questions))
+      (let ((id (limen-inbox--entry-id (alist-get 'qid question))))
+        (unless (gethash id seen)
+          (puthash id t seen)
+          (push (alist-get 'qid question) last))))
+    last))
 
 ;;;###autoload
 (define-minor-mode limen-inbox-mode
@@ -424,6 +555,8 @@ after the current command; disabling removes the question events again."
     (limen-hooks-remove-events-everywhere (mapcar #'car limen-inbox--events))
     (setq limen-inbox--questions nil)
     (clrhash limen-inbox--selected)
+    (clrhash limen-inbox--sent)
+    (clrhash limen-inbox--tabs)
     (limen-inbox--refresh))))
 
 (provide 'limen-inbox)
