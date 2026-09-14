@@ -178,6 +178,70 @@
         (when (buffer-live-p virtual) (kill-buffer virtual))
         (delete-directory root t)))))
 
+(ert-deftest limen-trail-unconfined-discloses-entries-against-their-own-root ()
+  (limen-trail-tests--with-trail
+    (let* ((root (file-truename (make-temp-file "limen-trail-root" t)))
+           (other (file-truename (make-temp-file "limen-trail-other" t)))
+           (context (limen-make-request :interface 'cli :project-root root))
+           (here (find-file-noselect
+                  (limen-trail-tests--make-file root "here.el" 3)))
+           (away (find-file-noselect
+                  (limen-trail-tests--make-file other "away.el" 3)))
+           (hidden (find-file-noselect
+                    (limen-trail-tests--make-file other "secret.el" 3)))
+           (limen-project-path-deny-regexps '("\\`secret")))
+      (unwind-protect
+          (save-window-excursion
+            (limen-trail-clear)
+            (dolist (buffer (list hidden away here))
+              (limen-trail-tests--visit buffer))
+            (should (equal (mapcar (lambda (r) (alist-get 'name r))
+                                   (append (limen-call "trail.list" nil context)
+                                           nil))
+                           '("here.el")))
+            (let ((limen-trail-confine-to-project nil))
+              (let ((records (append (limen-call "trail.list" nil context) nil)))
+                (should (equal (mapcar (lambda (r) (alist-get 'name r)) records)
+                               '("here.el" "away.el")))
+                (should (equal (alist-get 'project (car records))
+                               (limen--project-root root)))
+                (should (equal (alist-get 'project (cadr records))
+                               (limen--project-root other)))
+                (should (equal (limen-trail-tests--lines (cadr records)) '(1))))))
+        (dolist (buffer (list here away hidden))
+          (when (buffer-live-p buffer) (kill-buffer buffer)))
+        (delete-directory root t)
+        (delete-directory other t)))))
+
+(ert-deftest limen-trail-keeps-points-of-redrawn-buffers-without-a-file ()
+  (limen-trail-tests--with-trail
+    (let* ((root (file-truename (make-temp-file "limen-trail-root" t)))
+           (context (limen-make-request :interface 'cli :project-root root))
+           (terminal (generate-new-buffer "limen-trail-terminal"))
+           (limen-readable-virtual-buffer-condition t))
+      (unwind-protect
+          (save-window-excursion
+            (limen-trail-clear)
+            (with-current-buffer terminal
+              (setq default-directory (file-name-as-directory root))
+              (dotimes (index 200) (insert (format "line %d\n" (1+ index))))
+              (goto-char (point-min)))
+            (limen-trail-tests--visit terminal)
+            (limen-trail-tests--settle-at terminal 20)
+            (limen-trail-tests--settle-at terminal 60)
+            (limen-trail-tests--settle-at terminal 62)
+            (should (equal (limen-trail-tests--lines
+                            (aref (limen-call "trail.list" nil context) 0))
+                           '(62 20 1)))
+            (with-current-buffer terminal
+              (erase-buffer)
+              (insert "redrawn\n"))
+            (should (equal (limen-trail-tests--lines
+                            (aref (limen-call "trail.list" nil context) 0))
+                           '(62 20 1))))
+        (when (buffer-live-p terminal) (kill-buffer terminal))
+        (delete-directory root t)))))
+
 (ert-deftest limen-trail-applies-disclosure-policy-and-ignores-internal-buffers ()
   (limen-trail-tests--with-trail
     (let* ((root (file-truename (make-temp-file "limen-trail-root" t)))

@@ -34,6 +34,13 @@
   :type 'number
   :group 'limen)
 
+(defcustom limen-trail-confine-to-project t
+  "Whether `trail.list' discloses only entries of the requested project.
+When nil, every entry is disclosed against its own project root, which
+its record names, and that root's access policy applies to it."
+  :type 'boolean
+  :group 'limen)
+
 (defcustom limen-trail-point-distance 5
   "Minimum line distance between consecutive settled points.
 Smaller moves update the latest point in place."
@@ -71,19 +78,34 @@ Smaller moves update the latest point in place."
       (limen--absolute-line-number (marker-position point))
     (car point)))
 
+(defun limen-trail--make-point (position)
+  "Return a trail point for POSITION in the current buffer.
+A file buffer keeps a live marker, so later edits carry the point along
+with the text it marks.  A buffer without a file keeps a frozen line and
+column, because a wholesale redraw of its text drags every marker inside
+it to `point-min' and reports a position the point never held."
+  (if buffer-file-name
+      (copy-marker position)
+    (cons (limen--absolute-line-number position)
+          (limen-logical-column-at-position position))))
+
 (defun limen-trail--push-point (entry position)
   "Record POSITION in the current buffer as ENTRY's latest settled point."
   (let* ((points (limen-trail-entry-points entry))
          (head (car points))
-         (line (limen--absolute-line-number position)))
-    (if (and (markerp head)
-             (eq (marker-buffer head) (current-buffer))
+         (line (limen--absolute-line-number position))
+         (head-here (if (markerp head)
+                        (eq (marker-buffer head) (current-buffer))
+                      (and head (null buffer-file-name)))))
+    (if (and head-here
              (< (abs (- line (limen-trail--point-line head)))
                 limen-trail-point-distance))
-        (set-marker head position)
-      (let ((marker (copy-marker position)))
-        (setf (limen-trail-entry-points entry)
-              (cons marker (seq-take points (1- limen-trail-point-limit))))))))
+        (if (markerp head)
+            (set-marker head position)
+          (setcar points (limen-trail--make-point position)))
+      (setf (limen-trail-entry-points entry)
+            (cons (limen-trail--make-point position)
+                  (seq-take points (1- limen-trail-point-limit)))))))
 
 (defun limen-trail--visit (&optional _window)
   "Record the selected window's buffer as the most recent trail entry."
@@ -153,25 +175,43 @@ Smaller moves update the latest point in place."
             (column . ,(limen-logical-column-at-position position)))))
     `((line . ,(car point)) (column . ,(cdr point)))))
 
-(defun limen-trail--entry-fields (entry)
-  "Return the recency fields shared by every disclosed ENTRY record."
-  `((live . ,(if (limen-trail-entry-buffer entry) t :json-false))
-    (visits . ,(limen-trail-entry-visits entry))
-    (last_visited . ,(format-time-string "%FT%T%z"
-                                         (limen-trail-entry-time entry)))))
+(defun limen-trail--entry-root (entry root)
+  "Return the root ENTRY is disclosed against for a request below ROOT.
+Confinement answers with ROOT.  Without it each entry answers with the
+project of the buffer or file it names, so that root's access policy is
+the one applied to it."
+  (if limen-trail-confine-to-project
+      root
+    (let ((buffer (limen-trail-entry-buffer entry))
+          (file (limen-trail-entry-file entry)))
+      (cond
+       ((buffer-live-p buffer)
+        (limen--project-root (buffer-local-value 'default-directory buffer)))
+       (file (limen--project-root (file-name-directory file)))
+       (t root)))))
+
+(defun limen-trail--entry-fields (entry root)
+  "Return the recency fields shared by every ENTRY record disclosed below ROOT."
+  (append
+   `((live . ,(if (limen-trail-entry-buffer entry) t :json-false))
+     (visits . ,(limen-trail-entry-visits entry))
+     (last_visited . ,(format-time-string "%FT%T%z"
+                                          (limen-trail-entry-time entry))))
+   (unless limen-trail-confine-to-project `((project . ,root)))))
 
 (defun limen-trail--entry-record (entry root)
   "Return the disclosed record for ENTRY below ROOT, or nil."
   (let ((buffer (limen-trail-entry-buffer entry))
-        (file (limen-trail-entry-file entry)))
+        (file (limen-trail-entry-file entry))
+        (root (limen-trail--entry-root entry root)))
     (if buffer
         (pcase (limen--buffer-kind buffer root)
           ('nil nil)
           ((and 'virtual (guard (not (limen--virtual-buffer-readable-p buffer))))
            (append (limen--redacted-virtual-buffer-record buffer)
-                   (limen-trail--entry-fields entry)))
+                   (limen-trail--entry-fields entry root)))
           (_ (append (limen--buffer-record buffer)
-                     (limen-trail--entry-fields entry)
+                     (limen-trail--entry-fields entry root)
                      `((points . ,(vconcat
                                    (mapcar #'limen-trail--point-record
                                            (limen-trail-entry-points entry))))))))
@@ -179,7 +219,7 @@ Smaller moves update the latest point in place."
         (append `((name . ,(limen-trail-entry-name entry))
                   (file . ,file)
                   (kind . "file"))
-                (limen-trail--entry-fields entry)
+                (limen-trail--entry-fields entry root)
                 `((points . ,(vconcat
                               (mapcar #'limen-trail--point-record
                                       (limen-trail-entry-points entry))))))))))
