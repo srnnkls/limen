@@ -75,7 +75,7 @@
   (let ((session (limen-herdr--session target)))
     (unless (equal (herdr-agent-session-kind session) "claude")
       (user-error "Target is not Claude Code"))
-    (herdr-agent-send-text (limen-herdr-claude--target session) "/ide\n")))
+    (limen-herdr--send-command (limen-herdr-claude--target session) "/ide")))
 
 ;;;###autoload
 (cl-defun limen-herdr-claude-adopt (agent &optional server-key display
@@ -89,7 +89,7 @@ terminal follows when something asks to see it."
                   agent :server-key (or server-key (alist-get 'server_key agent))
                   :attach attach :display display)))
     (when (limen-herdr-claude--connect-p agent)
-      (herdr-agent-send-text (limen-herdr-claude--target session) "/ide\n"))
+      (limen-herdr--send-command (limen-herdr-claude--target session) "/ide"))
     session))
 
 ;;;###autoload
