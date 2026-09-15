@@ -21,7 +21,7 @@
 (require 'json)
 (require 'seq)
 (require 'limen)
-(require 'limen-claude)
+(require 'limen-provider)
 (require 'limen-herdr)
 (require 'limen-trail)
 
@@ -46,8 +46,10 @@ Nil resolves `limen' on variable `exec-path', then the package's bin/limen."
   :type '(integer 0)
   :group 'limen-hooks)
 
-(defconst limen-hooks--providers '(claude codex)
-  "Providers whose prompt hooks Limen can answer.")
+(defun limen-hooks-providers ()
+  "Return the providers whose prompt hooks Limen can answer."
+  (mapcar #'limen-provider-name
+          (limen-providers-with #'limen-provider-hook-settings)))
 
 (defconst limen-hooks--base-events '(("UserPromptSubmit") ("SessionStart"))
   "Hook events context injection needs.")
@@ -90,20 +92,13 @@ event is added to the context the prompt carries.")
 
 ;;; Settings files
 
-(defun limen-hooks--codex-home ()
-  "Return Codex's state directory."
-  (let ((configured (getenv "CODEX_HOME")))
-    (if (and configured (not (string= configured "")))
-        configured
-      (expand-file-name ".codex" (or (getenv "HOME") "~")))))
-
 (defun limen-hooks-settings-file (provider)
   "Return the settings file holding PROVIDER's hooks."
-  (pcase provider
-    ('claude (expand-file-name "settings.json" (limen-claude-config-directory)))
-    ('codex (expand-file-name "hooks.json" (limen-hooks--codex-home)))
-    (_ (signal 'limen-invalid-arguments
-               (list (format "Unsupported hook provider %s" provider))))))
+  (if-let* ((entry (limen-provider provider))
+            (settings (limen-provider-hook-settings entry)))
+      (funcall settings)
+    (signal 'limen-invalid-arguments
+            (list (format "Unsupported hook provider %s" provider)))))
 
 (defun limen-hooks--default-command ()
   "Return the absolute `limen' launcher for installed hooks."
@@ -188,7 +183,7 @@ event is added to the context the prompt carries.")
 (defun limen-hooks--read-provider ()
   "Read a hook provider from the minibuffer."
   (list (intern (completing-read "Provider: "
-                                 (mapcar #'symbol-name limen-hooks--providers)
+                                 (mapcar #'symbol-name (limen-hooks-providers))
                                  nil t))))
 
 ;;;###autoload
@@ -282,7 +277,7 @@ provider whose settings cannot be written is reported and skipped."
                   (error
                    (message "Limen hooks: %s" (error-message-string err))
                    nil)))
-              limen-hooks--providers))
+              (limen-hooks-providers)))
 
 (defvar limen-hooks--requests nil
   "Features whose hooks wait for the next coalesced install.")
@@ -315,7 +310,7 @@ An event another consumer still lists in `limen-hooks-events' stays."
   (let* ((needed (mapcar #'car (limen-hooks-events)))
          (events (seq-remove (lambda (event) (member event needed)) events)))
     (when events
-      (dolist (provider limen-hooks--providers)
+      (dolist (provider (limen-hooks-providers))
         (condition-case err
             (when (limen-hooks-any-installed-p provider)
               (limen-hooks-remove-events provider events))
@@ -504,7 +499,7 @@ a region says it more exactly still."
   "Return the hook output for the CLI REQUEST in CONTEXT, or an empty string."
   (let ((provider (alist-get 'provider request)))
     (unless (and (stringp provider)
-                 (memq (intern provider) limen-hooks--providers))
+                 (memq (intern provider) (limen-hooks-providers)))
       (signal 'limen-invalid-request '("Unsupported hook provider")))
     (let* ((payload (when-let* ((text (limen-hooks--decode
                                        (alist-get 'payload_base64 request))))

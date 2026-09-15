@@ -27,11 +27,6 @@
 (declare-function herdr-agent-switch "ext:herdr-agent" (target))
 (defvar herdr-status-sections-functions)
 
-(defcustom limen-inbox-question-tools '("AskUserQuestion" "request_user_input")
-  "Tool names whose calls ask the user a question."
-  :type '(repeat string)
-  :group 'limen-hooks)
-
 (defcustom limen-inbox-transcript-tail-bytes 262144
   "How many bytes from the end of a Codex transcript are scanned for questions."
   :type '(integer 1024)
@@ -61,10 +56,15 @@ When nil, commits only advance to the next tab."
   :type 'boolean
   :group 'limen-hooks)
 
+(defun limen-inbox--question-tools ()
+  "Return every tool name that asks the user a question."
+  (mapcan (lambda (entry) (copy-sequence (limen-provider-question-tools entry)))
+          (limen-providers)))
+
 (defconst limen-inbox--events
-  '(("PreToolUse" . "AskUserQuestion|request_user_input")
-    ("PostToolUse" . "AskUserQuestion|request_user_input")
-    ("Stop") ("SessionEnd"))
+  (let ((matcher (string-join (limen-inbox--question-tools) "|")))
+    `(("PreToolUse" . ,matcher) ("PostToolUse" . ,matcher)
+      ("Stop") ("SessionEnd")))
   "Hook events the inbox needs installed, with their tool matcher.")
 
 (defvar limen-inbox--questions nil
@@ -225,18 +225,19 @@ the call only shows in the transcript; return non-nil when any was added."
         (agent (alist-get 'session_id payload)))
     (when (pcase event
             ("PreToolUse"
-             (when-let* (((member tool limen-inbox-question-tools))
+             (when-let* (((member tool (limen-inbox--question-tools)))
                          (entry (limen-inbox--entry payload)))
                (limen-inbox--add entry)))
             ("PostToolUse"
-             (when (member tool limen-inbox-question-tools)
+             (when (member tool (limen-inbox--question-tools))
                (if id
                    (limen-inbox--remove-if
                     (lambda (entry) (equal (alist-get 'id entry) id)))
                  (limen-inbox--remove-agent agent))))
             ("Stop"
              (let ((removed (limen-inbox--remove-agent agent))
-                   (added (and (equal provider "codex")
+                   (added (and (when-let* ((entry (limen-provider provider)))
+                                 (limen-provider-transcript-questions-p entry))
                                (limen-inbox--add-transcript-questions payload))))
                (or removed added)))
             ((or "UserPromptSubmit" "SessionEnd")

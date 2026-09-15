@@ -14,6 +14,7 @@
 (require 'limen-compile)
 (require 'limen-editor)
 (require 'limen-mcp)
+(require 'limen-provider)
 (require 'limen-trail)
 
 (declare-function herdr-agent-adapter "ext:herdr-agent" (kind))
@@ -54,18 +55,10 @@ arrives inside that window is dropped."
 (cl-defstruct limen-herdr-state
   provider session route transport launched-p)
 
-(defconst limen-herdr--capabilities
-  '((claude :transport websocket :operations compatibility
-            :passive-context native :explicit-context native :diffs t)
-    (codex :transport streamable-http :operations registry
-           :passive-context resource :explicit-context terminal :diffs t)
-    (pi :transport extension :operations registry
-        :passive-context next-turn :explicit-context message :diffs t))
-  "Provider capabilities exposed by the Herdr bridge.")
-
 (defun limen-herdr-provider-capabilities (provider)
   "Return canonical capabilities for PROVIDER."
-  (cdr (assq provider limen-herdr--capabilities)))
+  (when-let* ((entry (limen-provider provider)))
+    (limen-provider-capabilities entry)))
 
 (defun limen-herdr-state (session)
   "Return Limen bridge state captured by Herdr SESSION."
@@ -160,28 +153,15 @@ MCP exposes the standard Limen route.  LAUNCHED-P records process ownership."
     (limen-herdr--set-state session nil)
     t))
 
-(defun limen-herdr-pi-extension-file ()
-  "Return the absolute packaged Pi extension path."
-  (expand-file-name
-   "extensions/limen-pi/index.ts"
-   (file-name-directory (or (locate-library "limen-herdr") load-file-name))))
-
 (defun limen-herdr--arguments (session arguments)
   "Return complete ARGUMENTS transformed for Herdr SESSION."
-  (pcase (limen-herdr--provider session)
-    ('codex
-     (if-let* ((state (limen-herdr-state session))
-               (route (limen-herdr-state-route state)))
-         (append
-          (list "-c"
-                (format "mcp_servers.limen.url=\"%s\""
-                        (limen-mcp-endpoint route))
-                "-c"
-                "mcp_servers.limen.bearer_token_env_var=\"LIMEN_MCP_TOKEN\"")
-          arguments)
-       arguments))
-    ('pi (append (list "--extension" (limen-herdr-pi-extension-file)) arguments))
-    (_ arguments)))
+  (if-let* ((entry (limen-provider (limen-herdr--provider session))))
+      (let* ((state (limen-herdr-state session))
+             (route (and state (limen-herdr-state-route state))))
+        (funcall (limen-provider-arguments entry)
+                 (and route (limen-mcp-endpoint route))
+                 arguments))
+    arguments))
 
 (defun limen-herdr--session (target)
   "Return Herdr session identified by TARGET."
@@ -426,7 +406,8 @@ takes a return key of its own."
   (let ((provider (limen-herdr--provider session)))
     (pcase phase
       (:prepare
-       (limen-herdr--prepare session provider (memq provider '(codex pi)) t))
+       (limen-herdr--prepare session provider
+                             (limen-provider-route (limen-provider provider)) t))
       (:arguments (limen-herdr--arguments session context))
       (:adopted
        (if (eq provider 'claude)

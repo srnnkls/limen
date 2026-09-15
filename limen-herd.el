@@ -191,28 +191,14 @@ makes the state change the notice at once unless a hook came first."
        (seq-some (lambda (prefix) (string-prefix-p prefix prompt))
                  limen-herd-quiet-prefixes)))
 
-(defun limen-herd--claude-session-name (id)
-  "Return the name Claude Code gave session ID, or nil."
-  (let ((directory (expand-file-name "sessions" (limen-claude-config-directory))))
-    (when (file-directory-p directory)
-      (seq-some (lambda (file)
-                  (condition-case nil
-                      (let ((record (with-temp-buffer
-                                      (insert-file-contents file)
-                                      (json-parse-buffer :object-type 'alist))))
-                        (and (equal (alist-get 'sessionId record) id)
-                             (let ((name (alist-get 'name record)))
-                               (and (stringp name) (not (string-empty-p name))
-                                    name))))
-                    (error nil)))
-                (directory-files directory t "\\.json\\'")))))
-
 (defun limen-herd--session-name (provider id)
   "Return the name PROVIDER gave agent session ID, or nil."
   (or (gethash (cons provider id) limen-herd--names)
-      (when (and (equal provider "claude") (stringp id))
-        (when-let* ((name (limen-herd--claude-session-name id)))
-          (puthash (cons provider id) name limen-herd--names)))))
+      (when-let* (((stringp id))
+                  (entry (limen-provider provider))
+                  (lookup (limen-provider-session-name entry))
+                  (name (funcall lookup id)))
+        (puthash (cons provider id) name limen-herd--names))))
 
 (defun limen-herd--session-suffix (provider id)
   "Return what names PROVIDER's session ID in a notice, or an empty string."
