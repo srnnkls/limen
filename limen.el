@@ -54,6 +54,24 @@ project-confined non-internal virtual buffers."
 (defvaralias 'limen-project-relative-deny-regexps
   'limen-project-path-deny-regexps)
 
+(defcustom limen-confine-to-project t
+  "Whether reads of where the user is stay within the requested project.
+Focus, the window list and the trail answer only for buffers below the
+project root when non-nil.  When nil, each buffer answers against its
+own project, which its record names, and that project's deny patterns
+apply to it; what a virtual buffer discloses still follows
+`limen-readable-virtual-buffer-condition'."
+  :type 'boolean
+  :group 'limen)
+
+(defcustom limen-focus-terminal-modes '(ghostel-mode vterm-mode eat-mode term-mode)
+  "Major modes of the terminals an agent prompts from.
+Focus looks past a selected window showing one of these to the window
+used most recently before it: a prompt typed into an agent's own
+terminal means the buffer the user came from, not the terminal."
+  :type '(repeat symbol)
+  :group 'limen)
+
 (defcustom limen-project-path-deny-regexps nil
   "Regexps denying canonical project-relative paths."
   :type '(repeat regexp)
@@ -1283,10 +1301,32 @@ START-TEXT and END-TEXT refine the selection bounds."
         (setq spans (seq-take spans limit)))
       (cons (vconcat spans) truncated))))
 
+(defun limen--terminal-window-p (window)
+  "Return non-nil when WINDOW shows a terminal of `limen-focus-terminal-modes'."
+  (with-current-buffer (window-buffer window)
+    (seq-some (lambda (mode) (derived-mode-p mode)) limen-focus-terminal-modes)))
+
 (defun limen--focus-window (context)
-  "Return the live request or selected window for CONTEXT."
-  (let ((window (and context (limen-request-window context))))
-    (if (window-live-p window) window (selected-window))))
+  "Return the window CONTEXT's focus is read from.
+That is the live request or selected window, unless it shows an agent's
+terminal, in which case the window of its frame used most recently
+before it, when there is one."
+  (let* ((requested (and context (limen-request-window context)))
+         (window (if (window-live-p requested) requested (selected-window))))
+    (or (and (limen--terminal-window-p window)
+             (get-mru-window (window-frame window) nil t))
+        window)))
+
+(defun limen--disclosure-root (buffer root)
+  "Return the root BUFFER is disclosed against for a request below ROOT.
+Confinement answers with ROOT; without it, BUFFER's own project."
+  (if (or limen-confine-to-project (not (buffer-live-p buffer)))
+      root
+    (limen--project-root (buffer-local-value 'default-directory buffer))))
+
+(defun limen--project-field (root)
+  "Return the `project' field naming ROOT for an unconfined record."
+  (unless limen-confine-to-project `((project . ,root))))
 
 (defun limen--redacted-virtual-buffer-record (buffer)
   "Return public non-positional metadata for redacted virtual BUFFER."
@@ -1296,16 +1336,19 @@ START-TEXT and END-TEXT refine the selection bounds."
    '((redacted . t))))
 
 (defun limen--focus-get (_arguments context)
-  "Return the current project-confined focus snapshot for CONTEXT."
+  "Return the current focus snapshot for CONTEXT.
+Confined, that is the focus within CONTEXT's project; otherwise the
+focused buffer answers against its own project."
   (let* ((window (limen--focus-window context))
          (buffer (window-buffer window))
-         (root (limen-request-project-root context))
+         (root (limen--disclosure-root buffer (limen-request-project-root context)))
          (kind (limen--buffer-kind buffer root)))
     (cond
      ((null kind) nil)
      ((and (eq kind 'virtual)
            (not (limen--virtual-buffer-readable-p buffer)))
-      (limen--redacted-virtual-buffer-record buffer))
+      (append (limen--redacted-virtual-buffer-record buffer)
+              (limen--project-field root)))
      (t
       (with-current-buffer buffer
         (let* ((window-point (window-point window))
@@ -1334,10 +1377,13 @@ START-TEXT and END-TEXT refine the selection bounds."
              (viewport . ((start . ,visible-start)
                           (end . ,(or visible-end :json-null))))
              (invisible_spans . ,(car span-state))
-             (truncated . ,(if (cdr span-state) t :json-false))))))))))
+             (truncated . ,(if (cdr span-state) t :json-false)))
+           (limen--project-field root))))))))
 
 (defun limen--window-list (_arguments context)
-  "List project windows from the frame in CONTEXT."
+  "List the file windows of the frame in CONTEXT.
+Confined, only windows on files of CONTEXT's project; otherwise every
+file window, each against its own project."
   (let ((frame (or (limen-request-frame context) (selected-frame)))
         (root (limen--require-project-root context)))
     (vconcat
@@ -1346,12 +1392,14 @@ START-TEXT and END-TEXT refine the selection bounds."
       (mapcar
        (lambda (window)
          (let* ((buffer (window-buffer window))
+                (root (limen--disclosure-root buffer root))
                 (identity (limen-project-buffer-file buffer root)))
            (when identity
              `((buffer . ,(buffer-name buffer))
                (file . ,(limen--buffer-file-path buffer))
                (selected . ,(if (eq window (selected-window)) t :json-false))
-               (start . ,(window-start window))))))
+               (start . ,(window-start window))
+               ,@(limen--project-field root)))))
        (window-list frame 'nomini))))))
 
 (defvar limen-context-sections

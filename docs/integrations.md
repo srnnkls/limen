@@ -47,7 +47,7 @@ An integration session owns its project root, opaque resource owner, generation,
 
 Built-in operations and Limen's editor and Herdr context producers apply project confinement before file-backed reads, writes, diagnostics, diffs, focus snapshots, and context pushes. Canonical paths must remain local and beneath the session root. `limen-project-path-deny-regexps` adds canonical project-relative deny patterns; denied paths stay hidden across those built-in surfaces.
 
-Virtual-buffer metadata remains listable. Content and positional state are denied by default. `limen-readable-virtual-buffer-condition` accepts the conditions supported by Emacs 29's `buffer-match-p`: `t`, name regexps, predicates, major- or derived-mode clauses, and recursive `and`, `or`, and `not` forms. Set it to `t` only for an explicit global allowance. Invalid conditions fail closed, and no condition bypasses project confinement or the internal-buffer exclusion.
+`limen-confine-to-project`, on by default, keeps focus, the window list and the trail within the requested project; off, each buffer answers against its own project, which its record names as `project`, under that project's deny patterns. Virtual-buffer metadata remains listable. Content and positional state are denied by default. `limen-readable-virtual-buffer-condition` accepts the conditions supported by Emacs 29's `buffer-match-p`: `t`, name regexps, predicates, major- or derived-mode clauses, and recursive `and`, `or`, and `not` forms. Set it to `t` only for an explicit global allowance. Invalid conditions fail closed, and no condition bypasses project confinement or the internal-buffer exclusion.
 
 ### Focus and buffers
 

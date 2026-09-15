@@ -199,7 +199,7 @@
                                    (append (limen-call "trail.list" nil context)
                                            nil))
                            '("here.el")))
-            (let ((limen-trail-confine-to-project nil))
+            (let ((limen-confine-to-project nil))
               (let ((records (append (limen-call "trail.list" nil context) nil)))
                 (should (equal (mapcar (lambda (r) (alist-get 'name r)) records)
                                '("here.el" "away.el")))

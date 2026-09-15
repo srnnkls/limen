@@ -34,13 +34,6 @@
   :type 'number
   :group 'limen)
 
-(defcustom limen-trail-confine-to-project t
-  "Whether `trail.list' discloses only entries of the requested project.
-When nil, every entry is disclosed against its own project root, which
-its record names, and that root's access policy applies to it."
-  :type 'boolean
-  :group 'limen)
-
 (defcustom limen-trail-point-distance 5
   "Minimum line distance between consecutive settled points.
 Smaller moves update the latest point in place."
@@ -180,15 +173,13 @@ it to `point-min' and reports a position the point never held."
 Confinement answers with ROOT.  Without it each entry answers with the
 project of the buffer or file it names, so that root's access policy is
 the one applied to it."
-  (if limen-trail-confine-to-project
-      root
-    (let ((buffer (limen-trail-entry-buffer entry))
-          (file (limen-trail-entry-file entry)))
-      (cond
-       ((buffer-live-p buffer)
-        (limen--project-root (buffer-local-value 'default-directory buffer)))
-       (file (limen--project-root (file-name-directory file)))
-       (t root)))))
+  (let ((buffer (limen-trail-entry-buffer entry))
+        (file (limen-trail-entry-file entry)))
+    (cond
+     (limen-confine-to-project root)
+     ((buffer-live-p buffer) (limen--disclosure-root buffer root))
+     (file (limen--project-root (file-name-directory file)))
+     (t root))))
 
 (defun limen-trail--entry-fields (entry root)
   "Return the recency fields shared by every ENTRY record disclosed below ROOT."
@@ -197,7 +188,7 @@ the one applied to it."
      (visits . ,(limen-trail-entry-visits entry))
      (last_visited . ,(format-time-string "%FT%T%z"
                                           (limen-trail-entry-time entry))))
-   (unless limen-trail-confine-to-project `((project . ,root)))))
+   (limen--project-field root)))
 
 (defun limen-trail--entry-record (entry root)
   "Return the disclosed record for ENTRY below ROOT, or nil."
