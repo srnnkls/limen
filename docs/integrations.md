@@ -3,7 +3,7 @@
 Limen gives Claude Code, Codex, and Pi one provider-neutral Emacs contract while preserving each harness's native transport. The CLI remains available to every local harness.
 
 ```text
-                        ┌─ Claude WebSocket /ide compatibility
+                        ┌─ Claude Code prompt hooks and CLI
 Limen operations/events ├─ Codex MCP Streamable HTTP
                         └─ Pi packaged extension + MCP event stream
                                       ▲
@@ -15,25 +15,26 @@ Limen operations/events ├─ Codex MCP Streamable HTTP
 
 | Capability | Claude Code | Codex | Pi |
 | --- | --- | --- | --- |
-| Operations | fixed Claude compatibility catalog | registry-derived MCP tools | registry-derived Pi tools |
-| Passive selection | native `selection_changed` | subscribed MCP resource update | latest update injected once before the next turn |
-| Explicit context push | primary item through native `at_mentioned` | submitted through the Herdr terminal | model-visible extension message |
+| Operations | CLI | registry-derived MCP tools | registry-derived Pi tools |
+| Passive selection | `focus:` line with the selected range on the next prompt | subscribed MCP resource update | latest update injected once before the next turn |
+| Explicit context push | queued for the next prompt hook | queued for the next prompt hook | model-visible extension message |
 | Prompt hooks | `UserPromptSubmit` and `SessionStart` in user settings | `UserPromptSubmit` and `SessionStart` in `hooks.json` | none |
 | Question inbox | `AskUserQuestion` through `PreToolUse`/`PostToolUse` | `request_user_input_async` read from the transcript on `Stop` | none |
 | Herd notices | herdr agent states, refined by `SessionStart`, `UserPromptSubmit`, `Stop`, `SessionEnd` and the session name from `sessions/*.json` | herdr agent states, refined by the same events, unnamed | herdr agent states |
-| Interactive diffs | fixed compatibility tools | registry-derived MCP tools | registry-derived Pi tools |
-| Launch wiring | `/ide` discovery and environment | per-launch MCP URL and bearer token | per-launch packaged extension and MCP environment |
-| Adopted external process | full integration | CLI only | CLI only |
+| Edit review | `PostToolUse` on `Edit`, `Write`, `MultiEdit` opens the file's Magit diff | none until its edit tool is named in `limen-provider.el` | none |
+| Interactive diffs | none | registry-derived MCP tools while `limen-editor-enable-diffs` is set | registry-derived Pi tools while `limen-editor-enable-diffs` is set |
+| Launch wiring | `LIMEN_SESSION` in the pane environment | per-launch MCP URL and bearer token | per-launch packaged extension and MCP environment |
+| Adopted external process | prompt hooks | prompt hooks | CLI only |
 
 A Codex resource notification reports changed Emacs context to its MCP client. It does not prove that Codex inserted that resource into model context. Use the explicit context command when the model must receive the current selection.
 
-Codex and Pi startup wiring cannot be retrofitted into an externally started process. Their adopted sessions report `cli-only` rather than claiming tool or context integration. Claude can reconnect at runtime through `/ide`.
+Pi's startup wiring cannot be retrofitted into an externally started process, so its adopted sessions report `cli-only` rather than claiming tool or context integration. Claude Code and Codex read their hooks from user settings, so an adopted process of either is integrated as fully as a launched one.
 
 ## Shared contract
 
-`limen.el` owns operation, event, request, and integration-session contracts without depending on Herdr or a provider.
+`limen.el` owns operation, event, request, and integration-session contracts without depending on Herdr or a provider. `limen-provider.el` describes each harness once — settings location, launch route and arguments, question and edit tools, session naming, reported capabilities — and every other file reads those fields instead of branching on a harness name.
 
-Operations have a dotted ID, description, recursive parameter schema, effect, interface visibility, enable predicate, and optional deferred completion. Registry-derived MCP operations cover one-call context, live buffers, selected-window focus, windows, the opt-in recent-buffer trail, computed diagnostics, editable diffs, existing compilation buffers, and scholia annotation sessions when `limen-scholia` is loaded. `project.list` stays CLI-only. `elisp.eval` remains CLI-only, hidden, and disabled unless `limen-enable-elisp-eval` is non-nil.
+Operations have a dotted ID, description, recursive parameter schema, effect, interface visibility, enable predicate, and optional deferred completion. Registry-derived MCP operations cover one-call context, live buffers, selected-window focus, windows, the opt-in recent-buffer trail, computed diagnostics, editable diffs while `limen-editor-enable-diffs` is set, existing compilation buffers, and scholia annotation sessions when `limen-scholia` is loaded. `project.list` stays CLI-only. `elisp.eval` remains CLI-only, hidden, and disabled unless `limen-enable-elisp-eval` is non-nil.
 
 Two normalized events carry editor context:
 
@@ -68,13 +69,15 @@ Diagnostics merge existing Flymake results with Flycheck only when Flycheck is a
 
 `limen-hooks.el` answers Claude Code and Codex hooks so prompts typed into an agent pane carry editor context without altering their text. `limen hook PROVIDER` reads the hook payload from standard input and prints `hookSpecificOutput.additionalContext`; it acts only when `LIMEN_SESSION`, set by the launch environment, or `HERDR_ENV=1` is present; it gives up after `LIMEN_HOOK_TIMEOUT` seconds (3 by default, below the providers' 5 s handler timeout) when Emacs is absent, starting up, or busy, and every failure exits 0 without output so a prompt is never blocked. `SessionStart` injects the `limen skill` reference, which Claude repeats after `/clear` and compaction. `UserPromptSubmit` injects an `Emacs context` block: the pending Herdr message context when one exists (`file:`, `mode:`, and the excerpt), the `limen-herdr-context-fields-functions` lines, a `recent:` line naming up to `limen-hooks-recent-limit` trail entries with their newest settled line, and the `live:` pointer. An unchanged block collapses to one line on later prompts.
 
-The session is resolved by `LIMEN_SESSION`, then by the open session rooted at the hook's working directory. Hooks are installed per provider into `$CLAUDE_CONFIG_DIR/settings.json` or `$CODEX_HOME/hooks.json` by `limen-hooks-install`, which preserves the file's other handlers and keys; `limen-hooks-uninstall` removes only Limen's entries. The events installed are `limen-hooks-events`: the two context events while `limen-hooks-mode` is on, plus whatever consumers add to `limen-hooks-extra-events`. Enabling `limen-hooks-mode` calls `limen-hooks-request-install` with the feature name `context`; requests made by the same command or during startup coalesce, and after it one `y-or-n-p` per provider whose settings lack an event names every requesting feature, while batch sessions install at once. Disabling removes the context events again and leaves consumers' events in place; `limen-hooks-remove-events-everywhere` never removes an event some consumer still lists. Every answered event also runs `limen-hooks-event-functions` with the provider, the payload extended by the Herdr `server` and `pane` from `HERDR_SOCKET_PATH` and `HERDR_PANE_ID`, the resolved session, and the request; strings they return for a `UserPromptSubmit` follow the Emacs context block in the injected text. `limen-hooks-agent-for` resolves that payload to a Herdr agent entry by pane and server, then by the harness session id herdr reports. A Herdr message sent to a provider with installed hooks carries only its text: `limen-herdr-context-hook` records the rendered context as a draft, `herdr-message-compose-functions` promotes it to the pending context when the message is sent, and the next `UserPromptSubmit` consumes it. Cancelled messages never promote.
+The session is resolved by `LIMEN_SESSION`, then by the open session rooted at the hook's working directory. Hooks are installed per provider into `$CLAUDE_CONFIG_DIR/settings.json` or `$CODEX_HOME/hooks.json` by `limen-hooks-install`, which preserves the file's other handlers and keys; `limen-hooks-uninstall` removes only Limen's entries. The events installed are `limen-hooks-events`: the two context events and, with `limen-hooks-review-edits`, the edit review event while `limen-hooks-mode` is on, plus whatever consumers add to `limen-hooks-extra-events`. One event can carry a group per tool matcher, so the review group sits beside the inbox's `PostToolUse` group. Enabling `limen-hooks-mode` calls `limen-hooks-request-install` with the feature name `context`; requests made by the same command or during startup coalesce, and after it one `y-or-n-p` per provider whose settings lack an event names every requesting feature, while batch sessions install at once. Disabling removes the context events again and leaves consumers' events in place; `limen-hooks-remove-events-everywhere` never removes an event some consumer still lists. Every answered event also runs `limen-hooks-event-functions` with the provider, the payload extended by the Herdr `server` and `pane` from `HERDR_SOCKET_PATH` and `HERDR_PANE_ID`, the resolved session, and the request; strings they return for a `UserPromptSubmit` follow the Emacs context block in the injected text. `limen-hooks-agent-for` resolves that payload to a Herdr agent entry by pane and server, then by the harness session id herdr reports. A Herdr message sent to a provider with installed hooks carries only its text: `limen-herdr-context-hook` records the rendered context as a draft, `herdr-message-compose-functions` promotes it to the pending context when the message is sent, and the next `UserPromptSubmit` consumes it. Cancelled messages never promote.
+
+`limen-hooks-review-edits` opens the diff of a file an agent edited. It adds `PostToolUse` with the matcher of every provider's edit tools; on such an event for a project file, `limen-hooks-review-function` — `limen-hooks-review-with-magit` by default, which shows the file's unstaged changes in Magit or falls back to `vc-diff` — runs once the hook has answered, so the agent never waits on the review. Turning it on while `limen-hooks-mode` is active requests the install under the feature name `review`.
 
 ### Question inbox
 
 `limen-inbox.el` keeps the questions agents are waiting on and lists them at the top of `herdr-status`. `limen-inbox-mode` is the switch: enabling it adds `PreToolUse` and `PostToolUse` with the matcher `AskUserQuestion|request_user_input`, `Stop`, and `SessionEnd` to `limen-hooks-extra-events`, requests the install under the feature name `inbox`, and registers with `limen-hooks-event-functions` and `herdr-status-sections-functions`; disabling removes those handlers from the providers' settings again. Claude's matcher reads the `|` list as exact tool names, Codex's as a regex.
 
-A `PreToolUse` for a tool in `limen-inbox-question-tools` records the call's `tool_use_id`, agent `session_id`, Herdr server and pane, and its questions with `header`, `question`, option labels, `multiSelect`, and `isOther`. The matching `PostToolUse` removes it; because a dismissed dialog is not documented to fire one, the agent's next `UserPromptSubmit`, its `Stop`, its `SessionEnd`, and a redraw that finds no dashboard agent on that server and pane remove it too.
+A `PreToolUse` for a provider's question tool records the call's `tool_use_id`, agent `session_id`, Herdr server and pane, and its questions with `header`, `question`, option labels, `multiSelect`, and `isOther`. The matching `PostToolUse` removes it; because a dismissed dialog is not documented to fire one, the agent's next `UserPromptSubmit`, its `Stop`, its `SessionEnd`, and a redraw that finds no dashboard agent on that server and pane remove it too.
 
 Codex does not run its tool hooks for `request_user_input_async`: the call is accepted at once, the turn ends, and the question is shown afterwards. The `Stop` payload carries the turn id and the rollout path, so the inbox scans the last `limen-inbox-transcript-tail-bytes` of that transcript for this turn's `request_user_input*` function calls and lists their questions, which name the text `title` and may list options as plain strings. The answer is the user's next prompt, so `UserPromptSubmit` clears them; a rejected question leaves no record anywhere, so a transcript-sourced entry older than `limen-inbox-settle-seconds` is also dropped at redraw once Herdr no longer reports its agent as `blocked`, the state it detects while the question UI is on screen. Every change requests a dashboard redraw through `herdr-status-request-refresh`.
 
@@ -111,21 +114,15 @@ A harness adapter receives one shared `herdr-agent-session` through these phases
 
 `:prepare` returns pane environment entries. `:arguments` transforms the complete native start, continue, or resume argument list. Cleanup and rollback use the same `:detach` phase.
 
-`limen-editor.el` owns selection publication and one shared `post-command-hook` that computes a snapshot once, then publishes it to matching live project sessions. `limen-herdr.el` is the optional bridge from Herdr agent sessions to Limen sessions. It owns provider capabilities, launch wiring, transport status, reconnect policy, and cleanup.
+`limen-editor.el` owns selection publication and one shared `post-command-hook` that computes a snapshot once, then publishes it to matching live project sessions. `limen-herdr.el` is the optional bridge from Herdr agent sessions to Limen sessions. It owns launch wiring, status, and cleanup; what it knows about each harness comes from `limen-provider.el`.
 
-While `limen-herdr-mode` is active, Herdr's send-context commands receive Limen's normalized point or region snapshot when the selected composite target has a matching live integration. In Dired, the bridge reads exactly the marked files, preserves their order, and validates the full set before publishing. Empty marks, directories, symlinks, unreadable or disallowed paths, and item-limit overflow reject the push atomically. File contents are not copied. Codex and Pi render each item once; Limen's fixed Claude mapping sends the first item. The snapshot renders as an `Emacs context` header with `file:` or `buffer:` followed by the position, `mode:`, and `live: \`limen context\`` fields, then the text at point in a fenced block; Dired sends a `files:` list. Paths are relative to the session root, the agent's working directory. The `live` field is the only pointer to the full editor state, so the agent pulls it through the CLI instead of receiving it eagerly. Unmatched targets use Herdr's built-in context unchanged.
+While `limen-herdr-mode` is active, Herdr's send-context commands receive Limen's normalized point or region snapshot when the selected composite target has a matching live integration. In Dired, the bridge reads exactly the marked files, preserves their order, and validates the full set before publishing. Empty marks, directories, symlinks, unreadable or disallowed paths, and item-limit overflow reject the push atomically. File contents are not copied, and every item renders once. `limen-herdr-push-context` takes the same snapshot as a sent message and offers it to `limen-herdr-push-functions` first — `limen-hooks.el` claims it for a provider whose hooks are installed and carries it on the next prompt — then publishes `context.push` to a session with an MCP route, and otherwise types the rendered context into the pane. The snapshot renders as an `Emacs context` header with `file:` or `buffer:` followed by the position, `mode:`, and `live: \`limen context\`` fields, then the text at point in a fenced block; Dired sends a `files:` list. Paths are relative to the session root, the agent's working directory. The `live` field is the only pointer to the full editor state, so the agent pulls it through the CLI instead of receiving it eagerly. Unmatched targets use Herdr's built-in context unchanged.
 
 ## Transports
 
 ### Claude Code
 
-Each integrated Claude session gets a loopback WebSocket endpoint and an atomically published lockfile under `~/.claude/ide`, or `$CLAUDE_CONFIG_DIR/ide`. Limen sets the discovery directory to mode `0700`, the lockfile to `0600`, and launches with `ENABLE_IDE_INTEGRATION=true`. The discovery record contains no `authToken`.
-
-Claude Code 2.1.251 sends `X-Claude-Code-Ide-Authorization` verbatim when discovery contains `authToken`; tokenless discovery also connects. The maintained `websocket.el` server API does not expose request headers before the HTTP 101 response, so Limen cannot enforce that token during the handshake. Publishing one would make a false authentication claim. Authentication remains blocked until a maintained transport offers a pre-upgrade authorization hook.
-
-The fixed compatibility catalog is `openFile`, `getDiagnostics`, `close_tab`, `openDiff`, and `closeAllDiffTabs`; those names exist only at the Claude wire boundary. `notifications/initialized` is accepted silently. Prompts and resources list as empty. No runtime workspace, open-editor, dirty-document, or save-document RPC was observed in the 2.1.251 probe, so Limen implements none.
-
-Shared events translate to Claude's `selection_changed` and `at_mentioned` notifications. Cleanup unpublishes discovery first, attempts every teardown stage, and retains failed resources for retry. Startup rollback preserves the original error. The detailed evidence ledger is in [claude-integration-parity.md](claude-integration-parity.md).
+Claude Code has no transport of its own. A launched pane carries `LIMEN_SESSION`; the prompt hooks deliver context and the CLI answers requests. Nothing is written under `~/.claude` beyond the hook entries in `settings.json`, and an Emacs restart leaves a running pane connected, since there is no connection to lose.
 
 ### Codex
 
@@ -148,11 +145,10 @@ The loopback listener, opaque route, token, project confinement, and owner-local
 `M-x limen-herdr-transient` opens the integration menu:
 
 ```text
-Integration:  p push context    s status    r reconnect    h install hooks
-Claude:       a adopt           c connect   m auto-adopt
-Diagnostics:  l protocol log    d enable    D disable
+Integration:  p push context    s status    h install hooks
+Claude:       a adopt           m auto-adopt
 ```
 
-Claude-only controls appear when the current project target is Claude; adoption remains available to establish that target. The package installs no global keybinding.
+The package installs no global keybinding.
 
 The CLI remains the transport-independent fallback. Run `limen` for its canonical command index and `limen help COMMAND` for command-specific arguments. Compilation commands load `limen-compile` lazily; standalone MCP setups load it explicitly.
