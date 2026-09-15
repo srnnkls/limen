@@ -221,3 +221,32 @@
 
 (provide 'limen-inbox-integration-tests)
 ;;; limen-inbox-tests.el ends here
+
+(ert-deftest limen-inbox-question-shows-at-once-from-the-cached-dashboard ()
+  (let ((limen-inbox--questions nil)
+        (herdr-status-sections-functions '(limen-inbox--insert-section))
+        (herdr-status-auto-refresh t)
+        (herdr-status--timer nil)
+        (fetches 0))
+    (herdr-status-tests--with-dashboard
+      (unwind-protect
+          (cl-letf* ((collect (symbol-function 'herdr-status--collect-entries))
+                     ((symbol-function 'herdr-status--collect-entries)
+                      (lambda () (cl-incf fetches) (funcall collect))))
+            (should-not (re-search-forward "^Inbox" nil t))
+            (limen-inbox-tests--ask "%1" "t1")
+            (goto-char (point-min))
+            (should (re-search-forward "^Inbox 1" nil t))
+            (should (= fetches 0))
+            (should-not herdr-status--timer)
+            (limen-inbox-tests--ask "%9" "t2")
+            (should (timerp herdr-status--timer))
+            (should (= fetches 0))
+            (should (equal (mapcar (lambda (entry) (alist-get 'id entry))
+                                   (limen-inbox-questions))
+                           '("t1" "t2")))
+            (goto-char (point-min))
+            (should (re-search-forward "^Inbox 1" nil t)))
+        (when herdr-status--timer
+          (cancel-timer herdr-status--timer)
+          (setq herdr-status--timer nil))))))

@@ -23,6 +23,8 @@
 
 (declare-function herdr-status-agent-row "ext:herdr-status" (entry widths workspaces))
 (declare-function herdr-status-request-refresh "ext:herdr-status" ())
+(declare-function herdr-status-redraw-cached "ext:herdr-status" (&optional ready-p))
+(declare-function herdr-status-cached-agents "ext:herdr-status" ())
 (declare-function herdr-agent-send-keys "ext:herdr-agent" (target keys))
 (declare-function herdr-agent-switch "ext:herdr-agent" (target))
 (defvar herdr-status-sections-functions)
@@ -89,10 +91,20 @@ When nil, commits only advance to the next tab."
   (setq limen-inbox--questions nil)
   (limen-inbox--refresh))
 
-(defun limen-inbox--refresh ()
-  "Redraw the dashboards that show the inbox."
-  (when (fboundp 'herdr-status-request-refresh)
-    (herdr-status-request-refresh)))
+(defun limen-inbox--refresh (&optional entry)
+  "Redraw the dashboards that show the inbox.
+The inbox changes in Emacs alone, so a dashboard redraws from its last
+fetch at once; one whose fetch does not yet list the agent that asked
+ENTRY waits for the next fetched refresh, which is where it learns of
+the agent."
+  (cond
+   ((fboundp 'herdr-status-redraw-cached)
+    (herdr-status-redraw-cached
+     (and entry
+          (lambda ()
+            (limen-inbox--agent-for entry (herdr-status-cached-agents))))))
+   ((fboundp 'herdr-status-request-refresh)
+    (herdr-status-request-refresh))))
 
 (defun limen-inbox--question (record)
   "Return the question fields kept from the tool input RECORD.
@@ -217,32 +229,41 @@ the call only shows in the transcript; return non-nil when any was added."
         (setq added t)))
     added))
 
+(defun limen-inbox--asker (payload)
+  "Return the fields naming the agent behind hook PAYLOAD, as an entry does."
+  `((agent_session . ,(alist-get 'session_id payload))
+    (server . ,(limen-hooks-server-key (alist-get 'server payload)))
+    (pane . ,(alist-get 'pane payload))))
+
 (defun limen-inbox--on-event (provider payload _session _request)
   "Track the question tool call reported by PROVIDER's hook PAYLOAD."
   (let ((event (alist-get 'hook_event_name payload))
         (tool (alist-get 'tool_name payload))
         (id (alist-get 'tool_use_id payload))
         (agent (alist-get 'session_id payload)))
-    (when (pcase event
-            ("PreToolUse"
-             (when-let* (((member tool (limen-inbox--question-tools)))
-                         (entry (limen-inbox--entry payload)))
-               (limen-inbox--add entry)))
-            ("PostToolUse"
-             (when (member tool (limen-inbox--question-tools))
-               (if id
-                   (limen-inbox--remove-if
-                    (lambda (entry) (equal (alist-get 'id entry) id)))
-                 (limen-inbox--remove-agent agent))))
-            ("Stop"
-             (let ((removed (limen-inbox--remove-agent agent))
-                   (added (and (when-let* ((entry (limen-provider provider)))
-                                 (limen-provider-transcript-questions-p entry))
-                               (limen-inbox--add-transcript-questions payload))))
-               (or removed added)))
-            ((or "UserPromptSubmit" "SessionEnd")
-             (limen-inbox--remove-agent agent)))
-      (limen-inbox--refresh))))
+    (pcase (pcase event
+             ("PreToolUse"
+              (when-let* (((member tool (limen-inbox--question-tools)))
+                          (entry (limen-inbox--entry payload)))
+                (limen-inbox--add entry)
+                'added))
+             ("PostToolUse"
+              (when (member tool (limen-inbox--question-tools))
+                (if id
+                    (limen-inbox--remove-if
+                     (lambda (entry) (equal (alist-get 'id entry) id)))
+                  (limen-inbox--remove-agent agent))))
+             ("Stop"
+              (let ((removed (limen-inbox--remove-agent agent))
+                    (added (and (when-let* ((entry (limen-provider provider)))
+                                  (limen-provider-transcript-questions-p entry))
+                                (limen-inbox--add-transcript-questions payload))))
+                (cond (added 'added) (removed t))))
+             ((or "UserPromptSubmit" "SessionEnd")
+              (limen-inbox--remove-agent agent)))
+      ('nil nil)
+      ('added (limen-inbox--refresh (limen-inbox--asker payload)))
+      (_ (limen-inbox--refresh)))))
 
 ;;; Dashboard section
 

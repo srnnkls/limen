@@ -587,3 +587,27 @@
 
 (provide 'limen-inbox-tests)
 ;;; limen-inbox-tests.el ends here
+
+(ert-deftest limen-inbox-redraws-from-the-dashboard-cache-when-it-lists-the-asker ()
+  (limen-inbox-tests--with-inbox
+    (let (calls listed)
+      (cl-letf (((symbol-function 'herdr-status-redraw-cached)
+                 (lambda (&optional ready-p)
+                   (push (and ready-p (funcall ready-p) t) calls)
+                   t))
+                ((symbol-function 'herdr-status-cached-agents)
+                 (lambda () listed)))
+        (limen-inbox-tests--event "PreToolUse" '(tool_name . "AskUserQuestion")
+                                  '(tool_use_id . "t1")
+                                  (cons 'tool_input limen-inbox-tests--claude-input))
+        (should (equal calls '(nil)))
+        (setq listed '(((pane_id . "%1") (server_key . "/tmp/alpha.sock"))))
+        (limen-inbox-tests--event "PreToolUse" '(tool_name . "AskUserQuestion")
+                                  '(tool_use_id . "t2")
+                                  (cons 'tool_input limen-inbox-tests--claude-input))
+        (should (equal calls '(t nil)))
+        (setq calls nil)
+        (limen-inbox--toggle "t1#0" "Yes" nil)
+        (limen-inbox--answered "t1#0")
+        (should (equal calls '(nil)))
+        (should (zerop refreshes))))))
