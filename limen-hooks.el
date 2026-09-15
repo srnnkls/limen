@@ -26,6 +26,8 @@
 (require 'limen-trail)
 
 (declare-function herdr-agent-resolve-session "ext:herdr-agent" (&optional target))
+(declare-function magit-diff-unstaged "ext:magit-diff" (&optional args files))
+(declare-function magit-file-relative-name "ext:magit-git" (&optional file tramp))
 (defvar herdr-message-compose-functions)
 
 (defgroup limen-hooks nil
@@ -46,6 +48,23 @@ Nil resolves `limen' on variable `exec-path', then the package's bin/limen."
   :type '(integer 0)
   :group 'limen-hooks)
 
+(defcustom limen-hooks-review-edits nil
+  "Whether an agent's edit to a project file opens its diff in Emacs.
+The diff opens once the edit has landed and holds nothing up; the agent
+is never waiting on it.  Turning this on while `limen-hooks-mode' is
+active requests the tool-use hook it needs."
+  :type 'boolean
+  :set (lambda (symbol value)
+         (set-default symbol value)
+         (when (and value (bound-and-true-p limen-hooks-mode))
+           (limen-hooks-request-install "review")))
+  :group 'limen-hooks)
+
+(defcustom limen-hooks-review-function #'limen-hooks-review-with-magit
+  "Function shown the absolute path of a project file an agent edited."
+  :type 'function
+  :group 'limen-hooks)
+
 (defun limen-hooks-providers ()
   "Return the providers whose prompt hooks Limen can answer."
   (mapcar #'limen-provider-name
@@ -54,6 +73,16 @@ Nil resolves `limen' on variable `exec-path', then the package's bin/limen."
 (defconst limen-hooks--base-events '(("UserPromptSubmit") ("SessionStart"))
   "Hook events context injection needs.")
 
+(defun limen-hooks--edit-tools ()
+  "Return every tool name that edits files, across providers."
+  (mapcan (lambda (entry) (copy-sequence (limen-provider-edit-tools entry)))
+          (limen-providers)))
+
+(defun limen-hooks--review-events ()
+  "Return the (EVENT . MATCHER) spec reviewing edits needs, if any."
+  (when-let* ((tools (limen-hooks--edit-tools)))
+    (list (cons "PostToolUse" (string-join tools "|")))))
+
 (defvar limen-hooks-extra-events nil
   "Further (EVENT . MATCHER) specs consumers need installed.
 MATCHER is nil or the provider's tool matcher string.")
@@ -61,6 +90,8 @@ MATCHER is nil or the provider's tool matcher string.")
 (defun limen-hooks-events ()
   "Return every (EVENT . MATCHER) spec the installed hooks must cover."
   (append (and limen-hooks-mode limen-hooks--base-events)
+          (and limen-hooks-mode limen-hooks-review-edits
+               (limen-hooks--review-events))
           limen-hooks-extra-events))
 
 (defconst limen-hooks--timeout 5
@@ -159,12 +190,27 @@ event is added to the context the prompt carries.")
                         (alist-get 'hooks group)))
             (limen-hooks--event-groups settings event)))
 
+(defun limen-hooks--group-matcher (group)
+  "Return the tool matcher of handler GROUP, or nil when it has none."
+  (let ((matcher (alist-get 'matcher group)))
+    (and (stringp matcher) (not (string-empty-p matcher)) matcher)))
+
+(defun limen-hooks--spec-installed-p (settings spec provider)
+  "Return non-nil when Limen's PROVIDER hook is registered for SPEC in SETTINGS.
+SPEC is (EVENT . MATCHER); one event can carry a group per matcher."
+  (seq-some (lambda (group)
+              (and (equal (limen-hooks--group-matcher group) (cdr spec))
+                   (seq-some (lambda (handler)
+                               (limen-hooks--handler-p handler provider))
+                             (alist-get 'hooks group))))
+            (limen-hooks--event-groups settings (car spec))))
+
 (defun limen-hooks-installed-p (provider)
-  "Return non-nil when PROVIDER's settings run Limen's hooks for every event."
+  "Return non-nil when PROVIDER's settings run Limen's hooks for every spec."
   (let ((settings (limen-hooks--read-settings
                    (limen-hooks-settings-file provider))))
     (seq-every-p (lambda (spec)
-                   (limen-hooks--event-installed-p settings (car spec) provider))
+                   (limen-hooks--spec-installed-p settings spec provider))
                  (limen-hooks-events))))
 
 (defun limen-hooks--settings-events (settings)
@@ -195,7 +241,7 @@ event is added to the context the prompt carries.")
          (hooks (alist-get 'hooks settings))
          changed)
     (pcase-dolist (`(,event . ,matcher) (limen-hooks-events))
-      (unless (limen-hooks--event-installed-p settings event provider)
+      (unless (limen-hooks--spec-installed-p settings (cons event matcher) provider)
         (setf (alist-get (intern event) hooks)
               (vconcat (limen-hooks--event-groups settings event)
                        (vector
@@ -503,6 +549,32 @@ a region says it more exactly still."
         (decode-coding-string (base64-decode-string value) 'utf-8)
       (error (signal 'limen-invalid-request '("Malformed hook request"))))))
 
+(defun limen-hooks-review-with-magit (file)
+  "Show FILE's unstaged changes in a Magit diff, or a VC diff without Magit."
+  (let ((default-directory (file-name-directory file)))
+    (if (require 'magit nil t)
+        (magit-diff-unstaged nil (list (magit-file-relative-name file)))
+      (with-current-buffer (find-file-noselect file)
+        (vc-diff)))))
+
+(defun limen-hooks--review-edit (provider payload session request)
+  "Open the diff of the project file PROVIDER's edit tool changed, per PAYLOAD.
+SESSION or REQUEST names the project the file must lie in.  Runs after
+the hook has answered, so the agent never waits on it."
+  (when (and limen-hooks-review-edits
+             (equal (alist-get 'hook_event_name payload) "PostToolUse"))
+    (when-let* ((entry (limen-provider provider))
+                ((member (alist-get 'tool_name payload)
+                         (limen-provider-edit-tools entry)))
+                (file (alist-get 'file_path (alist-get 'tool_input payload)))
+                ((stringp file))
+                (root (if session
+                          (limen-session-project-root session)
+                        (limen-request-project-root request)))
+                ((limen-project-file-p file root)))
+      (run-at-time 0 nil limen-hooks-review-function (expand-file-name file))
+      nil)))
+
 (defun limen-hooks-output (request context)
   "Return the hook output for the CLI REQUEST in CONTEXT, or an empty string."
   (let ((provider (alist-get 'provider request)))
@@ -550,6 +622,7 @@ a region says it more exactly still."
         ""))))
 
 (add-hook 'limen-session-close-hook #'limen-hooks--forget)
+(add-hook 'limen-hooks-event-functions #'limen-hooks--review-edit)
 (add-hook 'limen-herdr-context-hook #'limen-hooks--draft)
 (add-hook 'limen-herdr-push-functions #'limen-hooks--queue-push)
 (add-hook 'herdr-message-compose-functions #'limen-hooks--compose)
@@ -566,7 +639,8 @@ only their text; disabling removes the context events again."
   (if limen-hooks-mode
       (limen-hooks-request-install "context")
     (limen-hooks-remove-events-everywhere
-     (mapcar #'car limen-hooks--base-events))))
+     (mapcar #'car (append limen-hooks--base-events
+                           (limen-hooks--review-events))))))
 
 (provide 'limen-hooks)
 ;;; limen-hooks.el ends here
