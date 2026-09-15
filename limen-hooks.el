@@ -404,6 +404,22 @@ Return nil to let Herdr append CONTEXT to the message."
        (file (limen-herdr--context-path file root))
        (t (alist-get 'name record))))))
 
+(defun limen-hooks--focus-line (root)
+  "Return the `focus:' header line for ROOT, or nil when point is outside it.
+Where the cursor sits is what a prompt usually means and rarely says."
+  (when-let* ((request (limen-make-request :interface 'cli :source 'hook
+                                           :project-root root
+                                           :frame (selected-frame)
+                                           :window (selected-window)))
+              (focus (limen--focus-get nil request))
+              (where (if-let* ((file (alist-get 'file focus)))
+                         (limen-herdr--context-path file root)
+                       (alist-get 'name focus))))
+    (format "focus: %s%s" where
+            (if-let* ((line (alist-get 'line (alist-get 'point focus))))
+                (format ":%d" line)
+              ""))))
+
 (defun limen-hooks--recent-line (root context)
   "Return the `recent:' header line for ROOT, omitting CONTEXT's own file."
   (when (and limen-trail-mode (> limen-hooks-recent-limit 0))
@@ -441,11 +457,14 @@ Return nil to let Herdr append CONTEXT to the message."
          (extra (mapcan (lambda (function)
                           (copy-sequence (funcall function context root)))
                         limen-herdr-context-fields-functions))
+         (focus (limen-hooks--focus-line root))
          (recent (limen-hooks--recent-line root context))
          (text (alist-get 'text context)))
     (concat
      "Emacs context\n"
-     (string-join (append fields extra (and recent (list recent))
+     (string-join (append fields extra
+                          (and focus (list focus))
+                          (and recent (list recent))
                           (list limen-hooks--live-line))
                   "\n")
      (if (and text (not (string-empty-p text)))

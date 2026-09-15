@@ -187,11 +187,13 @@
                                  (concat "Emacs context\n"
                                          "file: c.el:3:0-3:6\n"
                                          "mode: emacs-lisp-mode\n"
+                                         "focus: c.el:3\n"
                                          "recent: b.el:2, a.el:1 (visited before this prompt, newest first)\n"
                                          "live: `limen context`; `limen --help` lists every command"
                                          "\n\n```\nline 3\n```"))))
             (should (zerop (hash-table-count limen-hooks--pending)))
             (let ((plain (concat "Emacs context\n"
+                                 "focus: c.el:3\n"
                                  "recent: c.el:3, b.el:2, a.el:1 (visited before this prompt, newest first)\n"
                                  "live: `limen context`; `limen --help` lists every command")))
               (should (equal (limen-hooks-tests--context request root)
@@ -203,6 +205,7 @@
               (should (equal (limen-hooks-tests--context request root)
                              (cons "UserPromptSubmit"
                                    (concat "Emacs context\n"
+                                           "focus: a.el:1\n"
                                            "recent: a.el:1, c.el:3, b.el:2 (visited before this prompt, newest first)\n"
                                            "live: `limen context`; `limen --help` lists every command")))))
             (let ((limit (let ((limen-hooks-recent-limit 1))
