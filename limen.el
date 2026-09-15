@@ -92,7 +92,7 @@ project-confined non-internal virtual buffers."
 (cl-defstruct (limen-session
                (:constructor limen--make-session))
   id provider project-root owner generation capabilities subscribers latest requests sequence
-  closed-p)
+  closed-p location)
 
 (cl-defstruct (limen--event
                (:constructor limen--make-event))
@@ -176,10 +176,17 @@ REPLAY makes the latest payload replayable to new subscribers."
   "Unregister the event named NAME."
   (remhash name limen--events))
 
+(defun limen-server-key (path)
+  "Return the canonical identity of the Herdr socket PATH, or nil."
+  (when (and (stringp path) (not (string-empty-p path)))
+    (file-truename (expand-file-name path))))
+
 (cl-defun limen-open-session
-    (&key id provider project-root owner capabilities)
+    (&key id provider project-root owner capabilities location)
   "Open an integration session for PROVIDER and PROJECT-ROOT.
-ID and OWNER default to opaque values.  CAPABILITIES describes the transport."
+ID and OWNER default to opaque values.  CAPABILITIES describes the transport.
+LOCATION names the pane the session's agent runs in, as a cons of the
+Herdr server key and the pane id, so a hook from that pane finds it."
   (let ((canonical-root
          (when project-root
            (when (file-remote-p project-root)
@@ -198,11 +205,23 @@ ID and OWNER default to opaque values.  CAPABILITIES describes the transport."
             :owner (or owner (make-symbol "limen-owner"))
             :generation 1
             :capabilities capabilities
+            :location location
             :latest (make-hash-table :test #'equal)
             :sequence 0)))
       (puthash session t limen--sessions)
       (run-hook-with-args 'limen-session-open-hook session)
       session)))
+
+(defun limen-find-session-at (location)
+  "Return the open session whose agent runs at LOCATION, or nil.
+LOCATION is a cons of the Herdr server key and the pane id."
+  (catch 'found
+    (maphash (lambda (session _)
+               (when (and (not (limen-session-closed-p session))
+                          (equal (limen-session-location session) location))
+                 (throw 'found session)))
+             limen--sessions)
+    nil))
 
 (defun limen-find-session (id)
   "Return the open integration session whose ID matches, or nil."

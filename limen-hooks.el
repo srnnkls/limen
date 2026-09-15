@@ -48,6 +48,16 @@ Nil resolves `limen' on variable `exec-path', then the package's bin/limen."
   :type '(integer 0)
   :group 'limen-hooks)
 
+(defcustom limen-hooks-answer-unattached nil
+  "Whether a prompt from a pane Emacs holds no session for still gets context.
+A hook names the pane it ran in, and the context goes to the session
+launched or adopted for that pane.  A pane Emacs never took up - a
+harness running under Herdr on its own - gets nothing, unless this is
+set, in which case its context is that of the project its working
+directory lies in."
+  :type 'boolean
+  :group 'limen-hooks)
+
 (defcustom limen-hooks-review-edits nil
   "Whether an agent's edit to a project file opens its diff in Emacs.
 The diff opens once the edit has landed and holds nothing up; the agent
@@ -365,22 +375,17 @@ An event another consumer still lists in `limen-hooks-events' stays."
 
 ;;; Herdr panes
 
-(defun limen-hooks-server-key (path)
-  "Return the canonical identity of the Herdr socket PATH, or nil."
-  (when (and (stringp path) (not (string-empty-p path)))
-    (file-truename (expand-file-name path))))
-
 (defun limen-hooks-agent-for (payload agents)
   "Return the Herdr agent entry among AGENTS whose hook sent PAYLOAD, or nil.
 The pane and server the hook ran in identify it; failing those, the
 harness session id Herdr reports for the agent."
   (let ((pane (alist-get 'pane payload))
-        (server (limen-hooks-server-key (alist-get 'server payload)))
+        (server (limen-server-key (alist-get 'server payload)))
         (session (alist-get 'session_id payload)))
     (or (when (and (stringp pane) (not (string-empty-p pane)))
           (seq-find (lambda (agent)
                       (and (equal (alist-get 'pane_id agent) pane)
-                           (equal (limen-hooks-server-key
+                           (equal (limen-server-key
                                    (alist-get 'server_key agent))
                                   server)))
                     agents))
@@ -427,19 +432,25 @@ Return nil to let Herdr append CONTEXT to the message."
     (puthash session context limen-hooks--pending)
     t))
 
-(defun limen-hooks--session (id context)
-  "Return the open session named by ID, or one rooted at CONTEXT's project."
+(defun limen-hooks--session (id server pane context)
+  "Return the session the hook came from, or nil.
+ID names it outright; failing that the SERVER and PANE the hook ran in
+name the session launched or adopted there.  With
+`limen-hooks-answer-unattached', an open session rooted at CONTEXT's
+project answers for a pane Emacs never took up."
   (or (and (stringp id) (not (string-empty-p id)) (limen-find-session id))
-      (let ((root (limen-request-project-root context)))
-        (when root
-          (catch 'found
-            (maphash (lambda (session _)
-                       (when (and (not (limen-session-closed-p session))
-                                  (equal (limen-session-project-root session)
-                                         (directory-file-name root)))
-                         (throw 'found session)))
-                     limen--sessions)
-            nil)))))
+      (and server pane
+           (limen-find-session-at (cons (limen-server-key server) pane)))
+      (when-let* ((limen-hooks-answer-unattached)
+                  (root (limen-request-project-root context)))
+        (catch 'found
+          (maphash (lambda (session _)
+                     (when (and (not (limen-session-closed-p session))
+                                (equal (limen-session-project-root session)
+                                       (directory-file-name root)))
+                       (throw 'found session)))
+                   limen--sessions)
+          nil))))
 
 (defun limen-hooks--recent-entry (record root)
   "Return RECORD's trail entry text relative to ROOT, or nil when redacted."
@@ -588,18 +599,15 @@ the hook has answered, so the agent never waits on it."
                         (error (signal 'limen-invalid-request
                                        '("Malformed hook payload"))))))
            (event (alist-get 'hook_event_name payload))
+           (server (limen-hooks--decode (alist-get 'server_base64 request)))
+           (pane (limen-hooks--decode (alist-get 'pane_base64 request)))
            (session (limen-hooks--session
                      (limen-hooks--decode (alist-get 'session_base64 request))
-                     context))
+                     server pane context))
            (root (if session
                      (limen-session-project-root session)
                    (limen-request-project-root context)))
-           (payload (append
-                     payload
-                     `((server . ,(limen-hooks--decode
-                                   (alist-get 'server_base64 request)))
-                       (pane . ,(limen-hooks--decode
-                                 (alist-get 'pane_base64 request))))))
+           (payload (append payload `((server . ,server) (pane . ,pane))))
            (extra (delq nil
                         (mapcar (lambda (function)
                                   (let ((value (funcall function provider payload
@@ -608,13 +616,14 @@ the hook has answered, so the agent never waits on it."
                                          (not (string-empty-p value))
                                          value)))
                                 limen-hooks-event-functions)))
-           (text (pcase event
-                   ("SessionStart" (limen-skill context))
-                   ("UserPromptSubmit"
-                    (string-join
-                     (cons (limen-hooks--prompt-context session root) extra)
-                     "\n\n"))
-                   (_ nil))))
+           (text (when (or session limen-hooks-answer-unattached)
+                   (pcase event
+                     ("SessionStart" (limen-skill context))
+                     ("UserPromptSubmit"
+                      (string-join
+                       (cons (limen-hooks--prompt-context session root) extra)
+                       "\n\n"))
+                     (_ nil)))))
       (if (and text (not (string-empty-p text)))
           (json-serialize
            `((hookSpecificOutput . ((hookEventName . ,event)

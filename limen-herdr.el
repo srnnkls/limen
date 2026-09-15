@@ -91,7 +91,9 @@ MCP exposes the standard Limen route.  LAUNCHED-P records process ownership."
             (limen-open-session
              :provider provider
              :project-root (herdr-agent-session-project session)
-             :capabilities (limen-herdr-provider-capabilities provider)))
+             :capabilities (limen-herdr-provider-capabilities provider)
+             :location (cons (limen-server-key (herdr-agent-session-server session))
+                             (herdr-agent-session-pane session))))
            (state (make-limen-herdr-state
                    :provider provider :session integration :launched-p launched-p)))
       (limen-herdr--set-state session state)

@@ -137,7 +137,7 @@ The qid is \"ID#INDEX\", so an answer can recover its entry id from it."
     (when (and (vectorp questions) (> (length questions) 0))
       `((id . ,id)
         (agent_session . ,agent)
-        (server . ,(limen-hooks-server-key (alist-get 'server payload)))
+        (server . ,(limen-server-key (alist-get 'server payload)))
         (pane . ,(alist-get 'pane payload))
         (asked . ,(current-time))
         (questions . ,(limen-inbox--number-questions
@@ -221,7 +221,7 @@ the call only shows in the transcript; return non-nil when any was added."
           (limen-inbox--add
            `((id . ,id)
              (agent_session . ,agent)
-             (server . ,(limen-hooks-server-key (alist-get 'server payload)))
+             (server . ,(limen-server-key (alist-get 'server payload)))
              (pane . ,(alist-get 'pane payload))
              (asked . ,(current-time))
              (source . transcript)
@@ -232,7 +232,7 @@ the call only shows in the transcript; return non-nil when any was added."
 (defun limen-inbox--asker (payload)
   "Return the fields naming the agent behind hook PAYLOAD, as an entry does."
   `((agent_session . ,(alist-get 'session_id payload))
-    (server . ,(limen-hooks-server-key (alist-get 'server payload)))
+    (server . ,(limen-server-key (alist-get 'server payload)))
     (pane . ,(alist-get 'pane payload))))
 
 (defun limen-inbox--on-event (provider payload _session _request)

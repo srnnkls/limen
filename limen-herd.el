@@ -213,7 +213,7 @@ makes the state change the notice at once unless a hook came first."
 (defun limen-herd--pane-key (server pane)
   "Return the key of the pane PANE on the Herdr socket SERVER, or nil."
   (when (and (stringp pane) (not (string-empty-p pane)))
-    (cons (limen-hooks-server-key server) pane)))
+    (cons (limen-server-key server) pane)))
 
 (defun limen-herd--entry-key (entry)
   "Return the pane key of the Herdr agent ENTRY, or nil."

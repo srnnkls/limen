@@ -65,6 +65,9 @@
           (let ((claude (limen-herdr-tests--session "claude" root)))
             (let ((environment (limen-herdr--adapter claude :prepare)))
               (should (equal (mapcar #'car environment) '(LIMEN_SESSION)))
+              (should (equal (limen-session-location
+                              (limen-herdr-state-session (limen-herdr-state claude)))
+                             (cons (limen-server-key "/tmp/herdr.sock") "pane-claude")))
               (should (equal (alist-get 'LIMEN_SESSION environment)
                              (limen-session-id
                               (limen-herdr-state-session

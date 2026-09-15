@@ -275,6 +275,7 @@
          (limen-herdr-context-fields-functions nil)
          (limen-hooks--pending (make-hash-table :test #'eq))
          (limen-hooks--last (make-hash-table :test #'eq))
+         (limen-hooks-answer-unattached t)
          (limen-hooks-event-functions
           (list (lambda (&rest _) "[herd limen] one finished. No reply needed.")
                 (lambda (&rest _) nil)
@@ -331,10 +332,11 @@
       (should-not (limen-hooks--event-installed-p settings "SessionEnd" 'claude))
       (should (limen-hooks--event-installed-p settings "UserPromptSubmit" 'claude)))))
 
-(ert-deftest limen-hooks-output-resolves-session-by-id-then-root ()
+(ert-deftest limen-hooks-output-resolves-session-by-id-then-pane ()
   (let* ((root (file-truename (make-temp-file "limen-hooks-resolve" t)))
          (other (file-truename (make-temp-file "limen-hooks-other" t)))
-         (session (limen-open-session :provider 'codex :project-root root))
+         (session (limen-open-session :provider 'codex :project-root root
+                                      :location (cons (limen-server-key "/tmp/h.sock") "%7")))
          (limen-herdr-context-fields-functions nil)
          (limen-trail-mode nil)
          (limen-hooks--pending (make-hash-table :test #'eq))
@@ -354,17 +356,43 @@
           (should (string-match-p
                    "^buffer: \\*scratch\\*:1:0$"
                    (cdr (limen-hooks-tests--context
-                         (limen-hooks-tests--hook-request
-                          "codex" "UserPromptSubmit" nil root)
-                         root))))
+                         (append (limen-hooks-tests--hook-request
+                                  "codex" "UserPromptSubmit" nil other)
+                                 `((server_base64 . ,(base64-encode-string "/tmp/h.sock" t))
+                                   (pane_base64 . ,(base64-encode-string "%7" t))))
+                         other))))
           (puthash session context limen-hooks--pending)
-          (should (equal (cdr (limen-hooks-tests--context
-                               (limen-hooks-tests--hook-request
-                                "codex" "UserPromptSubmit" nil other)
-                               other))
-                         (concat "Emacs context\n"
-                                 "live: `limen context`; `limen --help` lists every command")))
+          (dolist (request (list (limen-hooks-tests--hook-request
+                                  "codex" "UserPromptSubmit" nil root)
+                                 (append (limen-hooks-tests--hook-request
+                                          "codex" "UserPromptSubmit" nil root)
+                                         `((server_base64 . ,(base64-encode-string "/tmp/h.sock" t))
+                                           (pane_base64 . ,(base64-encode-string "%8" t))))
+                                 (limen-hooks-tests--hook-request
+                                  "codex" "SessionStart" nil root)))
+            (should (equal (limen-hooks-output request (limen-hooks-tests--request root))
+                           "")))
           (should (= (hash-table-count limen-hooks--pending) 1))
+          (let ((limen-hooks-answer-unattached t))
+            (should (string-match-p
+                     "^buffer: \\*scratch\\*:1:0$"
+                     (cdr (limen-hooks-tests--context
+                           (limen-hooks-tests--hook-request
+                            "codex" "UserPromptSubmit" nil root)
+                           root))))
+            (should (equal (cdr (limen-hooks-tests--context
+                                 (limen-hooks-tests--hook-request
+                                  "codex" "UserPromptSubmit" nil other)
+                                 other))
+                           (concat "Emacs context\n"
+                                   "live: `limen context`; `limen --help` lists every command")))
+            (should (string-prefix-p
+                     "# limen"
+                     (cdr (limen-hooks-tests--context
+                           (limen-hooks-tests--hook-request "codex" "SessionStart" nil other)
+                           other)))))
+          (should (zerop (hash-table-count limen-hooks--pending)))
+          (puthash session context limen-hooks--pending)
           (limen-close-session session)
           (should (zerop (hash-table-count limen-hooks--pending))))
       (unless (limen-session-closed-p session)
