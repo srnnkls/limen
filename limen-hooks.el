@@ -404,9 +404,17 @@ Return nil to let Herdr append CONTEXT to the message."
        (file (limen-herdr--context-path file root))
        (t (alist-get 'name record))))))
 
+(defun limen-hooks--focus-position (focus)
+  "Return FOCUS's selected range, or the line holding point, or nil."
+  (or (when-let* ((selection (alist-get 'selection focus)))
+        (limen-herdr--position-text selection))
+      (when-let* ((line (alist-get 'line (alist-get 'point focus))))
+        (number-to-string line))))
+
 (defun limen-hooks--focus-line (root)
   "Return the `focus:' header line for ROOT, or nil when point is outside it.
-Where the cursor sits is what a prompt usually means and rarely says."
+Where the cursor sits is what a prompt usually means and rarely says, and
+a region says it more exactly still."
   (when-let* ((request (limen-make-request :interface 'cli :source 'hook
                                            :project-root root
                                            :frame (selected-frame)
@@ -416,8 +424,8 @@ Where the cursor sits is what a prompt usually means and rarely says."
                          (limen-herdr--context-path file root)
                        (alist-get 'name focus))))
     (format "focus: %s%s" where
-            (if-let* ((line (alist-get 'line (alist-get 'point focus))))
-                (format ":%d" line)
+            (if-let* ((position (limen-hooks--focus-position focus)))
+                (concat ":" position)
               ""))))
 
 (defun limen-hooks--recent-line (root context)

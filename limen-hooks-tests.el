@@ -484,3 +484,43 @@
 
 (provide 'limen-hooks-tests)
 ;;; limen-hooks-tests.el ends here
+
+(ert-deftest limen-hooks-focus-line-reports-an-active-region-as-a-range ()
+  (limen-hooks-tests--with-trail
+    (let* ((root (file-truename (make-temp-file "limen-hooks-focus" t)))
+           (file (expand-file-name "a.el" root))
+           (session (limen-open-session :provider 'claude :project-root root))
+           (limen-herdr-context-fields-functions nil)
+           (limen-hooks--pending (make-hash-table :test #'eq))
+           (limen-hooks--last (make-hash-table :test #'eq))
+           (request (limen-hooks-tests--hook-request
+                     "claude" "UserPromptSubmit" (limen-session-id session) root))
+           buffer)
+      (unwind-protect
+          (progn
+            (with-temp-file file (insert "line 1\nline 2\nline 3\n"))
+            (setq buffer (limen-hooks-tests--visit file 1))
+            (should (string-match-p "^focus: a\\.el:1$"
+                                    (cdr (limen-hooks-tests--context request root))))
+            (with-current-buffer buffer
+              (goto-char (point-min))
+              (set-mark (point))
+              (forward-line 2)
+              (end-of-line)
+              (let ((mark-active t)
+                    (transient-mark-mode t))
+                (should (string-match-p
+                         "^focus: a\\.el:1:0-3:6$"
+                         (cdr (limen-hooks-tests--context request root))))
+                (should (equal (cdr (limen-hooks-tests--context request root))
+                               "Emacs context: unchanged; `limen context` reads the live state."))
+                (forward-line -1)
+                (end-of-line)
+                (should (string-match-p
+                         "^focus: a\\.el:1:0-2:6$"
+                         (cdr (limen-hooks-tests--context request root)))))))
+        (when (buffer-live-p buffer)
+          (with-current-buffer buffer (set-buffer-modified-p nil))
+          (kill-buffer buffer))
+        (limen-close-session session)
+        (delete-directory root t)))))
