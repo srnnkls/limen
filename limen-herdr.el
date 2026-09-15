@@ -341,6 +341,11 @@ project-confined buffers report their name, mode, and text at point."
 Each receives the Limen session, the context alist, the session root, and
 the rendered text.")
 
+(defvar limen-herdr-push-functions nil
+  "Functions offered an explicit context push before it is typed into the pane.
+Each receives the Limen session, the context alist and the session root.
+The first returning non-nil has delivered it.")
+
 (defun limen-herdr-send-context (entry)
   "Return rich context for the integrated Herdr agent ENTRY, or nil."
   (condition-case nil
@@ -363,21 +368,30 @@ the rendered text.")
 
 ;;;###autoload
 (defun limen-herdr-push-context (&optional target)
-  "Push current file context to integrated Herdr TARGET."
+  "Push the current buffer's context to integrated Herdr TARGET.
+A function on `limen-herdr-push-functions' may carry it; failing that a
+session with an MCP route is sent the `context.push' event, and any
+other has the rendered context typed into the agent's pane."
   (interactive)
   (let* ((agent-session (limen-herdr--session target))
          (state (limen-herdr-state agent-session))
          (session (and state (limen-herdr-state-session state))))
     (unless session
       (user-error "Current file has no matching Limen integration"))
-    (let ((context (limen-herdr--current-context session)))
-      (if (eq (limen-herdr-state-provider state) 'codex)
-          (herdr-agent-prompt
-           (cons (herdr-agent-session-server agent-session)
-                 (herdr-agent-session-terminal agent-session))
-           (limen-herdr--context-text
-            context (limen-session-project-root session)))
+    (let* ((root (limen-session-project-root session))
+           (context (limen-herdr--send-context-snapshot session)))
+      (unless (or (alist-get 'items context) (alist-get 'buffer context))
+        (push (cons 'major_mode (symbol-name major-mode)) context))
+      (cond
+       ((run-hook-with-args-until-success
+         'limen-herdr-push-functions session context root))
+       ((limen-herdr-state-route state)
         (limen-session-publish session "context.push" context))
+       (t
+        (herdr-agent-prompt
+         (cons (herdr-agent-session-server agent-session)
+               (herdr-agent-session-terminal agent-session))
+         (limen-herdr--context-text context root))))
       t)))
 
 (defun limen-herdr--send-command (target text)

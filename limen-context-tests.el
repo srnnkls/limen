@@ -85,7 +85,7 @@
       (unless (limen-session-closed-p session)
         (limen-close-session session)))))
 
-(ert-deftest limen-herdr-dired-push-is-atomic-and-provider-compatible ()
+(ert-deftest limen-herdr-dired-push-is-atomic-and-routed-when-unclaimed ()
   (let* ((root (file-truename (make-temp-file "limen-context-root" t)))
          (outside-root (file-truename
                         (make-temp-file "limen-context-outside" t)))
@@ -104,8 +104,11 @@
          (selected nil)
          (dired-calls nil)
          (published nil)
+         (limen-herdr-push-functions
+          (list (lambda (_session context _root) (push context published) nil)))
          (dired-payload nil)
          (prompts nil)
+         (events nil)
          (dired-buffer nil)
          (original-readable-p (symbol-function 'file-readable-p))
          (original-dired-get-marked-files
@@ -144,20 +147,18 @@
                      (lambda (file)
                        (and (not (file-equal-p file unreadable))
                             (funcall original-readable-p file))))
+                    ((symbol-function 'herdr-agent-prompt)
+                     (lambda (target text)
+                       (push (list target text) prompts)))
                     ((symbol-function 'limen-session-publish)
                      (lambda (session event payload)
                        (should (eq session integration))
-                       (should (equal event "context.push"))
-                       (push payload published)
-                       t))
-                    ((symbol-function 'herdr-agent-prompt)
-                     (lambda (target text)
-                       (push (list target text) prompts))))
+                       (push (list event payload) events))))
             (with-current-buffer dired-buffer
               (setq selected (list first second))
               (should (limen-herdr-push-context agent))
               (should (= (length published) 1))
-              (should-not prompts)
+              (should (= (length prompts) 1))
               (setq dired-payload (car published))
               (let* ((payload dired-payload)
                      (items (append (alist-get 'items payload) nil))
@@ -182,7 +183,7 @@
                     selected (list second first))
               (setf (limen-herdr-state-provider state) 'codex)
               (should (limen-herdr-push-context agent))
-              (should-not published)
+              (should (= (length published) 1))
               (should (= (length prompts) 1))
               (let ((text (cadar prompts)))
                 (should (= (limen-context-tests--occurrences "second.el" text) 1))
@@ -193,41 +194,20 @@
                 (should-not (string-match-p "COPIED-FIRST-CONTENT" text))
                 (should-not (string-match-p "COPIED-SECOND-CONTENT" text)))
 
-              (let* ((claude-state
-                      (make-limen-claude-state
-                       :session integration :client-generation 1))
-                     (client
-                      (make-limen-claude-client
-                       :raw 'raw :open-p t :initialized-p t
-                       :generation 1 :state claude-state))
-                     (payload dired-payload)
-                     notifications)
-                (setf (limen-claude-state-current-client claude-state) client)
-                (cl-letf (((symbol-function 'limen-claude--notify)
-                           (lambda (actual-client method params)
-                             (push (list actual-client method params)
-                                   notifications))))
-                  (limen-claude--integration-event
-                   claude-state integration "context.push" payload))
-                (should (= (length notifications) 1))
-                (pcase-let ((`(,actual-client ,method ,params)
-                             (car notifications)))
-                  (should (eq actual-client client))
-                  (should (equal method "at_mentioned"))
-                  (should (equal (limen-context-tests--object-keys params)
-                                 '("filePath" "lineEnd" "lineStart")))
-                  (should (equal (alist-get 'filePath params) first))
-                  (should (= (alist-get 'lineStart params) 1))
-                  (should (equal (alist-get 'lineEnd params) 1))
-                  (let ((serialized (prin1-to-string params)))
-                    (should (= (limen-context-tests--occurrences
-                                first serialized)
-                               1))
-                    (should-not (string-match-p
-                                 (regexp-quote second) serialized)))))
+              (setf (limen-herdr-state-provider state) 'pi
+                    (limen-herdr-state-route state)
+                    (make-limen-mcp-route :id "route" :token "t"
+                                          :session integration))
+              (setq prompts nil published nil
+                    selected (list first second))
+              (should (limen-herdr-push-context agent))
+              (should (= (length published) 1))
+              (should-not prompts)
+              (should (equal (caar events) "context.push"))
+              (should (equal (alist-get 'path (cadar events)) first))
+              (setf (limen-herdr-state-route state) nil)
 
-              (setf (limen-herdr-state-provider state) 'pi)
-              (setq prompts nil published nil)
+              (setq prompts nil published nil events nil)
               (dired-unmark-all-marks)
               (should (dired-goto-file first))
               (should (equal (dired-get-filename nil t) first))
@@ -252,7 +232,7 @@
                                     :type 'user-error)))
                   (should-not published)
                   (should-not prompts)))
-              (should (= (length dired-calls) 9))
+              (should (= (length dired-calls) 10))
               (dolist (call dired-calls)
                 (should (equal call '(nil marked nil)))))))
       (when (buffer-live-p dired-buffer)

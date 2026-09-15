@@ -373,6 +373,14 @@ Return nil to let Herdr append CONTEXT to the message."
       (puthash session (cdr draft) limen-hooks--pending)
       text)))
 
+(defun limen-hooks--queue-push (session context _root)
+  "Carry CONTEXT on SESSION's next prompt when its provider has hooks installed."
+  (when (and limen-hooks-mode
+             (not (limen-session-closed-p session))
+             (limen-hooks-installed-p (limen-session-provider session)))
+    (puthash session context limen-hooks--pending)
+    t))
+
 (defun limen-hooks--session (id context)
   "Return the open session named by ID, or one rooted at CONTEXT's project."
   (or (and (stringp id) (not (string-empty-p id)) (limen-find-session id))
@@ -543,6 +551,7 @@ a region says it more exactly still."
 
 (add-hook 'limen-session-close-hook #'limen-hooks--forget)
 (add-hook 'limen-herdr-context-hook #'limen-hooks--draft)
+(add-hook 'limen-herdr-push-functions #'limen-hooks--queue-push)
 (add-hook 'herdr-message-compose-functions #'limen-hooks--compose)
 
 ;;;###autoload
