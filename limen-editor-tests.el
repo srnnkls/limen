@@ -8,6 +8,7 @@
   (declare (indent 0) (debug t))
   `(let ((limen--buffers (make-hash-table :test #'eq))
          (limen--sessions (make-hash-table :test #'eq))
+         (limen-editor-enable-diffs t)
          (limen-editor--diffs (make-hash-table :test #'eq))
          (limen-editor--selection-timers (make-hash-table :test #'eq))
          (limen-editor--selection-contexts (make-hash-table :test #'eq))
@@ -36,7 +37,7 @@
                     `((old_path . ,old-file) (new_path . ,new-file)
                       (contents . "proposed") (name . "accept"))
                     (limen-make-request
-                     :interface 'adapter :owner owner :project-root root
+                     :interface 'mcp :owner owner :project-root root
                      :resolve (lambda (result) (push result resolved))
                      :reject (lambda (result) (push result cancelled))))
                    limen-deferred))
@@ -54,7 +55,7 @@
                     `((old_path . ,old-file) (new_path . ,new-file)
                       (contents . "") (name . "empty"))
                     (limen-make-request
-                     :interface 'adapter :owner owner :project-root root
+                     :interface 'mcp :owner owner :project-root root
                      :resolve (lambda (result) (push result resolved))
                      :reject (lambda (result) (push result cancelled))))
                    limen-deferred))
@@ -66,7 +67,7 @@
                     `((old_path . ,old-file) (new_path . ,new-file)
                       (contents . "Diff rejected") (name . "collision"))
                     (limen-make-request
-                     :interface 'adapter :owner owner :project-root root
+                     :interface 'mcp :owner owner :project-root root
                      :resolve (lambda (result) (push result resolved))
                      :reject (lambda (result) (push result cancelled))))
                    limen-deferred))
@@ -78,7 +79,7 @@
                     `((old_path . ,old-file) (new_path . ,new-file)
                       (contents . "rejected") (name . "reject"))
                     (limen-make-request
-                     :interface 'adapter :owner owner :project-root root
+                     :interface 'mcp :owner owner :project-root root
                      :resolve (lambda (result) (push result resolved))
                      :reject (lambda (result) (push result cancelled))))
                    limen-deferred))
@@ -90,7 +91,7 @@
                     `((old_path . ,old-file) (new_path . ,new-file)
                       (contents . "must not be accepted") (name . "closed"))
                     (limen-make-request
-                     :interface 'adapter :owner owner :project-root root
+                     :interface 'mcp :owner owner :project-root root
                      :resolve (lambda (result) (push result resolved))
                      :reject (lambda (result) (push result cancelled))))
                    limen-deferred))
@@ -186,7 +187,7 @@
             (with-temp-file old-file (insert "old\n"))
             (limen-call
              "buffer.open" `((path . ,old-file))
-             (limen-make-request :interface 'adapter :session session))
+             (limen-make-request :interface 'mcp :session session))
             (cl-letf (((symbol-function 'limen-editor--start-ediff)
                        (lambda (&rest _) nil)))
               (should
@@ -195,7 +196,7 @@
                     `((old_path . ,old-file) (new_path . ,new-file)
                       (contents . "proposed") (name . "vetoed"))
                     (limen-make-request
-                     :interface 'adapter :session session
+                     :interface 'mcp :session session
                      :resolve #'ignore :reject #'ignore))
                    limen-deferred)))
             (setq proposed
@@ -327,3 +328,25 @@
 
 (provide 'limen-editor-tests)
 ;;; limen-editor-tests.el ends here
+
+(ert-deftest limen-editor-diffs-are-withdrawn-unless-enabled ()
+  (limen-editor-tests--with-state
+    (let* ((root (make-temp-file "limen-diff-off" t))
+           (context (limen-make-request :interface 'mcp
+                                        :owner (make-symbol "owner")
+                                        :project-root root))
+           (names (lambda ()
+                    (mapcar (lambda (operation) (alist-get 'name operation))
+                            (limen-operations context)))))
+      (unwind-protect
+          (progn
+            (should-not (eval (car (get 'limen-editor-enable-diffs 'standard-value))))
+            (let ((limen-editor-enable-diffs nil))
+              (dolist (name '("diff.open" "diff.close" "diff.close-all"))
+                (should-not (member name (funcall names))))
+              (should-error
+               (limen-call "diff.close-all" nil context)
+               :type 'limen-disabled-operation))
+            (dolist (name '("diff.open" "diff.close" "diff.close-all"))
+              (should (member name (funcall names)))))
+        (delete-directory root t)))))

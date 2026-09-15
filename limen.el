@@ -1740,8 +1740,8 @@ Each function returns a JSON value, or nil to omit the section.")
 
 (limen-register-operation
  "buffer.release" #'limen--buffer-release
- :description "Release an adapter-owned Emacs buffer."
- :effect 'write :interfaces '(adapter)
+ :description "Release an Emacs buffer the requesting session opened."
+ :effect 'write :interfaces '(adapter mcp)
  :parameters '((:name "path" :type string :required t)))
 
 (limen-register-operation

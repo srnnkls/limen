@@ -48,6 +48,7 @@
          (limen-claude--states (make-hash-table :test #'eq))
          (limen-claude--cleanup-retries (make-hash-table :test #'eq))
          (limen--sessions (make-hash-table :test #'eq))
+         (limen-editor-enable-diffs t)
          (limen-editor--selection-timers (make-hash-table :test #'eq))
          (limen-editor--selection-contexts (make-hash-table :test #'eq))
          (post-command-hook nil)

@@ -93,7 +93,7 @@
         (should (member "buffer_open" names))
         (should-not (member "sample_cli" names))
         (should-not (member "elisp_eval" names))
-        (should-not (member "buffer_release" names))
+        (should (member "buffer_release" names))
         (should (eq (alist-get
                      'readOnlyHint
                      (alist-get 'annotations

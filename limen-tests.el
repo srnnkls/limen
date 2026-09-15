@@ -249,7 +249,7 @@
             (delete-other-windows)
             (let ((target (split-window-right))
                   (context (limen-make-request
-                            :interface 'adapter :project-root root
+                            :interface 'mcp :project-root root
                             :owner 'visible-owner)))
               (setf (limen-request-window context) target)
               (limen-call "buffer.open" '((path . "visible.el")) context)
@@ -1675,7 +1675,7 @@
            (file-b (expand-file-name "b.el" root))
            (owner (make-symbol "limen-identity-overwrite-owner"))
            (context (limen-make-request
-                     :interface 'adapter :project-root root :owner owner))
+                     :interface 'mcp :project-root root :owner owner))
            original replacement open-outcome observations)
       (unwind-protect
           (progn
@@ -1788,7 +1788,7 @@
                (file-b (expand-file-name "b.el" root))
                (owner (make-symbol "limen-same-owner-retarget-owner"))
                (context (limen-make-request
-                         :interface 'adapter :project-root root :owner owner))
+                         :interface 'mcp :project-root root :owner owner))
                buffer reopened parking)
           (unwind-protect
               (progn
@@ -1856,9 +1856,9 @@
            (owner-a (make-symbol "limen-cross-identity-owner-a"))
            (owner-b (make-symbol "limen-cross-identity-owner-b"))
            (context-a (limen-make-request
-                       :interface 'adapter :project-root root :owner owner-a))
+                       :interface 'mcp :project-root root :owner owner-a))
            (context-b (limen-make-request
-                       :interface 'adapter :project-root root :owner owner-b))
+                       :interface 'mcp :project-root root :owner owner-b))
            buffer opened-as-b observations)
       (unwind-protect
           (progn
@@ -1959,7 +1959,7 @@
                (file-b (expand-file-name "shared.el" directory-b))
                (owner (make-symbol "limen-alias-owner"))
                (context (limen-make-request
-                         :interface 'adapter :project-root root :owner owner))
+                         :interface 'mcp :project-root root :owner owner))
                (limen-project-path-deny-regexps
                 (and (eq scenario 'denied) '("\\`denied/")))
                buffer-a buffer-b)
@@ -2082,7 +2082,7 @@
            (alias-file (expand-file-name "x.el" alias-directory))
            (owner (make-symbol "limen-release-exact-alias-owner"))
            (context (limen-make-request
-                     :interface 'adapter :project-root root :owner owner))
+                     :interface 'mcp :project-root root :owner owner))
            buffer-a buffer-b parking identity-a identity-b record-a record-b)
       (unwind-protect
           (progn
@@ -2177,7 +2177,7 @@
             (expand-file-name "alias/shared.el" variant-root))
            (owner (make-symbol "limen-case-alias-retarget-owner"))
            (context (limen-make-request
-                     :interface 'adapter :project-root root :owner owner))
+                     :interface 'mcp :project-root root :owner owner))
            buffer parking)
       (unwind-protect
           (progn
@@ -2246,9 +2246,9 @@
            (owner (make-symbol "limen-stale-owner"))
            (positive-context
             (limen-make-request
-             :interface 'adapter :project-root root :owner positive-owner))
+             :interface 'mcp :project-root root :owner positive-owner))
            (context (limen-make-request
-                     :interface 'adapter :project-root root :owner owner))
+                     :interface 'mcp :project-root root :owner owner))
            created reopened owned external replacement
            positive-observations replacement-observations)
       (unwind-protect
@@ -2555,7 +2555,7 @@
     (root primary alternate)
   (let* ((owner (make-symbol "limen-equivalent-file-owner"))
          (context (limen-make-request
-                   :interface 'adapter :project-root root :owner owner))
+                   :interface 'mcp :project-root root :owner owner))
          primary-buffer alternate-buffer)
     (unwind-protect
         (save-window-excursion
@@ -2705,7 +2705,7 @@
            (file (expand-file-name "visited.el" root))
            (owner (make-symbol "limen-save-atomic-replacement-owner"))
            (context (limen-make-request
-                     :interface 'adapter :project-root root :owner owner))
+                     :interface 'mcp :project-root root :owner owner))
            (initial "original\n")
            (baseline "baseline\n")
            (external "external\n")
@@ -2896,7 +2896,7 @@
            (file (expand-file-name "visited.el" root))
            (owner (make-symbol "limen-save-after-save-replacement-owner"))
            (context (limen-make-request
-                     :interface 'adapter :project-root root :owner owner))
+                     :interface 'mcp :project-root root :owner owner))
            (initial "original\n")
            (modified "modified\n")
            (external "external\n")
@@ -3145,7 +3145,7 @@
                                  (format "limen-save-hard-link-%s-owner"
                                          label)))
                          (context (limen-make-request
-                                   :interface 'adapter :project-root root
+                                   :interface 'mcp :project-root root
                                    :owner owner))
                          (before (format "before %s\n" label))
                          (after (format "after %s\n" label))
@@ -3299,7 +3299,7 @@
                      (owner (make-symbol
                              (format "limen-open-veto-%s-owner" scenario)))
                      (context (limen-make-request
-                               :interface 'adapter :project-root root
+                               :interface 'mcp :project-root root
                                :owner owner))
                      user-buffer opened requested outcome)
                 (push owner owners)
@@ -3390,7 +3390,7 @@
                      (owner (make-symbol
                              (format "limen-open-retarget-%s-owner" scenario)))
                      (context (limen-make-request
-                               :interface 'adapter :project-root root
+                               :interface 'mcp :project-root root
                                :owner owner))
                      user-buffer opened requested outcome)
                 (push owner owners)
@@ -3461,7 +3461,7 @@
            (file (expand-file-name "owned.el" root))
            (owner (make-symbol "limen-release-veto-owner"))
            (context (limen-make-request
-                     :interface 'adapter :project-root root :owner owner))
+                     :interface 'mcp :project-root root :owner owner))
            buffer parking observations)
       (unwind-protect
           (progn

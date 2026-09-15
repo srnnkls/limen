@@ -11,6 +11,15 @@
 (require 'limen)
 (require 'seq)
 
+(defcustom limen-editor-enable-diffs nil
+  "Whether an agent may open an editable Emacs diff.
+A diff holds its tool call open until the ediff is answered, so an agent
+that proposes an edit waits on Emacs.  Nil, the default, withdraws the
+diff operations and leaves the agent to write the file and be reviewed
+afterwards."
+  :type 'boolean
+  :group 'limen)
+
 (defvar limen-editor--diffs (make-hash-table :test #'eq)
   "Deferred diffs indexed by opaque protocol owner.")
 (defvar limen-editor--selection-timers (make-hash-table :test #'eq)
@@ -402,6 +411,7 @@ KILLED records an already killed proposed buffer."
  "diff.open" #'limen-editor--diff-open-operation
  :description "Open an editable Emacs diff."
  :effect 'write :interfaces '(adapter mcp) :deferred t
+ :enabled-p (lambda (_context) limen-editor-enable-diffs)
  :parameters '((:name "old_path" :type string :required t)
                (:name "new_path" :type string :required t)
                (:name "contents" :type string :required t)
@@ -412,12 +422,14 @@ KILLED records an already killed proposed buffer."
  "diff.close" #'limen-editor--diff-close-operation
  :description "Close an adapter-owned Emacs diff."
  :effect 'write :interfaces '(adapter mcp)
+ :enabled-p (lambda (_context) limen-editor-enable-diffs)
  :parameters '((:name "name" :type string :required t)))
 
 (limen-register-operation
  "diff.close-all" #'limen-editor--diff-close-all-operation
  :description "Close all adapter-owned Emacs diffs."
- :effect 'write :interfaces '(adapter mcp) :parameters nil)
+ :effect 'write :interfaces '(adapter mcp) :parameters nil
+ :enabled-p (lambda (_context) limen-editor-enable-diffs))
 
 (provide 'limen-editor)
 ;;; limen-editor.el ends here
