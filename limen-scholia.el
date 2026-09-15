@@ -221,12 +221,14 @@
 
 (limen-register-operation
  "annotation.sessions" #'limen-scholia--sessions-operation
+ :command "annotations sessions"
  :description "List scholia annotation sessions with their project-confined file counts."
  :effect 'read :parameters nil :interfaces '(cli mcp)
  :enabled-p (lambda (_context) limen-scholia-available-p))
 
 (limen-register-operation
  "annotation.list" #'limen-scholia--list-operation
+ :command "annotations list"
  :description "List scholia annotations from visible or named sessions, confined to the project."
  :effect 'read
  :parameters '((:name "session" :type string
@@ -240,6 +242,7 @@
 
 (limen-register-operation
  "annotation.export" #'limen-scholia--export-operation
+ :command "annotations export"
  :description "Render a scholia session's project-confined annotations in an export format."
  :effect 'read
  :parameters `((:name "session" :type string :required t

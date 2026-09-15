@@ -261,7 +261,8 @@ the one applied to it."
 
 (limen-register-operation
  "trail.list" #'limen-trail--list
- :description "List recently visited project-confined buffers, newest first, with settled point traces."
+ :command "trail"
+ :description "List recently visited buffers, newest first, with settled point traces."
  :effect 'read
  :parameters '((:name "limit" :type integer
                       :description "Maximum number of entries to return."))

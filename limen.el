@@ -118,7 +118,7 @@ terminal means the buffer the user came from, not the terminal."
 
 (cl-defstruct (limen--operation
                (:constructor limen--make-operation))
-  name handler description parameters effect interfaces enabled-p deferred)
+  name handler description parameters effect interfaces enabled-p deferred command)
 
 (cl-defstruct (limen--owned-buffer
                (:constructor limen--make-owned-buffer))
@@ -152,11 +152,12 @@ terminal means the buffer the user came from, not the terminal."
 
 (cl-defun limen-register-operation
     (name handler &key description parameters (effect 'read) (interfaces '(cli))
-          enabled-p deferred)
+          enabled-p deferred command)
   "Register NAME with HANDLER and replace an existing descriptor.
 DESCRIPTION documents it.  PARAMETERS declares its arguments.  EFFECT is `read'
 or `write'.  INTERFACES controls discovery.  ENABLED-P gates invocation, and
-DEFERRED marks callback-based operations."
+DEFERRED marks callback-based operations.  COMMAND is the `limen' command
+line that runs it, without the program name, for the agent skill."
   (unless (limen--valid-name-p name)
     (signal 'wrong-type-argument (list 'limen-operation-name name)))
   (unless (functionp handler)
@@ -167,7 +168,7 @@ DEFERRED marks callback-based operations."
          (limen--make-operation
           :name name :handler handler :description (or description "")
           :parameters parameters :effect effect :interfaces interfaces
-          :enabled-p enabled-p :deferred deferred)))
+          :enabled-p enabled-p :deferred deferred :command command)))
     (puthash name operation limen--operations)
     (run-hook-with-args 'limen-operation-change-hook 'registered name)
     operation))
@@ -490,6 +491,8 @@ PATH identifies a containing object when validation is recursive."
   `((name . ,(limen--operation-name operation))
     (description . ,(limen--operation-description operation))
     (effect . ,(symbol-name (limen--operation-effect operation)))
+    ,@(when-let* ((command (limen--operation-command operation)))
+        `((command . ,command)))
     (input_schema . ,(limen--parameters-schema
                       (limen--operation-parameters operation)))))
 
@@ -1617,10 +1620,16 @@ Each function returns a JSON value, or nil to omit the section.")
    "## Operations\n\n"
    (mapconcat
     (lambda (operation)
-      (format "- `%s` (%s): %s"
-              (alist-get 'name operation)
-              (alist-get 'effect operation)
-              (alist-get 'description operation)))
+      (if-let* ((command (alist-get 'command operation)))
+          (format "- `limen %s` (%s, %s): %s"
+                  command
+                  (alist-get 'name operation)
+                  (alist-get 'effect operation)
+                  (alist-get 'description operation))
+        (format "- `%s` (%s): %s"
+                (alist-get 'name operation)
+                (alist-get 'effect operation)
+                (alist-get 'description operation))))
     (limen-operations context) "\n")
    "\n\n"
    "## Authority\n\n"
@@ -1758,6 +1767,7 @@ Each function returns a JSON value, or nil to omit the section.")
 
 (limen-register-operation
  "buffer.list" #'limen--buffer-list
+ :command "buffer list"
  :description "List project-confined Emacs buffers."
  :effect 'read
  :parameters '((:name "virtual" :type boolean
@@ -1768,6 +1778,7 @@ Each function returns a JSON value, or nil to omit the section.")
 
 (limen-register-operation
  "buffer.read" #'limen--buffer-read
+ :command "buffer read"
  :description "Read live text from a project-confined Emacs buffer."
  :effect 'read
  :parameters '((:name "path" :type string
@@ -1784,6 +1795,7 @@ Each function returns a JSON value, or nil to omit the section.")
 
 (limen-register-operation
  "buffer.save" #'limen--buffer-save
+ :command "buffer save"
  :description "Save a visited file when its buffer and disk state are current."
  :effect 'write
  :parameters '((:name "path" :type string :required t
@@ -1794,6 +1806,7 @@ Each function returns a JSON value, or nil to omit the section.")
 
 (limen-register-operation
  "buffer.open" #'limen--buffer-open
+ :command "buffer open"
  :description "Open a local file in an Emacs buffer."
  :effect 'write
  :parameters '((:name "path" :type string :required t
@@ -1813,16 +1826,19 @@ Each function returns a JSON value, or nil to omit the section.")
 
 (limen-register-operation
  "project.list" #'limen--project-list
+ :command "projects"
  :description "List known projects."
  :effect 'read :parameters nil :interfaces '(cli))
 
 (limen-register-operation
  "focus.get" #'limen--focus-get
- :description "Read the selected window's project-confined focus state."
+ :command "focus"
+ :description "Read the focus of the selected window, or of the window used before an agent's terminal."
  :effect 'read :parameters nil :interfaces '(cli mcp))
 
 (limen-register-operation
  "context.get" #'limen--context-get
+ :command "context"
  :description "Read the current editor context in one call: project, focus, windows, buffers, and any optional sections."
  :effect 'read
  :parameters '((:name "sections" :type array :items (:type string)
@@ -1831,11 +1847,13 @@ Each function returns a JSON value, or nil to omit the section.")
 
 (limen-register-operation
  "window.list" #'limen--window-list
+ :command "windows"
  :description "List windows in the selected Emacs frame."
  :effect 'read :parameters nil :interfaces '(cli mcp))
 
 (limen-register-operation
  "diagnostic.list" #'limen--diagnostic-list
+ :command "diagnostics"
  :description "List computed Flymake and loaded Flycheck diagnostics."
  :effect 'read
  :parameters '((:name "uri" :type string :description "Optional file URI."))
@@ -1843,6 +1861,7 @@ Each function returns a JSON value, or nil to omit the section.")
 
 (limen-register-operation
  "elisp.eval" #'limen--eval
+ :command "eval"
  :description "Evaluate explicitly enabled Emacs Lisp."
  :effect 'write :parameters '((:name "code" :type string :required t))
  :enabled-p (lambda (_context) limen-enable-elisp-eval))

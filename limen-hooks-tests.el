@@ -217,7 +217,7 @@
                           root)))
               (should (equal (car start) "SessionStart"))
               (should (string-prefix-p "# limen\n" (cdr start)))
-              (should (string-match-p "`trail.list`" (cdr start))))
+              (should (string-match-p "`limen trail` (trail\\.list, read)" (cdr start))))
             (should (equal (limen-hooks-tests--context
                             (limen-hooks-tests--hook-request
                              "claude" "PreToolUse" (limen-session-id session) root)

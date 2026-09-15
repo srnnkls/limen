@@ -175,11 +175,13 @@
 
 (limen-register-operation
  "compile.list" #'limen-compile--list
+ :command "compile list"
  :description "List existing project compilation buffers."
  :effect 'read :parameters nil :interfaces '(cli mcp))
 
 (limen-register-operation
  "compile.read" #'limen-compile--read
+ :command "compile read"
  :description "Read a bounded tail from an existing project compilation buffer."
  :effect 'read
  :parameters '((:name "name" :type string :required t

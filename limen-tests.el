@@ -441,9 +441,19 @@
     (limen-register-operation
      "sample.lookup" (lambda (_arguments _context) [])
      :description "Look up a sample." :effect 'read :parameters nil)
+    (limen-register-operation
+     "sample.fetch" (lambda (_arguments _context) [])
+     :command "sample fetch"
+     :description "Fetch a sample." :effect 'read :parameters nil)
     (let ((skill (limen-skill (limen-make-request :interface 'cli))))
       (should (string-match-p "limen --help" skill))
-      (should (string-match-p "sample\\.lookup" skill))
+      (should (string-match-p "^- `sample\\.lookup` (read): Look up a sample\\.$" skill))
+      (should (string-match-p "^- `limen sample fetch` (sample\\.fetch, read): Fetch a sample\\.$" skill))
+      (should (string-match-p "^- `limen focus` (focus\\.get, read): " skill))
+      (should (equal (alist-get 'command
+                                (seq-find (lambda (o) (equal (alist-get 'name o) "sample.fetch"))
+                                          (limen-operations (limen-make-request :interface 'cli))))
+                     "sample fetch"))
       (should-not (string-match-p "elisp\\.eval" skill)))))
 
 (ert-deftest limen-launcher-shows-command-help-by-default ()
