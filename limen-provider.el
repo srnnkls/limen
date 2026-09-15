@@ -111,8 +111,8 @@ CAPABILITIES is the plist `limen-herdr-status' reports."
   :question-tools '("AskUserQuestion")
   :edit-tools '("Edit" "Write" "MultiEdit")
   :session-name #'limen-provider--claude-session-name
-  :capabilities '(:transport websocket :operations compatibility
-                  :passive-context native :explicit-context native :diffs t)))
+  :capabilities '(:transport hooks :operations cli
+                  :passive-context prompt :explicit-context prompt :diffs nil)))
 
 (limen-provider-register
  (limen-provider--make

@@ -79,7 +79,7 @@
       (should (equal (alist-get 'effect operation) "read")))
     (dolist (name '("compile.list" "compile.read"))
       (should (limen-compile-tests--operation name 'mcp))
-      (should-not (limen-compile-tests--operation name 'adapter)))
+      (should-not (limen-compile-tests--operation name 'unknown)))
     (let ((list-schema (alist-get 'input_schema cli-list))
           (read-schema (alist-get 'input_schema cli-read)))
       (should (equal (alist-get 'required list-schema) []))

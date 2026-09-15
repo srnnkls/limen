@@ -16,7 +16,6 @@
 (source 'melpa)
 
 (depends-on "emacs" "29.1")
-(depends-on "websocket" "1.12")
 (depends-on "transient" "0.9.0")
 
 (development

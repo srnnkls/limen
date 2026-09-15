@@ -4,7 +4,7 @@ Limen is a provider-neutral Emacs 29.1+ interface for local agents. It exposes p
 
 ## Install
 
-Install `websocket` 1.12+ and `transient` 0.9.0+ from a configured package archive, then place this directory on `load-path`. A standalone MCP setup loads the core operations, editor support, compilation observer, and transport:
+Install `transient` 0.9.0+ from a configured package archive, then place this directory on `load-path`. A standalone MCP setup loads the core operations, editor support, compilation observer, and transport:
 
 ```elisp
 (require 'limen)
@@ -71,10 +71,10 @@ Register coarse operations with `limen-register-operation`, open integrations wi
 
 ## Provider integrations
 
-Claude Code, Codex, and Pi can use Limen through their native transports. The optional `limen-herdr-mode` injects launch and lifecycle wiring into Herdr without making either package depend on the other at runtime. `M-x limen-herdr-transient` exposes status, context push, reconnect, adoption, and protocol diagnostics. Herdr's message and send commands receive Limen's snapshot for any project-confined buffer, virtual ones included, with a `live: \`limen context\`` field pointing at the full state. With `limen-hooks-mode` enabled, that snapshot and the recent buffer trail reach the agent through its prompt hook instead of the message body.
+Claude Code reaches Limen through its prompt hooks and the CLI; Codex and Pi add their native MCP transports. The optional `limen-herdr-mode` injects launch and lifecycle wiring into Herdr without making either package depend on the other at runtime. `M-x limen-herdr-transient` exposes status, context push, hook installation, and adoption. Herdr's message and send commands receive Limen's snapshot for any project-confined buffer, virtual ones included, with a `live: \`limen context\`` field pointing at the full state. With `limen-hooks-mode` enabled, that snapshot and the recent buffer trail reach the agent through its prompt hook instead of the message body.
 
-See [docs/integrations.md](docs/integrations.md) for the canonical capability, disclosure, and lifecycle contract. Claude's fixed wire evidence is recorded in [docs/claude-integration-parity.md](docs/claude-integration-parity.md).
+See [docs/integrations.md](docs/integrations.md) for the canonical capability, disclosure, and lifecycle contract.
 
 ## License
 
-Limen is GPL-3.0-or-later; see [license](license). Its Claude Code compatibility transport includes material adapted from [manzaltu/claude-code-ide.el](https://github.com/manzaltu/claude-code-ide.el), also GPL-3.0-or-later.
+Limen is GPL-3.0-or-later; see [license](license).

@@ -4,7 +4,7 @@
 
 ;; Author: Sören Nikolaus <soeren@code17.io>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (websocket "1.12") (transient "0.9.0"))
+;; Package-Requires: ((emacs "29.1") (transient "0.9.0"))
 ;; Keywords: tools, processes
 ;; URL: https://github.com/srnnkls/limen
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -1697,7 +1697,7 @@ Each function returns a JSON value, or nil to omit the section.")
                       :description "List virtual buffers instead of file buffers.")
                (:name "all" :type boolean
                       :description "List file and virtual buffers."))
- :interfaces '(cli adapter mcp))
+ :interfaces '(cli mcp))
 
 (limen-register-operation
  "buffer.read" #'limen--buffer-read
@@ -1713,7 +1713,7 @@ Each function returns a JSON value, or nil to omit the section.")
                       :description "Temporarily ignore buffer narrowing.")
                (:name "expected_tick" :type integer
                       :description "Required current character modification tick."))
- :interfaces '(cli adapter mcp))
+ :interfaces '(cli mcp))
 
 (limen-register-operation
  "buffer.save" #'limen--buffer-save
@@ -1723,7 +1723,7 @@ Each function returns a JSON value, or nil to omit the section.")
                       :description "Project-relative or absolute visited file path.")
                (:name "expected_tick" :type integer :required t
                       :description "Required current character modification tick."))
- :interfaces '(cli adapter mcp))
+ :interfaces '(cli mcp))
 
 (limen-register-operation
  "buffer.open" #'limen--buffer-open
@@ -1736,12 +1736,12 @@ Each function returns a JSON value, or nil to omit the section.")
                (:name "end_line" :type integer :description "One-based end line.")
                (:name "start_text" :type string :description "Text locating the start.")
                (:name "end_text" :type string :description "Text locating the end."))
- :interfaces '(cli adapter mcp))
+ :interfaces '(cli mcp))
 
 (limen-register-operation
  "buffer.release" #'limen--buffer-release
  :description "Release an Emacs buffer the requesting session opened."
- :effect 'write :interfaces '(adapter mcp)
+ :effect 'write :interfaces '(mcp)
  :parameters '((:name "path" :type string :required t)))
 
 (limen-register-operation
@@ -1752,7 +1752,7 @@ Each function returns a JSON value, or nil to omit the section.")
 (limen-register-operation
  "focus.get" #'limen--focus-get
  :description "Read the selected window's project-confined focus state."
- :effect 'read :parameters nil :interfaces '(cli adapter mcp))
+ :effect 'read :parameters nil :interfaces '(cli mcp))
 
 (limen-register-operation
  "context.get" #'limen--context-get
@@ -1760,7 +1760,7 @@ Each function returns a JSON value, or nil to omit the section.")
  :effect 'read
  :parameters '((:name "sections" :type array :items (:type string)
                       :description "Section names to include; omit for all."))
- :interfaces '(cli adapter mcp))
+ :interfaces '(cli mcp))
 
 (limen-register-operation
  "window.list" #'limen--window-list
@@ -1772,7 +1772,7 @@ Each function returns a JSON value, or nil to omit the section.")
  :description "List computed Flymake and loaded Flycheck diagnostics."
  :effect 'read
  :parameters '((:name "uri" :type string :description "Optional file URI."))
- :interfaces '(cli adapter mcp))
+ :interfaces '(cli mcp))
 
 (limen-register-operation
  "elisp.eval" #'limen--eval

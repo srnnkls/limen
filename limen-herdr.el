@@ -10,7 +10,6 @@
 
 (require 'cl-lib)
 (require 'dired)
-(require 'limen-claude)
 (require 'limen-compile)
 (require 'limen-editor)
 (require 'limen-mcp)
@@ -21,8 +20,6 @@
 (declare-function herdr-agent-register-adapter "ext:herdr-agent" (kind adapter))
 (declare-function herdr-agent-unregister-adapter "ext:herdr-agent" (kind adapter))
 (declare-function herdr-agent-resolve-session "ext:herdr-agent" (&optional target))
-(declare-function herdr-agent-send-text "ext:herdr-agent" (target text))
-(declare-function herdr-agent-send-keys "ext:herdr-agent" (target keys))
 (declare-function herdr-agent-prompt "ext:herdr-agent" (target text))
 (declare-function herdr-agent-session-p "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-adapter-state "ext:herdr-agent" (session) t)
@@ -45,15 +42,8 @@
   :type '(integer 1)
   :group 'limen-herdr)
 
-(defcustom limen-herdr-command-delay 0.05
-  "Seconds between typing a command into an agent pane and submitting it.
-A pane redraws its own completion once the text lands, and a return that
-arrives inside that window is dropped."
-  :type 'number
-  :group 'limen-herdr)
-
 (cl-defstruct limen-herdr-state
-  provider session route transport launched-p)
+  provider session route launched-p)
 
 (defun limen-herdr-provider-capabilities (provider)
   "Return canonical capabilities for PROVIDER."
@@ -83,19 +73,10 @@ arrives inside that window is dropped."
 (defun limen-herdr--environment (state)
   "Return launch environment for bridge STATE."
   (append
-   (cond
-    ((limen-herdr-state-route state)
-     (limen-herdr--mcp-environment (limen-herdr-state-route state)))
-    ((limen-herdr-state-transport state)
-     (limen-claude-environment (limen-herdr-state-transport state))))
+   (when-let* ((route (limen-herdr-state-route state)))
+     (limen-herdr--mcp-environment route))
    (when-let* ((session (limen-herdr-state-session state)))
      `((LIMEN_SESSION . ,(limen-session-id session))))))
-
-(defun limen-herdr--instance-name (session)
-  "Return a plain Claude instance name for Herdr SESSION."
-  (format "%s/%s"
-          (herdr-agent-session-server session)
-          (herdr-agent-session-name session)))
 
 (defun limen-herdr--prepare (session provider &optional mcp launched-p)
   "Prepare Herdr SESSION for PROVIDER.
@@ -116,15 +97,9 @@ MCP exposes the standard Limen route.  LAUNCHED-P records process ownership."
       (limen-herdr--set-state session state)
       (condition-case err
           (progn
-            (if mcp
-                (setf (limen-herdr-state-route state)
-                      (limen-mcp-register-session integration))
-              (setf (limen-herdr-state-transport state)
-                    (limen-claude-open
-                     integration
-                     :instance-id (or (herdr-agent-session-terminal session)
-                                      (herdr-agent-session-name session))
-                     :instance-name (limen-herdr--instance-name session))))
+            (when mcp
+              (setf (limen-herdr-state-route state)
+                    (limen-mcp-register-session integration)))
             (limen-herdr--environment state))
         (error
          (condition-case nil
@@ -144,8 +119,6 @@ MCP exposes the standard Limen route.  LAUNCHED-P records process ownership."
   "Detach Limen resources from Herdr SESSION without stopping its agent."
   (when-let* ((state (limen-herdr-state session)))
     (cond
-     ((limen-herdr-state-transport state)
-      (limen-claude-close (limen-herdr-state-transport state)))
      ((limen-herdr-state-route state)
       (limen-mcp-unregister-session (limen-herdr-state-route state)))
      ((limen-herdr-state-session state)
@@ -191,9 +164,7 @@ MCP exposes the standard Limen route.  LAUNCHED-P records process ownership."
       (explicit_context . ,(plist-get capabilities :explicit-context))
       (diffs . ,(or (plist-get capabilities :diffs) :json-false))
       ,@(when-let* ((route (and state (limen-herdr-state-route state))))
-          `((endpoint . ,(limen-mcp-endpoint route))))
-      ,@(when-let* ((transport (and state (limen-herdr-state-transport state))))
-          (limen-claude-status transport)))))
+          `((endpoint . ,(limen-mcp-endpoint route)))))))
 
 (defun limen-herdr--context-path (path root)
   "Return PATH relative to ROOT, the agent's working directory.
@@ -394,27 +365,6 @@ other has the rendered context typed into the agent's pane."
          (limen-herdr--context-text context root))))
       t)))
 
-(defun limen-herdr--send-command (target text)
-  "Type TEXT into TARGET's pane and submit it.
-A newline inside pasted text reaches the pane as one, so submitting
-takes a return key of its own."
-  (herdr-agent-send-text target text)
-  (sleep-for limen-herdr-command-delay)
-  (herdr-agent-send-keys target '("return")))
-
-;;;###autoload
-(defun limen-herdr-reconnect (&optional target)
-  "Reconnect Claude Code for Herdr TARGET."
-  (interactive)
-  (let* ((session (limen-herdr--session target))
-         (state (limen-herdr-state session)))
-    (unless (and state (eq (limen-herdr-state-provider state) 'claude))
-      (user-error "Runtime reconnect is available only for Claude Code"))
-    (limen-herdr--send-command
-     (cons (herdr-agent-session-server session)
-           (herdr-agent-session-terminal session))
-     "/ide")))
-
 (defun limen-herdr--adapter (session phase &optional context)
   "Apply Limen adapter PHASE to Herdr SESSION using CONTEXT."
   (let ((provider (limen-herdr--provider session)))
@@ -424,17 +374,10 @@ takes a return key of its own."
                              (limen-provider-route (limen-provider provider)) t))
       (:arguments (limen-herdr--arguments session context))
       (:adopted
-       (if (eq provider 'claude)
-           (progn
-             (limen-herdr--prepare session provider nil nil)
-             (limen-claude-attached
-              (limen-herdr-state-transport (limen-herdr-state session))
-              (herdr-agent-session-terminal session)))
+       (if (limen-provider-hook-settings (limen-provider provider))
+           (limen-herdr--prepare session provider nil nil)
          (limen-herdr--adopt-cli-only session provider)))
-      (:attached
-       (when-let* ((state (limen-herdr-state session))
-                   (transport (limen-herdr-state-transport state)))
-         (limen-claude-attached transport (herdr-agent-session-terminal session))))
+      (:attached nil)
       (:status (limen-herdr-status session))
       (:detach (limen-herdr-detach session)))))
 

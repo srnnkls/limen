@@ -410,7 +410,7 @@ KILLED records an already killed proposed buffer."
 (limen-register-operation
  "diff.open" #'limen-editor--diff-open-operation
  :description "Open an editable Emacs diff."
- :effect 'write :interfaces '(adapter mcp) :deferred t
+ :effect 'write :interfaces '(mcp) :deferred t
  :enabled-p (lambda (_context) limen-editor-enable-diffs)
  :parameters '((:name "old_path" :type string :required t)
                (:name "new_path" :type string :required t)
@@ -420,15 +420,15 @@ KILLED records an already killed proposed buffer."
 
 (limen-register-operation
  "diff.close" #'limen-editor--diff-close-operation
- :description "Close an adapter-owned Emacs diff."
- :effect 'write :interfaces '(adapter mcp)
+ :description "Close a session-owned Emacs diff."
+ :effect 'write :interfaces '(mcp)
  :enabled-p (lambda (_context) limen-editor-enable-diffs)
  :parameters '((:name "name" :type string :required t)))
 
 (limen-register-operation
  "diff.close-all" #'limen-editor--diff-close-all-operation
- :description "Close all adapter-owned Emacs diffs."
- :effect 'write :interfaces '(adapter mcp) :parameters nil
+ :description "Close all session-owned Emacs diffs."
+ :effect 'write :interfaces '(mcp) :parameters nil
  :enabled-p (lambda (_context) limen-editor-enable-diffs))
 
 (provide 'limen-editor)
