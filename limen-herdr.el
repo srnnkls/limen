@@ -21,6 +21,7 @@
 (declare-function herdr-agent-unregister-adapter "ext:herdr-agent" (kind adapter))
 (declare-function herdr-agent-resolve-session "ext:herdr-agent" (&optional target))
 (declare-function herdr-agent-send-text "ext:herdr-agent" (target text))
+(declare-function herdr-agent-send-keys "ext:herdr-agent" (target keys))
 (declare-function herdr-agent-prompt "ext:herdr-agent" (target text))
 (declare-function herdr-agent-session-p "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-adapter-state "ext:herdr-agent" (session) t)
@@ -41,6 +42,13 @@
 (defcustom limen-herdr-context-item-limit 100
   "Maximum number of files in one explicit context push."
   :type '(integer 1)
+  :group 'limen-herdr)
+
+(defcustom limen-herdr-command-delay 0.05
+  "Seconds between typing a command into an agent pane and submitting it.
+A pane redraws its own completion once the text lands, and a return that
+arrives inside that window is dropped."
+  :type 'number
   :group 'limen-herdr)
 
 (cl-defstruct limen-herdr-state
@@ -392,6 +400,14 @@ the rendered text.")
         (limen-session-publish session "context.push" context))
       t)))
 
+(defun limen-herdr--send-command (target text)
+  "Type TEXT into TARGET's pane and submit it.
+A newline inside pasted text reaches the pane as one, so submitting
+takes a return key of its own."
+  (herdr-agent-send-text target text)
+  (sleep-for limen-herdr-command-delay)
+  (herdr-agent-send-keys target '("return")))
+
 ;;;###autoload
 (defun limen-herdr-reconnect (&optional target)
   "Reconnect Claude Code for Herdr TARGET."
@@ -400,10 +416,10 @@ the rendered text.")
          (state (limen-herdr-state session)))
     (unless (and state (eq (limen-herdr-state-provider state) 'claude))
       (user-error "Runtime reconnect is available only for Claude Code"))
-    (herdr-agent-send-text
+    (limen-herdr--send-command
      (cons (herdr-agent-session-server session)
            (herdr-agent-session-terminal session))
-     "/ide\n")))
+     "/ide")))
 
 (defun limen-herdr--adapter (session phase &optional context)
   "Apply Limen adapter PHASE to Herdr SESSION using CONTEXT."

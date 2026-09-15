@@ -296,3 +296,32 @@
 
 (provide 'limen-herdr-tests)
 ;;; limen-herdr-tests.el ends here
+
+(ert-deftest limen-herdr-reconnect-types-ide-then-submits-with-a-return ()
+  (let* ((root (file-truename (make-temp-file "limen-herdr-root" t)))
+         (agent-session (limen-herdr-tests--session "claude" root))
+         (integration (limen-open-session :project-root root))
+         sent)
+    (unwind-protect
+        (progn
+          (herdr-agent-set-adapter-state
+           agent-session
+           (make-limen-herdr-state :provider 'claude :session integration))
+          (cl-letf (((symbol-function 'herdr-agent-resolve-session)
+                     (lambda (_target) agent-session))
+                    ((symbol-function 'herdr-agent-send-text)
+                     (lambda (target text) (push (list 'text target text) sent)))
+                    ((symbol-function 'herdr-agent-send-keys)
+                     (lambda (target keys) (push (list 'keys target keys) sent)))
+                    ((symbol-function 'sleep-for) #'ignore))
+            (should (limen-herdr-reconnect))
+            (let ((target (cons (herdr-agent-session-server agent-session)
+                                (herdr-agent-session-terminal agent-session))))
+              (should (equal (nreverse sent)
+                             `((text ,target "/ide")
+                               (keys ,target ("return")))))))
+          (setf (limen-herdr-state-provider (limen-herdr-state agent-session))
+                'codex)
+          (should-error (limen-herdr-reconnect) :type 'user-error))
+      (limen-close-session integration)
+      (delete-directory root t))))
