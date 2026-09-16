@@ -28,7 +28,7 @@ Limen operations/events ├─ Codex MCP Streamable HTTP
 
 A Codex resource notification reports changed Emacs context to its MCP client. It does not prove that Codex inserted that resource into model context. Use the explicit context command when the model must receive the current selection.
 
-Pi's startup wiring cannot be retrofitted into an externally started process, so its adopted sessions report `cli-only` rather than claiming tool or context integration. Claude Code and Codex read their hooks from user settings, so an adopted process of either is integrated as fully as a launched one.
+Pi's startup wiring cannot be retrofitted into an externally started process, so its adopted sessions report `cli-only` rather than claiming tool or context integration. Claude Code and Codex read their hooks from user settings, so an adopted process of either is integrated as fully as a launched one. `limen-herdr-claude-auto-adopt-mode` takes up Claude agents on the herdr sessions Emacs is attached to, `herdr-known-sessions`, working in known projects — those running when it starts and those detected later; a herdr session driven from its own terminal is left alone, so its agents get neither context nor reviews.
 
 ## Shared contract
 

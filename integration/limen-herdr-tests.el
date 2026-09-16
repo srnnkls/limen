@@ -323,6 +323,18 @@
         (cancel-timer limen-herdr-claude--adopt-timer))
       (limen-herdr-claude-auto-adopt-mode -1))))
 
+(ert-deftest limen-herdr-claude-adopts-only-agents-on-sessions-emacs-is-attached-to ()
+  (let ((root (make-temp-file "limen-herdr-own" t)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'herdr-known-sessions) (lambda () '(shared)))
+                  ((symbol-function 'project-current)
+                   (lambda (&optional _maybe directory) (and directory t))))
+          (should (limen-herdr-claude-adoptable-p `((session . shared) (cwd . ,root))))
+          (should-not (limen-herdr-claude-adoptable-p `((session . "cmw") (cwd . ,root))))
+          (should-not (limen-herdr-claude-adoptable-p '((session . shared) (cwd . "/nonexistent"))))
+          (should-not (limen-herdr-claude-own-session-p '((cwd . "/tmp")))))
+      (delete-directory root t))))
+
 (provide 'limen-herdr-tests)
 ;;; limen-herdr-tests.el ends here
 

@@ -17,13 +17,17 @@
                   (agent &rest arguments) t)
 (declare-function herdr-agent-list "ext:herdr-agent" (&optional server-key))
 (declare-function herdr-herd-live-agents "ext:herdr-herd" (&optional session))
+(declare-function herdr-known-sessions "ext:herdr" ())
 (declare-function herdr-agent-session-server "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-terminal "ext:herdr-agent" (session) t)
 (defvar herdr-agent-event-functions)
 
 (defcustom limen-herdr-claude-auto-adopt-predicate
-  #'limen-herdr-claude-known-project-p
-  "Predicate deciding whether automatic adoption accepts an agent."
+  #'limen-herdr-claude-adoptable-p
+  "Predicate deciding whether automatic adoption accepts an agent.
+The default takes an agent on a herdr session Emacs is attached to,
+working in a known project; see `limen-herdr-claude-own-session-p' and
+`limen-herdr-claude-known-project-p'."
   :type 'function
   :group 'limen-herdr)
 
@@ -31,6 +35,17 @@
   "Return non-nil when AGENT's directory is a known project."
   (when-let* ((cwd (alist-get 'cwd agent)))
     (and (file-directory-p cwd) (project-current nil cwd) t)))
+
+(defun limen-herdr-claude-own-session-p (agent)
+  "Return non-nil when AGENT runs on a herdr session Emacs is attached to.
+A herdr session that merely has a socket on disk - one driven from its
+own terminal - is not Emacs's, and its agents are left alone."
+  (and (member (alist-get 'session agent) (herdr-known-sessions)) t))
+
+(defun limen-herdr-claude-adoptable-p (agent)
+  "Return non-nil when AGENT is Emacs's to adopt: its session and project both."
+  (and (limen-herdr-claude-own-session-p agent)
+       (limen-herdr-claude-known-project-p agent)))
 
 (defun limen-herdr-claude--read-agent (prompt)
   "Read a Claude agent with PROMPT from the current Herdr server."
