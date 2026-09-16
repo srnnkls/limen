@@ -44,10 +44,12 @@
   :type '(integer 1)
   :group 'limen-herdr)
 
-(defcustom limen-herdr-context-point-marker "█"
+(defcustom limen-herdr-context-point-marker "▏"
   "Text standing where the point does in a sent excerpt.
-It is drawn in front of the character the point sits on, so the line
-keeps every character it has.  An empty marker leaves the line bare."
+It is drawn between the characters the point sits between rather than
+over one of them, so the line keeps every character it has and the mark
+reads as the bar of an editor waiting for input.  An empty marker leaves
+the line bare."
   :type 'string
   :group 'limen-herdr)
 
