@@ -44,11 +44,22 @@
   :type '(integer 1)
   :group 'limen-herdr)
 
-(defcustom limen-herdr-context-window 4
-  "Lines kept on each side of the text an explicit send carries.
-The lines are drawn with their numbers, the sent ones marked down the
-gutter and the point marked under the line it sits on.  Zero sends the
-text alone."
+(defcustom limen-herdr-context-point-marker "█"
+  "Text standing where the point does in a sent excerpt.
+It is drawn in front of the character the point sits on, so the line
+keeps every character it has.  An empty marker leaves the line bare."
+  :type 'string
+  :group 'limen-herdr)
+
+(defcustom limen-herdr-context-lines-before 4
+  "Lines kept above the text an explicit send carries."
+  :type 'natnum
+  :group 'limen-herdr)
+
+(defcustom limen-herdr-context-lines-after 4
+  "Lines kept below the text an explicit send carries.
+The lines are drawn with their numbers and the sent ones are marked down
+the gutter.  With nothing kept on either side the text is sent alone."
   :type 'natnum
   :group 'limen-herdr)
 
@@ -343,6 +354,15 @@ it that the project's path policy denies is refused."
       (end_column . ,(alist-get 'end_column selection))
       (text . ,(alist-get 'text selection)))))
 
+(defun limen-herdr--marked (text column)
+  "Return TEXT with `limen-herdr-context-point-marker' standing at COLUMN."
+  (if (string-empty-p limen-herdr-context-point-marker)
+      text
+    (let ((column (min column (length text))))
+      (concat (substring text 0 column)
+              limen-herdr-context-point-marker
+              (substring text column)))))
+
 (defun limen-herdr--line-text (line)
   "Return the text of LINE in the current buffer, or nil past its end."
   (save-excursion
@@ -355,16 +375,18 @@ it that the project's path policy denies is refused."
 
 (defun limen-herdr--excerpt (context point-line point-column)
   "Return the lines around CONTEXT's range in the current buffer, drawn.
-The sent lines carry a heavier gutter than their neighbours, and the
-point is marked with a caret under POINT-COLUMN of POINT-LINE, wherever
-in the range it sits."
-  (let* ((window limen-herdr-context-window)
+The sent lines carry a heavier gutter than their neighbours, and a block
+stands where the point does, at POINT-COLUMN of POINT-LINE.  It is drawn
+in front of the character it sits on, so the line keeps every character
+it has."
+  (let* ((before limen-herdr-context-lines-before)
+         (after limen-herdr-context-lines-after)
          (line (alist-get 'line context))
          (column (alist-get 'column context))
          (end-line (or (alist-get 'end_line context) line)))
-    (when (and (> window 0) (integerp line) (integerp column))
+    (when (and (or (> before 0) (> after 0)) (integerp line) (integerp column))
       (let ((lines nil))
-        (cl-loop for number from (max 1 (- line window)) to (+ end-line window)
+        (cl-loop for number from (max 1 (- line before)) to (+ end-line after)
                  for text = (limen-herdr--line-text number)
                  while (or text (<= number end-line))
                  do (push (cons number (or text "")) lines))
@@ -377,12 +399,10 @@ in the range it sits."
             (pcase-dolist (`(,number . ,text) numbered)
               (push (format row number
                             (if (<= line number end-line) "┃" "│")
-                            text)
-                    rows)
-              (when (eql number point-line)
-                (push (format "%s·%s▲ point" gutter
-                              (make-string (1+ point-column) ?\s))
-                      rows)))
+                            (if (eql number point-line)
+                                (limen-herdr--marked text point-column)
+                              text))
+                    rows))
             (string-join
              (append (list (format "%s╭─ %s:%d:%d ─" gutter
                                    (if-let* ((path (alist-get 'path context)))

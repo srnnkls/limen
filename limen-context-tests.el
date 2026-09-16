@@ -91,28 +91,44 @@
     (goto-char (point-min))
     (forward-line 2)
     (forward-char 3)
-    (let* ((limen-herdr-context-window 1)
+    (let* ((limen-herdr-context-lines-before 1)
+           (limen-herdr-context-lines-after 1)
            (context '((path . "/tmp/project/alpha.el")
                       (line . 3) (column . 2) (end_line . 3) (end_column . 9)))
            (excerpt (limen-herdr--excerpt context 3 3)))
       (should (equal (split-string excerpt "\n")
                      '("  ╭─ alpha.el:3:3 ─"
                        "2 │   \"Doc.\""
-                       "3 ┃   (beta))"
-                       "  ·    ▲ point"
+                       "3 ┃   (█beta))"
                        "4 │ "
                        "  ╰─")))
-      (let ((limen-herdr-context-window 0))
-        (should-not (limen-herdr--excerpt context 3 3))))
-    (let* ((limen-herdr-context-window 10)
+      (let ((limen-herdr-context-point-marker ""))
+        (should (string-match-p "3 ┃   (beta))"
+                                (limen-herdr--excerpt context 3 3))))
+      (let ((limen-herdr-context-point-marker "‹point›"))
+        (should (string-match-p "3 ┃   (‹point›beta))"
+                                (limen-herdr--excerpt context 3 3))))
+      (let ((limen-herdr-context-lines-before 0)
+            (limen-herdr-context-lines-after 0))
+        (should-not (limen-herdr--excerpt context 3 3)))
+      (let ((limen-herdr-context-lines-before 2)
+            (limen-herdr-context-lines-after 0))
+        (should (equal (split-string (limen-herdr--excerpt context 3 3) "\n")
+                       '("  ╭─ alpha.el:3:3 ─"
+                         "1 │ (defun alpha ()"
+                         "2 │   \"Doc.\""
+                         "3 ┃   (█beta))"
+                         "  ╰─")))))
+    (let* ((limen-herdr-context-lines-before 10)
+           (limen-herdr-context-lines-after 10)
            (context '((buffer . "*scratch*")
                       (line . 1) (column . 0) (end_line . 3) (end_column . 9)))
            (rows (split-string (limen-herdr--excerpt context 1 0) "\n")))
       (should (equal (nth 0 rows) "  ╭─ *scratch*:1:0 ─"))
-      (should (equal (nth 1 rows) "1 ┃ (defun alpha ()"))
-      (should (equal (nth 2 rows) "  · ▲ point"))
-      (should (equal (nth 4 rows) "3 ┃   (beta))"))
-      (should (equal (car (last rows)) "  ╰─")))))
+      (should (equal (nth 1 rows) "1 ┃ █(defun alpha ()"))
+      (should (equal (nth 3 rows) "3 ┃   (beta))"))
+      (should (equal (car (last rows)) "  ╰─")))
+    (should (equal (limen-herdr--marked "abc" 9) "abc█"))))
 
 (ert-deftest limen-herdr-context-names-what-only-the-editor-knows ()
   (with-temp-buffer
@@ -181,7 +197,7 @@
                              (regexp-quote (format "file: %s:1:0-1:7" outside))
                              text))
                     (should (string-match-p "1 ┃ outside" text))
-                    (should (string-match-p "· +▲ point" text))
+                    (should (string-match-p "1 ┃ outside█" text))
                     (should (equal (cdar drafts) text))
                     (should (equal (alist-get 'text (caar drafts)) "outside")))))
               (with-current-buffer (find-file-noselect denied)
