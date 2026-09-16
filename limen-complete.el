@@ -218,16 +218,17 @@ to answer."
    (limen-complete-mode
     (limen-complete-forget)
     (setq limen-complete--warm-timer
-          (run-with-idle-timer 1 nil #'limen-complete-warm))
-    (when (boundp 'cera-completion-function)
-      (setq limen-complete--previous cera-completion-function
-            cera-completion-function #'limen-complete-in-field)))
+          (run-with-idle-timer 1 nil #'limen-complete-warm)
+          limen-complete--previous
+          (and (boundp 'cera-completion-function)
+               (default-value 'cera-completion-function)))
+    (set-default 'cera-completion-function #'limen-complete-in-field))
    (t
     (when limen-complete--warm-timer
       (cancel-timer limen-complete--warm-timer)
       (setq limen-complete--warm-timer nil))
-    (when (boundp 'cera-completion-function)
-      (setq cera-completion-function limen-complete--previous)))))
+    (set-default 'cera-completion-function
+                 (or limen-complete--previous #'cera-complete-with-table)))))
 
 (provide 'limen-complete)
 ;;; limen-complete.el ends here
