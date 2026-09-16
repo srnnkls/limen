@@ -31,7 +31,10 @@
          (limen-inbox--selected (make-hash-table :test 'equal))
          (limen-inbox--sent (make-hash-table :test 'equal))
          (limen-inbox--tabs (make-hash-table :test 'equal))
+         (limen-inbox--notes (make-hash-table :test 'equal))
+         (limen-inbox--sent-notes (make-hash-table :test 'equal))
          (limen-inbox-key-delay 0)
+         (limen-inbox-inline-notes nil)
          (refreshes 0))
      (cl-letf (((symbol-function 'herdr-status-request-refresh)
                 (lambda () (cl-incf refreshes))))
@@ -228,7 +231,7 @@
       (should (limen-inbox--groups (list idle)))
       (should (limen-inbox-questions)))))
 
-(ert-deftest limen-inbox-mode-registers-events-and-installs-hooks ()
+(ert-deftest limen-inbox-mode-keeps-installed-hooks-when-disabled ()
   (let* ((directory (make-temp-file "limen-inbox-settings" t))
          (process-environment
           (append (list (concat "CLAUDE_CONFIG_DIR=" directory)
@@ -255,17 +258,34 @@
                         herdr-status-sections-functions))
           (should (limen-hooks-installed-p 'claude))
           (should (limen-hooks-installed-p 'codex))
-          (limen-inbox-mode -1)
+          (let ((settings-before
+                 (mapcar (lambda (provider)
+                           (cons provider
+                                 (with-temp-buffer
+                                   (insert-file-contents (limen-hooks-settings-file provider))
+                                   (buffer-string))))
+                         '(claude codex))))
+            (cl-letf (((symbol-function 'limen-hooks--write-settings)
+                       (lambda (&rest _) (ert-fail "Disabling rewrote provider settings"))))
+              (limen-inbox-mode -1))
+            (dolist (entry settings-before)
+              (should (equal (cdr entry)
+                             (with-temp-buffer
+                               (insert-file-contents (limen-hooks-settings-file (car entry)))
+                               (buffer-string))))))
           (should (equal (mapcar #'car (limen-hooks-events))
                          '("UserPromptSubmit" "SessionStart")))
           (should-not (memq #'limen-inbox--on-event limen-hooks-event-functions))
+          (should-not (memq #'limen-inbox--insert-section herdr-status-sections-functions))
           (should (limen-hooks-installed-p 'claude))
           (should (limen-hooks-installed-p 'codex))
           (dolist (provider '(claude codex))
-            (should-not (limen-hooks--event-installed-p
-                         (limen-hooks--read-settings
-                          (limen-hooks-settings-file provider))
-                         "PreToolUse" provider))))
+            (should (limen-hooks--event-installed-p
+                     (limen-hooks--read-settings
+                      (limen-hooks-settings-file provider))
+                     "PreToolUse" provider))
+            (should (limen-hooks-uninstall provider))
+            (should-not (limen-hooks-any-installed-p provider))))
       (limen-inbox-mode -1)
       (delete-directory directory t))))
 
@@ -584,6 +604,451 @@
               (limen-inbox-commit-at-point))
             (should (equal sent '("left" "right" "right" "right" "return" "return")))
             (should-not (limen-inbox-questions))))))))
+
+(ert-deftest limen-inbox-preserves-preview-positions-and-gates-notes ()
+  (let* ((record '((options . [((label . "A") (preview . "one\n  two"))
+                               ((label . "A"))
+                               ((label . "C") (preview . ""))])))
+         (question (limen-inbox--question record)))
+    (should (equal (alist-get 'options question) '("A" "A" "C")))
+    (should (equal (alist-get 'previews question) '("one\n  two" nil "")))
+    (should (limen-inbox--preview-p question))
+    (setf (alist-get 'multi question) t)
+    (should-not (limen-inbox--preview-p question))
+    (should-not (limen-inbox--preview-p
+                 (limen-inbox--question '((options . ["Redis" "Memory"])))))))
+
+(ert-deftest limen-inbox-notes-edit-is-local-and-cancellation-preserves-state ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox-tests--with-value '(:qid "t1#0" :preview t :index 1 :previews ("A"))
+      (puthash "t1#0" "Original" limen-inbox--notes)
+      (cl-letf (((symbol-function 'read-string)
+                 (lambda (_prompt initial &rest _)
+                   (should (equal initial "Original")) "Revised\nnotes")))
+        (limen-inbox-notes-at-point))
+      (should (equal (limen-inbox--note "t1#0" 1) "Revised\nnotes"))
+      (cl-letf (((symbol-function 'read-string)
+                 (lambda (&rest _) (signal 'quit nil))))
+        (should (condition-case nil (limen-inbox-notes-at-point) (quit t))))
+      (should (equal (limen-inbox--note "t1#0" 1) "Revised\nnotes"))
+      (should-not sent))))
+
+(ert-deftest limen-inbox-notes-require-preview-question ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox-tests--with-value '(:qid "t1#0")
+      (should-error (limen-inbox-notes-at-point) :type 'user-error)
+      (should (= (hash-table-count limen-inbox--notes) 0)))))
+
+(ert-deftest limen-inbox-notes-only-commit-tracks-edits-and-clearing ()
+  (limen-inbox-tests--with-inbox
+    (puthash "t1#0" "Keep it small" limen-inbox--notes)
+    (should-not (limen-inbox--committed-p "t1#0"))
+    (puthash "t1#0" nil limen-inbox--sent)
+    (puthash "t1#0" "Keep it small" limen-inbox--sent-notes)
+    (should (limen-inbox--committed-p "t1#0"))
+    (puthash "t1#0" "Revised" limen-inbox--notes)
+    (should-not (limen-inbox--committed-p "t1#0"))
+    (puthash "t1#0" "Keep it small" limen-inbox--notes)
+    (should (limen-inbox--committed-p "t1#0"))
+    (puthash "t1#0" "  \n " limen-inbox--notes)
+    (puthash "t1#0" "  \n " limen-inbox--sent-notes)
+    (should-not (limen-inbox--committed-p "t1#0"))))
+
+(ert-deftest limen-inbox-forgets-notes-when-entry-is-removed-or-replaced ()
+  (limen-inbox-tests--with-inbox
+    (dolist (operation '(remove replace clear))
+      (limen-inbox--add '((id . "t1") (questions ((qid . "t1#0")))))
+      (puthash "t1#0" "Old" limen-inbox--notes)
+      (puthash "t1#0" "Old" limen-inbox--sent-notes)
+      (pcase operation
+        ('remove (limen-inbox--answered "t1#0"))
+        ('replace (limen-inbox--add
+                   '((id . "t1") (questions ((qid . "t1#0") (question . "New"))))))
+        ('clear (limen-inbox-clear)))
+      (should (= (hash-table-count limen-inbox--notes) 0))
+      (should (= (hash-table-count limen-inbox--sent-notes) 0)))))
+
+(defmacro limen-inbox-tests--with-preview (&rest body)
+  "Run BODY with a two-question preview entry and recorded key/paste calls."
+  (declare (indent 0) (debug t))
+  `(limen-inbox-tests--with-inbox
+     (let ((value '(:qid "p#0" :options ("A" "B") :preview t
+                   :header "First" :question "First question?"
+                   :target ("/tmp/alpha.sock" . "t1")))
+           (screen "☐ First ☐ Second ✔ Submit\nFirst question?\nNotes: press n to add notes\nChat about this")
+           (limen-inbox-answer-submit-eagerly nil)
+           sent pasted)
+       (limen-inbox--add
+        '((id . "p")
+          (questions ((qid . "p#0") (previews "A" "B"))
+                     ((qid . "p#1") (previews "A" "B")))) )
+       (cl-letf (((symbol-function 'limen-inbox--value) (lambda (_) value))
+                 ((symbol-function 'limen-inbox--next-question) #'ignore)
+                 ((symbol-function 'herdr-agent-read) (lambda (_) screen))
+                 ((symbol-function 'herdr-agent-send-keys)
+                  (lambda (_target keys)
+                    (should (= (length keys) 1))
+                    (setq sent (append sent keys))
+                    (when (equal keys '("return"))
+                      (setq screen "☐ First ☐ Second ✔ Submit\nSecond question?\nNotes: press n to add notes\nChat about this"))))
+                 ((symbol-function 'herdr-agent-paste)
+                  (lambda (_target text)
+                    (push text pasted)
+                    (setq sent (append sent (list (list :paste text)))))))
+         ,@body))))
+
+(ert-deftest limen-inbox-preview-commits-notes-before-answering ()
+  (limen-inbox-tests--with-preview
+    (puthash "p#0" '("B") limen-inbox--selected)
+    (puthash "p#0" "literal λ\nsecond line" limen-inbox--notes)
+    (limen-inbox-commit-at-point)
+    (should (equal sent '("n" "ctrl+a" "ctrl+k"
+                          (:paste "literal λ\nsecond line") "escape" "2" "return")))
+    (should (equal pasted '("literal λ\nsecond line")))
+    (should (limen-inbox--committed-p "p#0"))
+    (should (= (gethash "p" limen-inbox--tabs) 1))))
+
+(ert-deftest limen-inbox-preview-accepts-notes-without-selecting-an-option ()
+  (limen-inbox-tests--with-preview
+    (puthash "p#0" "Neither design" limen-inbox--notes)
+    (limen-inbox-commit-at-point)
+    (should (equal sent '("n" "ctrl+a" "ctrl+k" (:paste "Neither design")
+                          "escape" "n" "return")))
+    (should (limen-inbox--committed-p "p#0"))
+    (should-not (gethash "p#0" limen-inbox--selected))))
+
+(ert-deftest limen-inbox-preview-selection-requires-return-without-extra-right ()
+  (limen-inbox-tests--with-preview
+    (puthash "p#0" '("A") limen-inbox--selected)
+    (limen-inbox-commit-at-point)
+    (should (equal sent '("1" "return")))
+    (should (= (gethash "p" limen-inbox--tabs) 1))))
+
+(ert-deftest limen-inbox-preview-replaces-or-clears-committed-multiline-notes ()
+  (dolist (replacement '("Revised" ""))
+    (limen-inbox-tests--with-preview
+      (setq screen "☐ First ☐ Second ✔ Submit\nFirst question?\nNotes: old\nline\nChat about this")
+      (puthash "p#0" '("A") limen-inbox--selected)
+      (puthash "p#0" '("A") limen-inbox--sent)
+      (puthash "p#0" "old\nline" limen-inbox--sent-notes)
+      (puthash "p#0" replacement limen-inbox--notes)
+      (puthash "p" 1 limen-inbox--tabs)
+      (limen-inbox-commit-at-point)
+      (should (equal sent
+                     (append '("left" "n") (make-list 8 "right")
+                             '("ctrl+a" "ctrl+k" "backspace" "ctrl+a" "ctrl+k")
+                             (unless (string-empty-p replacement)
+                               (list (list :paste replacement)))
+                             '("escape" "1" "return"))))
+      (should (equal (gethash "p#0" limen-inbox--sent-notes) replacement)))))
+
+(ert-deftest limen-inbox-preview-unchanged-recommit-only-navigates ()
+  (limen-inbox-tests--with-preview
+    (setq screen "☐ First ☐ Second ✔ Submit\nFirst question?\nNotes: Done\nChat about this")
+    (puthash "p#0" nil limen-inbox--sent)
+    (puthash "p#0" "Done" limen-inbox--notes)
+    (puthash "p#0" "Done" limen-inbox--sent-notes)
+    (puthash "p" 1 limen-inbox--tabs)
+    (limen-inbox-commit-at-point)
+    (should (equal sent '("left" "right")))
+    (should-not pasted)))
+
+(ert-deftest limen-inbox-preview-single-question-confirms-before-any-answer ()
+  (dolist (confirm '(nil t))
+    (limen-inbox-tests--with-preview
+      (setq limen-inbox-answer-submit-eagerly t
+            screen "☐ First\nFirst question?\nNotes: press n to add notes\nChat about this")
+      (setf (alist-get 'questions (car limen-inbox--questions))
+            '(((qid . "p#0") (previews "A" "B"))))
+      (puthash "p#0" '("B") limen-inbox--selected)
+      (let ((prompts 0))
+        (cl-letf (((symbol-function 'y-or-n-p)
+                   (lambda (_)
+                     (cl-incf prompts)
+                     (should-not sent)
+                     confirm)))
+          (limen-inbox-commit-at-point))
+        (should (= prompts 1)))
+      (if confirm
+          (progn (should (equal sent '("2" "return")))
+                 (should-not (limen-inbox-questions)))
+        (should-not sent)
+        (should (limen-inbox-questions))
+        (should-not (limen-inbox--committed-p "p#0"))))))
+
+(ert-deftest limen-inbox-preview-rejects-unsafe-layout-or-input-before-sending ()
+  (dolist (failure '(layout controls eager-disabled notes-edited))
+    (limen-inbox-tests--with-preview
+      (puthash "p#0" '("A") limen-inbox--selected)
+      (pcase failure
+        ('layout (setq screen "Ordinary question without preview notes"))
+        ('controls (puthash "p#0" "text\e[return" limen-inbox--notes))
+        ('eager-disabled
+         (setf (alist-get 'questions (car limen-inbox--questions))
+               '(((qid . "p#0") (previews "A" "B"))))
+         (setq screen "☐ First\nFirst question?\nNotes: press n to add notes\nChat about this"))
+        ('notes-edited
+         (setq screen "☐ First ☐ Second ✔ Submit\nFirst question?\nNotes: Outside edit\nChat about this")))
+      (should-error (limen-inbox-commit-at-point) :type 'user-error)
+      (should-not sent)
+      (should-not pasted)
+      (should-not (eq (gethash "p" limen-inbox--tabs) 'unknown)))))
+
+(ert-deftest limen-inbox-preview-paste-failure-keeps-answer-uncommitted ()
+  (limen-inbox-tests--with-preview
+    (puthash "p#0" "Notes" limen-inbox--notes)
+    (cl-letf (((symbol-function 'herdr-agent-paste)
+               (lambda (&rest _) (error "Disconnected"))))
+      (should-error (limen-inbox-commit-at-point)))
+    (should (eq (gethash "p" limen-inbox--tabs) 'unknown))
+    (should-not (limen-inbox--committed-p "p#0"))
+    (should (equal (gethash "p#0" limen-inbox--notes) "Notes"))
+    (should (equal sent '("n" "ctrl+a" "ctrl+k")))))
+
+(ert-deftest limen-inbox-preview-dismiss-uses-chat-row-not-plain-digit ()
+  (limen-inbox-tests--with-preview
+    (let (attached)
+      (cl-letf (((symbol-function 'herdr-agent-switch)
+                 (lambda (target) (setq attached target))))
+        (limen-inbox-dismiss-at-point))
+      (should (equal sent '("down" "down" "return")))
+      (should (equal attached '("/tmp/alpha.sock" . "t1")))
+      (should-not (limen-inbox-questions)))))
+
+(ert-deftest limen-inbox-preview-submit-screen-needs-only-one-return ()
+  (limen-inbox-tests--with-preview
+    (setq screen "Review your answers\nReady to submit your answers?")
+    (limen-inbox--submit-block '("/tmp/alpha.sock" . "t1") "p")
+    (should (equal sent '("return")))))
+
+(ert-deftest limen-inbox-previews-remain-visible-with-answering-disabled ()
+  (let ((limen-inbox-answer nil))
+    (with-temp-buffer
+      (limen-inbox--insert-question
+       '((qid . "p#0") (answerable . t) (header . "Design")
+         (question . "Which?") (options "A" "B") (previews "one\n  two" nil))
+       nil t)
+      (should (string-match-p "1[.] A\n         ┃ one\n         ┃   two" (buffer-string)))
+      (should-not (text-property-not-all (point-min) (point-max) 'keymap nil)))))
+
+(ert-deftest limen-inbox-single-preview-header-named-submit-is-not-submit-tab ()
+  (should-not
+   (limen-inbox--preview-submit-tab-p
+    "☐ Submit\nQuestion?\nNotes: press n to add notes\nChat about this"
+    '(:header "Submit"))))
+
+(ert-deftest limen-inbox-preview-stalled-answer-is-not-marked-committed ()
+  (limen-inbox-tests--with-preview
+    (puthash "p#0" '("A") limen-inbox--selected)
+    (cl-letf (((symbol-function 'herdr-agent-send-keys)
+               (lambda (_target keys) (setq sent (append sent keys))))
+              ((symbol-function 'sleep-for) #'ignore))
+      (should-error (limen-inbox-commit-at-point)))
+    (should (eq (gethash "p" limen-inbox--tabs) 'unknown))
+    (should-not (limen-inbox--committed-p "p#0"))
+    (should (equal sent '("1" "return")))))
+
+(ert-deftest limen-inbox-preview-cleans-up-after-post-tool-hook-races-submit ()
+  (limen-inbox-tests--with-preview
+    (setq limen-inbox-answer-submit-eagerly t
+          screen "☐ First\nFirst question?\nNotes: press n to add notes\nChat about this")
+    (setf (alist-get 'questions (car limen-inbox--questions))
+          '(((qid . "p#0") (previews "A" "B"))))
+    (puthash "p#0" '("A") limen-inbox--selected)
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+              ((symbol-function 'herdr-agent-send-keys)
+               (lambda (_target keys)
+                 (when (equal keys '("return"))
+                   (setq screen "User answered")
+                   (limen-inbox--answered "p#0")))))
+      (limen-inbox-commit-at-point))
+    (should-not (limen-inbox-questions))
+    (dolist (table (list limen-inbox--selected limen-inbox--sent
+                         limen-inbox--notes limen-inbox--sent-notes
+                         limen-inbox--tabs))
+      (should (= (hash-table-count table) 0)))))
+
+(ert-deftest limen-inbox-preview-callout-preserves-blank-lines-and-indentation ()
+  (with-temp-buffer
+    (limen-inbox--insert-preview "first\n\n  last")
+    (should (equal (get-text-property (point-min) 'display) '(space :width (+ 9 (4)))))
+    (should (equal (buffer-string)
+                   "         ┃ first\n         ┃ \n         ┃   last\n"))))
+
+(ert-deftest limen-inbox-preview-reuses-the-herdr-preview-rule ()
+  (cl-progv '(herdr-status-preview-rule) '("▌")
+    (with-temp-buffer
+      (limen-inbox--insert-preview "design")
+      (should (equal (buffer-string) "         ▌ design\n")))))
+
+(defmacro limen-inbox-tests--with-inline-notes (&rest body)
+  "Run BODY at a preview option with Cera available as a stub."
+  (declare (indent 0) (debug t))
+  `(limen-inbox-tests--with-inbox
+     (let ((require-function (symbol-function 'require))
+           (limen-inbox-answer t)
+           (limen-inbox-inline-notes t)
+           (question '((qid . "p#0") (answerable . t) (header . "Design")
+                       (question . "Which design?") (options "A" "B")
+                       (previews "preview A" nil))))
+       (cl-letf (((symbol-function 'require)
+                  (lambda (feature &rest arguments)
+                    (if (eq feature 'cera) 'cera
+                      (apply require-function feature arguments)))))
+         (cl-progv '(herdr-status--refreshing) '(nil)
+         (limen-inbox--add `((id . "p") (questions ,question)))
+         (with-temp-buffer
+           (magit-section-mode)
+           (let ((inhibit-read-only t))
+             (magit-insert-section (limen-inbox-test-root)
+               (limen-inbox--insert-question question '("/tmp/alpha.sock" . "t1") t)))
+           (goto-char (point-min))
+           (search-forward "preview A")
+           ,@body))))))
+
+(ert-deftest limen-inbox-inline-notes-prefills-and-anchors-below-preview ()
+  (limen-inbox-tests--with-inline-notes
+    (puthash "p#0" "Existing" limen-inbox--notes)
+    (cl-letf (((symbol-function 'cera-read)
+               (lambda (table initial bounds source-face)
+                 (should-not source-face)
+                 (should-not table)
+                 (should (equal initial "Existing"))
+                 (should (equal (buffer-substring-no-properties (car bounds) (cdr bounds))
+                                "         ┃ preview A\n"))
+                 (should (symbol-value 'herdr-status--refreshing))
+                 "New\nnotes"))
+              ((symbol-function 'herdr-agent-send-keys)
+               (lambda (&rest _) (ert-fail "Editing must not send pane keys"))))
+      (limen-inbox-notes-at-point))
+    (should (equal (limen-inbox--note "p#0" 1) "New\nnotes"))
+    (should-not (symbol-value 'herdr-status--refreshing))
+    (should (= refreshes 2))
+    (should buffer-read-only)))
+
+(ert-deftest limen-inbox-inline-notes-unwinds-on-cancel-and-error ()
+  (dolist (failure '(quit error))
+    (limen-inbox-tests--with-inline-notes
+      (puthash "p#0" "Saved" limen-inbox--notes)
+      (cl-letf (((symbol-function 'cera-read)
+                 (lambda (&rest _)
+                   (should (symbol-value 'herdr-status--refreshing))
+                   (signal failure (and (eq failure 'error) '("Failed"))))))
+        (if (eq failure 'quit)
+            (should (condition-case nil (limen-inbox-notes-at-point) (quit t)))
+          (should-error (limen-inbox-notes-at-point))))
+      (should (equal (gethash "p#0" limen-inbox--notes) "Saved"))
+      (should-not (symbol-value 'herdr-status--refreshing))
+      (should (= refreshes 2)))))
+
+(ert-deftest limen-inbox-inline-notes-refuses-stale-question-on-accept ()
+  (dolist (change '(remove replace))
+    (limen-inbox-tests--with-inline-notes
+      (cl-letf (((symbol-function 'cera-read)
+                 (lambda (&rest _)
+                   (if (eq change 'remove)
+                       (setq limen-inbox--questions nil)
+                     (setf (alist-get 'questions (car limen-inbox--questions))
+                           '(((qid . "p#0") (question . "Different")))))
+                   "Stale draft")))
+        (should-error (limen-inbox-notes-at-point) :type 'user-error))
+      (should-not (gethash "p#0" limen-inbox--notes))
+      (should-not (symbol-value 'herdr-status--refreshing)))))
+
+(ert-deftest limen-inbox-inline-notes-missing-cera-does-not-change-buffer ()
+  (limen-inbox-tests--with-inline-notes
+    (let ((before (buffer-string))
+          (original-require (symbol-function 'require)))
+      (cl-letf (((symbol-function 'require)
+                 (lambda (feature &rest arguments)
+                   (unless (eq feature 'cera)
+                     (apply original-require feature arguments)))))
+        (should-error (limen-inbox-notes-at-point) :type 'user-error))
+      (should (equal (buffer-string) before))
+      (should-not (symbol-value 'herdr-status--refreshing))
+      (should (zerop refreshes)))))
+
+(ert-deftest limen-inbox-keeps-preview-notes-separate-and-combines-in-option-order ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox--add '((id . "p") (questions ((qid . "p#0") (options "A" "B")))) )
+    (limen-inbox--set-note "p#0" 2 "Second design\nwith changes")
+    (limen-inbox--set-note "p#0" 1 "First design")
+    (should (equal (limen-inbox--note "p#0" 1) "First design"))
+    (should (equal (limen-inbox--note "p#0" 2) "Second design\nwith changes"))
+    (should (equal (limen-inbox--question-notes "p#0")
+                   "1. A:\nFirst design\n\n2. B:\nSecond design\nwith changes"))
+    (puthash "p#0" '("A") limen-inbox--selected)
+    (puthash "p#0" '("A") limen-inbox--sent)
+    (puthash "p#0" (limen-inbox--question-notes "p#0") limen-inbox--sent-notes)
+    (should (limen-inbox--committed-p "p#0"))
+    (limen-inbox--set-note "p#0" 2 "Unselected option revised")
+    (should-not (limen-inbox--committed-p "p#0"))
+    (limen-inbox--set-note "p#0" 1 "")
+    (should (equal (limen-inbox--question-notes "p#0") "2. B:\nUnselected option revised"))
+    (limen-inbox--set-note "p#0" 2 " \n ")
+    (should (equal (limen-inbox--question-notes "p#0") ""))))
+
+(ert-deftest limen-inbox-preview-commit-sends-all-labeled-notes ()
+  (limen-inbox-tests--with-preview
+    (setf (alist-get 'options (car (alist-get 'questions (car limen-inbox--questions))))
+          '("A" "B"))
+    (limen-inbox--set-note "p#0" 2 "Avoid this")
+    (limen-inbox--set-note "p#0" 1 "Use this")
+    (puthash "p#0" '("A") limen-inbox--selected)
+    (limen-inbox-commit-at-point)
+    (should (equal pasted '("1. A:\nUse this\n\n2. B:\nAvoid this")))
+    (should (limen-inbox--committed-p "p#0"))
+    (should (equal (limen-inbox--note "p#0" 2) "Avoid this"))))
+
+(ert-deftest limen-inbox-preview-note-target-follows-point-then-selection ()
+  (limen-inbox-tests--with-inbox
+    (let ((question '(:qid "p#0" :preview t :options ("A" "B") :previews ("A" "B")))
+          option)
+      (cl-letf (((symbol-function 'limen-inbox--value)
+                 (lambda (type) (if (eq type 'limen-inbox-option) option question))))
+        (should (= (limen-inbox--note-index question) 1))
+        (puthash "p#0" '("B") limen-inbox--selected)
+        (should (= (limen-inbox--note-index question) 2))
+        (setq option '(:index 1))
+        (should (= (limen-inbox--note-index question) 1))
+        (setf (plist-get question :previews) '(nil "B"))
+        (should-error (limen-inbox--note-index question) :type 'user-error)))))
+
+(ert-deftest limen-inbox-inline-notes-keeps-each-preview-draft ()
+  (limen-inbox-tests--with-inline-notes
+    (setf (alist-get 'previews question) '("preview A" "preview B"))
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (magit-insert-section (limen-inbox-test-root)
+        (limen-inbox--insert-question question '("/tmp/alpha.sock" . "t1") t)))
+    (dolist (item '(("preview A" 1 "Note A") ("preview B" 2 "Note B")
+                    ("preview A" 1 "Revised A")))
+      (goto-char (point-min))
+      (search-forward (car item))
+      (cl-letf (((symbol-function 'cera-read)
+                 (lambda (_table initial bounds source-face)
+                   (should-not source-face)
+                   (should (equal initial (limen-inbox--note "p#0" (cadr item))))
+                   (should (string-match-p (car item)
+                                           (buffer-substring-no-properties
+                                            (car bounds) (cdr bounds))))
+                   (caddr item))))
+        (limen-inbox-notes-at-point)))
+    (should (equal (limen-inbox--note "p#0" 1) "Revised A"))
+    (should (equal (limen-inbox--note "p#0" 2) "Note B"))))
+
+(ert-deftest limen-inbox-preserves-legacy-notes-on-the-selected-preview ()
+  (limen-inbox-tests--with-inbox
+    (limen-inbox--add
+     '((id . "p") (questions ((qid . "p#0") (options "A" "B") (previews "A" "B")))))
+    (puthash "p#0" '("B") limen-inbox--selected)
+    (puthash "p#0" "Existing note" limen-inbox--notes)
+    (should (equal (limen-inbox--note "p#0" 1) ""))
+    (should (equal (limen-inbox--note "p#0" 2) "Existing note"))
+    (should (equal (limen-inbox--question-notes "p#0") "Existing note"))
+    (limen-inbox--set-note "p#0" 1 "Another note")
+    (should (equal (limen-inbox--question-notes "p#0")
+                   "1. A:\nAnother note\n\n2. B:\nExisting note"))))
 
 (provide 'limen-inbox-tests)
 ;;; limen-inbox-tests.el ends here
