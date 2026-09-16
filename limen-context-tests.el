@@ -84,6 +84,66 @@
       (unless (limen-session-closed-p session)
         (limen-close-session session)))))
 
+(ert-deftest limen-herdr-excerpt-draws-the-sent-lines-and-marks-the-point ()
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (insert "(defun alpha ()\n  \"Doc.\"\n  (beta))\n\n(defun gamma ()\n  nil)\n")
+    (goto-char (point-min))
+    (forward-line 2)
+    (forward-char 3)
+    (let* ((limen-herdr-context-window 1)
+           (context '((path . "/tmp/project/alpha.el")
+                      (line . 3) (column . 2) (end_line . 3) (end_column . 9)))
+           (excerpt (limen-herdr--excerpt context 3 3)))
+      (should (equal (split-string excerpt "\n")
+                     '("  ╭─[alpha.el:3:3]"
+                       "2 │   \"Doc.\""
+                       "3 ┃   (beta))"
+                       "  │    ^ point"
+                       "4 │ "
+                       "  ╰─")))
+      (let ((limen-herdr-context-window 0))
+        (should-not (limen-herdr--excerpt context 3 3))))
+    (let* ((limen-herdr-context-window 10)
+           (context '((buffer . "*scratch*")
+                      (line . 1) (column . 0) (end_line . 3) (end_column . 9)))
+           (rows (split-string (limen-herdr--excerpt context 1 0) "\n")))
+      (should (equal (nth 0 rows) "  ╭─[*scratch*:1:0]"))
+      (should (equal (nth 1 rows) "1 ┃ (defun alpha ()"))
+      (should (equal (nth 2 rows) "  │ ^ point"))
+      (should (equal (nth 4 rows) "3 ┃   (beta))"))
+      (should (equal (car (last rows)) "  ╰─")))))
+
+(ert-deftest limen-herdr-context-names-what-only-the-editor-knows ()
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (insert "(defun alpha ()\n  (beta))\n")
+    (goto-char (point-min))
+    (forward-line 1)
+    (forward-char 3)
+    (let* ((state (limen-herdr--point-state
+                   '((line . 2) (column . 2) (end_line . 2) (end_column . 9))))
+           (context (append '((buffer . "alpha.el") (line . 2) (column . 2)
+                              (end_line . 2) (end_column . 9))
+                            state))
+           (fields (limen-herdr--context-fields context nil)))
+      (should (equal (alist-get 'major_mode state) "emacs-lisp-mode"))
+      (should (equal (alist-get 'point_line state) 2))
+      (should (equal (alist-get 'point_column state) 3))
+      (should (member "mode: emacs-lisp-mode" fields))
+      (should (member "symbol: beta" fields))
+      (should (member "defun: alpha" fields)))))
+
+(ert-deftest limen-herdr-diagnostics-line-names-severity-place-and-message ()
+  (let ((context '((diagnostics . [((severity . "error") (line . 12) (column . 4)
+                                    (message . "unbalanced parens\nsecond line"))
+                                   ((severity . "warning") (line . 13) (column . 0)
+                                    (message . "unused"))]))))
+    (should (equal (limen-herdr--diagnostics-text context)
+                   (concat "diagnostics: error at 12:4 unbalanced parens; "
+                           "warning at 13:0 unused"))))
+  (should-not (limen-herdr--diagnostics-text '((diagnostics . [])))))
+
 (ert-deftest limen-herdr-send-context-carries-a-file-outside-the-project ()
   (let* ((root (file-truename (make-temp-file "limen-context-root" t)))
          (outside-root (file-truename
@@ -120,7 +180,8 @@
                     (should (string-match-p
                              (regexp-quote (format "file: %s:1:0-1:7" outside))
                              text))
-                    (should (string-match-p "```\noutside\n```" text))
+                    (should (string-match-p "1 ┃ outside" text))
+                    (should (string-match-p "│ +\\^ point" text))
                     (should (equal (cdar drafts) text))
                     (should (equal (alist-get 'text (caar drafts)) "outside")))))
               (with-current-buffer (find-file-noselect denied)

@@ -44,6 +44,14 @@
   :type '(integer 1)
   :group 'limen-herdr)
 
+(defcustom limen-herdr-context-window 4
+  "Lines kept on each side of the text an explicit send carries.
+The lines are drawn with their numbers, the sent ones marked down the
+gutter and the point marked under the line it sits on.  Zero sends the
+text alone."
+  :type 'natnum
+  :group 'limen-herdr)
+
 (cl-defstruct limen-herdr-state
   provider session route launched-p)
 
@@ -220,17 +228,36 @@ Paths outside ROOT stay absolute."
 Each receives the context alist and the session root and returns a list
 of \"key: value\" strings, or nil.")
 
+(defun limen-herdr--diagnostics-text (context)
+  "Return the line naming the diagnostics CONTEXT's lines carry, or nil."
+  (when-let* ((diagnostics (append (alist-get 'diagnostics context) nil))
+              ((> (length diagnostics) 0)))
+    (format "diagnostics: %s"
+            (mapconcat (lambda (record)
+                         (format "%s at %d:%d %s"
+                                 (alist-get 'severity record)
+                                 (alist-get 'line record)
+                                 (alist-get 'column record)
+                                 (car (split-string
+                                       (alist-get 'message record) "\n"))))
+                       diagnostics "; "))))
+
 (defun limen-herdr--context-fields (context root)
   "Return the key-value header lines for single-buffer CONTEXT below ROOT."
   (let ((path (limen-herdr--context-path (alist-get 'path context) root))
         (position (limen-herdr--position-text context))
-        (mode (alist-get 'major_mode context)))
+        (mode (alist-get 'major_mode context))
+        (definition (alist-get 'defun context))
+        (symbol (alist-get 'symbol context)))
     (delq nil
           (list (format "%s: %s%s"
                         (if path "file" "buffer")
                         (or path (alist-get 'buffer context))
                         (if position (concat ":" position) ""))
-                (and mode (format "mode: %s" mode))))))
+                (and mode (format "mode: %s" mode))
+                (and definition (format "defun: %s" definition))
+                (and symbol (format "symbol: %s" symbol))
+                (limen-herdr--diagnostics-text context)))))
 
 (defun limen-herdr--context-text (context &optional root live)
   "Return CONTEXT as a structured message with paths relative to ROOT.
@@ -255,9 +282,12 @@ With LIVE, add the `limen context' pointer to the header block."
                                           limen-herdr-context-fields-functions))
                              (and live-line (list live-line)))
                      "\n")
-        (if (and text (not (string-empty-p text)))
-            (format "\n\n```\n%s\n```" (string-trim-right text))
-          ""))))))
+        (let ((excerpt (alist-get 'excerpt context)))
+          (cond
+           (excerpt (format "\n\n```\n%s\n```" excerpt))
+           ((and text (not (string-empty-p text)))
+            (format "\n\n```\n%s\n```" (string-trim-right text)))
+           (t ""))))))))
 
 (defun limen-herdr--dired-context (root)
   "Return an atomic explicit context snapshot for Dired files below ROOT."
@@ -313,6 +343,93 @@ it that the project's path policy denies is refused."
       (end_column . ,(alist-get 'end_column selection))
       (text . ,(alist-get 'text selection)))))
 
+(defun limen-herdr--line-text (line)
+  "Return the text of LINE in the current buffer, or nil past its end."
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char (point-min))
+      (when (zerop (forward-line (1- line)))
+        (unless (and (eobp) (bolp) (> line 1))
+          (buffer-substring-no-properties (point) (line-end-position)))))))
+
+(defun limen-herdr--excerpt (context point-line point-column)
+  "Return the lines around CONTEXT's range in the current buffer, drawn.
+The sent lines carry a heavier gutter than their neighbours, and the
+point is marked with a caret under POINT-COLUMN of POINT-LINE, wherever
+in the range it sits."
+  (let* ((window limen-herdr-context-window)
+         (line (alist-get 'line context))
+         (column (alist-get 'column context))
+         (end-line (or (alist-get 'end_line context) line)))
+    (when (and (> window 0) (integerp line) (integerp column))
+      (let ((lines nil))
+        (cl-loop for number from (max 1 (- line window)) to (+ end-line window)
+                 for text = (limen-herdr--line-text number)
+                 while (or text (<= number end-line))
+                 do (push (cons number (or text "")) lines))
+        (when lines
+          (let* ((numbered (nreverse lines))
+                 (width (length (number-to-string (caar (last numbered)))))
+                 (gutter (make-string (1+ width) ?\s))
+                 (row (format "%%%dd %%s %%s" width))
+                 (rows nil))
+            (pcase-dolist (`(,number . ,text) numbered)
+              (push (format row number
+                            (if (<= line number end-line) "┃" "│")
+                            text)
+                    rows)
+              (when (eql number point-line)
+                (push (format "%s│%s^ point" gutter
+                              (make-string (1+ point-column) ?\s))
+                      rows)))
+            (string-join
+             (append (list (format "%s╭─[%s:%d:%d]" gutter
+                                   (if-let* ((path (alist-get 'path context)))
+                                       (file-name-nondirectory path)
+                                     (or (alist-get 'buffer context) ""))
+                                   point-line point-column))
+                     (nreverse rows)
+                     (list (format "%s╰─" gutter)))
+             "\n")))))))
+
+(defun limen-herdr--point-diagnostics (context)
+  "Return the diagnostics of CONTEXT's lines in the current buffer."
+  (when (derived-mode-p 'prog-mode)
+    (let ((beg (save-excursion (goto-char (point-min))
+                               (forward-line (1- (alist-get 'line context)))
+                               (line-beginning-position)))
+          (end (save-excursion (goto-char (point-min))
+                               (forward-line (1- (or (alist-get 'end_line context)
+                                                     (alist-get 'line context))))
+                               (line-end-position))))
+      (delq nil (mapcar #'limen--diagnostic-record
+                        (flymake-diagnostics beg end))))))
+
+(defun limen-herdr--point-state (context)
+  "Return what the editor alone knows about CONTEXT's place in this buffer."
+  (let ((line (limen--absolute-line-number (point)))
+        (column (limen-logical-column-at-position (point))))
+    (delq nil
+          (list (cons 'major_mode (symbol-name major-mode))
+                (cons 'point_line line)
+                (cons 'point_column column)
+                (when-let* ((name (ignore-errors (add-log-current-defun))))
+                  (cons 'defun name))
+                (when-let* ((symbol (thing-at-point 'symbol t)))
+                  (cons 'symbol symbol))
+                (when-let* ((diagnostics (ignore-errors
+                                           (limen-herdr--point-diagnostics context))))
+                  (cons 'diagnostics (vconcat diagnostics)))
+                (when-let* ((excerpt (limen-herdr--excerpt context line column)))
+                  (cons 'excerpt excerpt))))))
+
+(defun limen-herdr--with-point-state (context)
+  "Return CONTEXT carrying the editor state around its place."
+  (if (alist-get 'items context)
+      context
+    (append context (limen-herdr--point-state context))))
+
 (defun limen-herdr--send-context-snapshot (session)
   "Return point context for SESSION with a current-line fallback.
 File buffers and Dired report as explicit context; other buffers report
@@ -321,18 +438,19 @@ so a buffer outside the project of SESSION reports the same way."
   (let ((virtual (and (not (derived-mode-p 'dired-mode))
                       (not buffer-file-name)
                       (not (string-prefix-p " " (buffer-name))))))
-    (if (or (derived-mode-p 'dired-mode) (use-region-p))
-        (if virtual
-            (limen-herdr--virtual-context)
-          (limen-herdr--current-context session))
-      (save-mark-and-excursion
-        (let ((transient-mark-mode t))
-          (set-mark (line-beginning-position))
-          (goto-char (line-end-position))
-          (setq mark-active t)
-          (if virtual
-              (limen-herdr--virtual-context)
-            (limen-herdr--current-context session)))))))
+    (limen-herdr--with-point-state
+     (if (or (derived-mode-p 'dired-mode) (use-region-p))
+         (if virtual
+             (limen-herdr--virtual-context)
+           (limen-herdr--current-context session))
+       (save-mark-and-excursion
+         (let ((transient-mark-mode t))
+           (set-mark (line-beginning-position))
+           (goto-char (line-end-position))
+           (setq mark-active t)
+           (if virtual
+               (limen-herdr--virtual-context)
+             (limen-herdr--current-context session))))))))
 
 (defvar limen-herdr-context-hook nil
   "Functions run after a Herdr context is rendered for an integrated agent.
