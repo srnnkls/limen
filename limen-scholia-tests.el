@@ -1,0 +1,41 @@
+;;; limen-scholia-tests.el --- Scholia bridge tests -*- lexical-binding: t; -*-
+
+(require 'cl-lib)
+(require 'ert)
+(require 'limen-scholia)
+
+(ert-deftest limen-scholia-references-name-annotations-by-file-and-line ()
+  (let* ((root (file-name-as-directory (make-temp-file "limen-scholia" t)))
+         (file (expand-file-name "limen.el" root)))
+    (unwind-protect
+        (progn
+          (with-temp-file file (insert "code"))
+          (cl-letf (((symbol-function 'limen-scholia--visible-sessions)
+                     (lambda () '("default")))
+                    ((symbol-function 'limen-scholia--confined-files)
+                     (lambda (_name _root) (list file "buffer:0ff")))
+                    ((symbol-function 'limen-scholia--session-records-for)
+                     (lambda (_name files) (mapcar (lambda (each) (list :file each))
+                                                   files)))
+                    ((symbol-function 'scholia-db-record-file)
+                     (lambda (record) (plist-get record :file)))
+                    ((symbol-function 'scholia-db-record-annotations)
+                     (lambda (record)
+                       (when (equal (plist-get record :file) file)
+                         '((:line 12 :text "needs a test")
+                           (:line 40 :text "rename this")))))
+                    ((symbol-function 'scholia-db-annotation-line)
+                     (lambda (annotation) (plist-get annotation :line)))
+                    ((symbol-function 'scholia-db-annotation-text)
+                     (lambda (annotation) (plist-get annotation :text))))
+            (cl-progv '(limen-scholia-available-p) '(t)
+              (should (equal (limen-scholia-annotation-references root)
+                             '(("limen.el:12" . "needs a test")
+                               ("limen.el:40" . "rename this"))))
+              (should-not (limen-scholia-annotation-references nil)))
+            (cl-progv '(limen-scholia-available-p) '(nil)
+              (should-not (limen-scholia-annotation-references root)))))
+      (delete-directory root t))))
+
+(provide 'limen-scholia-tests)
+;;; limen-scholia-tests.el ends here

@@ -203,6 +203,26 @@
       (length (scholia-db-record-annotations record))
     0))
 
+(defun limen-scholia-annotation-references (root)
+  "Return the annotations of the visible sessions below ROOT.
+Each is a cons of the reference naming it, project-relative FILE:LINE,
+and the text it carries.  An annotation made in a buffer that visits no
+file has no reference to give.  Nothing comes back without scholia,
+without a visible session, or without a root."
+  (when (and limen-scholia-available-p root)
+    (let (references)
+      (dolist (name (limen-scholia--visible-sessions))
+        (dolist (record (limen-scholia--session-records-for
+                         name (limen-scholia--confined-files name root)))
+          (let ((file (scholia-db-record-file record)))
+            (when (file-exists-p file)
+              (dolist (annotation (scholia-db-record-annotations record))
+                (push (cons (format "%s:%s" (file-relative-name file root)
+                                    (scholia-db-annotation-line annotation))
+                            (scholia-db-annotation-text annotation))
+                      references))))))
+      (nreverse references))))
+
 (defun limen-scholia--context-field (_context _root)
   "Return the header line naming the sessions visible in the current buffer."
   (when-let* ((limen-scholia-available-p)

@@ -32,9 +32,13 @@ QUESTION-TOOLS name the tools that ask the user a question and
 TRANSCRIPT-QUESTIONS-P says those questions must be read from the
 transcript instead.  EDIT-TOOLS name the tools that change files.
 SESSION-NAME maps a session id to the name the harness gave it.
+SKILL-DIRECTORIES receives a project root, or nil, and returns the
+directories the harness reads skills from.  SKILL-REFERENCE maps a skill
+name to what the harness is sent to invoke it.
 CAPABILITIES is the plist `limen-herdr-status' reports."
   name config-directory hook-settings route arguments question-tools
-  transcript-questions-p edit-tools session-name capabilities)
+  transcript-questions-p edit-tools session-name skill-directories
+  skill-reference capabilities)
 
 (defvar limen-provider--registry nil
   "Registered providers, oldest first.")
@@ -94,6 +98,38 @@ CAPABILITIES is the plist `limen-herdr-status' reports."
                     (error nil)))
                 (directory-files directory t "\\.json\\'")))))
 
+(defun limen-provider--skill-directories (configuration root)
+  "Return the skill directories of CONFIGURATION, and of ROOT when given.
+A harness reads its own below its configuration directory and a
+project's below a directory of the same name in the project."
+  (delq nil
+        (list (expand-file-name "skills" configuration)
+              (when root
+                (expand-file-name
+                 (format "%s/skills"
+                         (file-name-nondirectory
+                          (directory-file-name configuration)))
+                 root)))))
+
+(defun limen-provider-skills (provider &optional root)
+  "Return the skills PROVIDER offers, with ROOT's own, sorted and unique.
+A skill is a directory holding a SKILL.md, named as the harness names it."
+  (when-let* ((directories (limen-provider-skill-directories provider)))
+    (let (names)
+      (dolist (directory (funcall directories root))
+        (when (file-directory-p directory)
+          (dolist (entry (directory-files directory t "\\`[^.]"))
+            (when (file-exists-p (expand-file-name "SKILL.md" entry))
+              (cl-pushnew (file-name-nondirectory (directory-file-name entry))
+                          names :test #'equal)))))
+      (sort names #'string<))))
+
+(defun limen-provider-skill-call (provider skill)
+  "Return what PROVIDER is sent to invoke SKILL."
+  (if-let* ((reference (limen-provider-skill-reference provider)))
+      (funcall reference skill)
+    skill))
+
 (defun limen-provider-pi-extension-file ()
   "Return the absolute packaged Pi extension path."
   (expand-file-name
@@ -111,6 +147,10 @@ CAPABILITIES is the plist `limen-herdr-status' reports."
   :question-tools '("AskUserQuestion")
   :edit-tools '("Edit" "Write" "MultiEdit")
   :session-name #'limen-provider--claude-session-name
+  :skill-directories (lambda (root)
+                       (limen-provider--skill-directories
+                        (limen-provider--claude-config-directory) root))
+  :skill-reference (lambda (skill) (concat "/" skill))
   :capabilities '(:transport hooks :operations cli
                   :passive-context prompt :explicit-context prompt :diffs nil)))
 
@@ -132,6 +172,10 @@ CAPABILITIES is the plist `limen-herdr-status' reports."
                  arguments))
   :question-tools '("request_user_input")
   :transcript-questions-p t
+  :skill-directories (lambda (root)
+                       (limen-provider--skill-directories
+                        (limen-provider--codex-home) root))
+  :skill-reference (lambda (skill) (concat "$" skill))
   :capabilities '(:transport streamable-http :operations registry
                   :passive-context resource :explicit-context terminal :diffs t)))
 

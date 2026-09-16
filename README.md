@@ -55,6 +55,13 @@ To have every prompt typed into a Claude Code or Codex pane carry Emacs context,
 (limen-herd-mode 1)
 ```
 
+`limen-complete-mode` completes inside a [cera](https://github.com/srnnkls/cera) field — the one a Herdr message is written in, and the one an inbox note is edited in. `@` completes a project file, `#` an annotation of the visible scholia sessions as `file:line`, and `/` a skill of the harness the message is going to, read from that harness's own and the project's skill directories. Codex invokes a skill by `$name`, so a skill completed for Codex rewrites the `/` as it lands. Text that opens none of the three completes on what the field was given, which for a message is the messages sent before it:
+
+```elisp
+(require 'limen-complete)
+(limen-complete-mode 1)
+```
+
 Limen installs no global keybinding.
 
 ## Command line
