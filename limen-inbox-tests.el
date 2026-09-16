@@ -871,9 +871,28 @@
 (ert-deftest limen-inbox-preview-callout-preserves-blank-lines-and-indentation ()
   (with-temp-buffer
     (limen-inbox--insert-preview "first\n\n  last")
-    (should (equal (get-text-property (point-min) 'display) '(space :width (+ 9 (4)))))
+    (should (equal (get-text-property (point-min) 'display) '(space :width (+ 9 (7)))))
     (should (equal (buffer-string)
                    "         ┃ first\n         ┃ \n         ┃   last\n"))))
+
+(ert-deftest limen-inbox-dismiss-answers-to-both-cancel-keys ()
+  (dolist (key '("C-c C-d" "C-c C-k"))
+    (should (eq (keymap-lookup magit-limen-inbox-question-section-map key)
+                #'limen-inbox-dismiss-at-point))
+    (should (eq (keymap-lookup limen-inbox--preview-option-map key)
+                #'limen-inbox-dismiss-at-point))))
+
+(ert-deftest limen-inbox-committed-note-reads-behind-its-mark ()
+  (with-temp-buffer
+    (cl-letf (((symbol-function 'herdr-status-mark)
+               (lambda (_glyph _face &optional _property) "✎ ")))
+      (limen-inbox--insert-note "first\nsecond"))
+    (should (equal (buffer-string) "         ✎ first\n           second\n")))
+  (with-temp-buffer
+    (cl-letf (((symbol-function 'fboundp)
+               (lambda (symbol) (not (eq symbol 'herdr-status-mark)))))
+      (limen-inbox--insert-note "bare"))
+    (should (equal (buffer-string) "         Notes: bare\n"))))
 
 (ert-deftest limen-inbox-preview-reuses-the-herdr-preview-rule ()
   (cl-progv '(herdr-status-preview-rule) '("▌")
@@ -925,6 +944,23 @@
     (should-not (symbol-value 'herdr-status--refreshing))
     (should (= refreshes 2))
     (should buffer-read-only)))
+
+(ert-deftest limen-inbox-inline-notes-mark-the-field-with-a-note-glyph ()
+  (limen-inbox-tests--with-inline-notes
+    (let (marks prefixes)
+      (cl-letf (((symbol-function 'herdr-status-mark)
+                 (lambda (glyph face &optional _property)
+                   (push (list glyph face) marks)
+                   (propertize "note " 'face face)))
+                ((symbol-function 'cera-read)
+                 (lambda (&rest _)
+                   (push (symbol-value 'cera-input-prefix) prefixes)
+                   "noted")))
+        (limen-inbox-notes-at-point))
+      (should (equal marks `((,limen-inbox-note-glyph limen-inbox-note-mark))))
+      (should (equal (car prefixes) "note "))
+      (should (equal (get-text-property 0 'face (car prefixes))
+                     'limen-inbox-note-mark)))))
 
 (ert-deftest limen-inbox-inline-notes-unwinds-on-cancel-and-error ()
   (dolist (failure '(quit error))

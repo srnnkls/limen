@@ -26,6 +26,10 @@
 (declare-function herdr-status-request-refresh "ext:herdr-status" ())
 (declare-function herdr-status-redraw-cached "ext:herdr-status" (&optional ready-p))
 (declare-function herdr-status-cached-agents "ext:herdr-status" ())
+(declare-function herdr-status-mark "ext:herdr-status"
+                  (glyph face &optional property))
+(defvar cera-input-prefix)
+(defvar cera-indent)
 (declare-function herdr-agent-send-keys "ext:herdr-agent" (target keys))
 (declare-function herdr-agent-switch "ext:herdr-agent" (target))
 (declare-function herdr-agent-paste "ext:herdr-agent" (target text))
@@ -53,6 +57,20 @@ option is its own line.  Selection stays local until
 `limen-inbox-commit-at-point' commits and advances the question.
 Submission requires confirmation."
   :type 'boolean
+  :group 'limen-hooks)
+
+(defface limen-inbox-note-mark
+  '((((class color) (min-colors 88) (background dark)) :foreground "#6ea8fe")
+    (((class color) (min-colors 88) (background light)) :foreground "#2563c9")
+    (t :inherit link))
+  "Face for the mark the inline note field closes into."
+  :group 'limen-hooks)
+
+(defcustom limen-inbox-note-glyph '("" "✎")
+  "Glyph marking the inline note field, in preference order.
+The first the display can draw wins, as `herdr-status-glyph' picks it: a
+Nerd Font note, or a pencil where no patched font answers."
+  :type '(repeat string)
   :group 'limen-hooks)
 
 (defcustom limen-inbox-inline-notes nil
@@ -473,6 +491,22 @@ Legacy question-level text is preserved until its first edit."
          (null (seq-difference chosen sent #'equal))
          (equal notes (gethash qid limen-inbox--sent-notes "")))))
 
+(defun limen-inbox--note-prefix ()
+  "Return the note mark the inline field closes into, or nil."
+  (when (fboundp 'herdr-status-mark)
+    (herdr-status-mark limen-inbox-note-glyph 'limen-inbox-note-mark)))
+
+(defconst limen-inbox--preview-column 9
+  "Column the preview callout's rule is drawn at.")
+
+(defun limen-inbox--note-indent ()
+  "Return the column the note field's bracket is drawn at.
+The bracket takes over the callout's indentation, so it ends where the
+rule begins and the preview stays in its column."
+  (if (boundp 'cera-bracket-width)
+      (max 0 (- limen-inbox--preview-column (symbol-value 'cera-bracket-width)))
+    0))
+
 (defun limen-inbox--inline-notes (qid index)
   "Edit QID's option note at INDEX below its preview using Cera."
   (unless (require 'cera nil t)
@@ -497,9 +531,13 @@ Legacy question-level text is preserved until its first edit."
                     (oref section children)))
     (unless section (user-error "This preview is no longer available"))
     (magit-section-show section)
-    (let ((bounds (cons (oref section content) (oref section end))))
+    (let ((bounds (cons (oref section content) (oref section end)))
+          (prefix (limen-inbox--note-prefix))
+          (indent (limen-inbox--note-indent)))
       (unwind-protect
           (let* ((herdr-status--refreshing t)
+                 (cera-input-prefix prefix)
+                 (cera-indent indent)
                  (notes (cera-read nil (limen-inbox--note qid index) bounds nil)))
             (unless (and (buffer-live-p buffer)
                          (equal question
@@ -811,6 +849,7 @@ when every question has its current answer committed."
   "RET" #'limen-inbox-attach-at-point
   "C-c C-c" #'limen-inbox-commit-at-point
   "C-c C-d" #'limen-inbox-dismiss-at-point
+  "C-c C-k" #'limen-inbox-dismiss-at-point
   "1" #'limen-inbox-toggle-index
   "2" #'limen-inbox-toggle-index
   "3" #'limen-inbox-toggle-index
@@ -840,12 +879,22 @@ when every question has its current answer committed."
   "Insert PREVIEW literally, preserving line breaks and indentation."
   (when (stringp preview)
     (dolist (line (split-string (substring-no-properties preview) "\n"))
-      (insert (propertize "         " 'display '(space :width (+ 9 (7))))
+      (insert (propertize (make-string limen-inbox--preview-column ?\s)
+                          'display `(space :width (+ ,limen-inbox--preview-column (7))))
               (propertize (if (boundp 'herdr-status-preview-rule)
                               herdr-status-preview-rule
                             "┃")
                           'font-lock-face 'shadow)
               " " line "\n"))))
+
+(defun limen-inbox--insert-note (notes)
+  "Insert NOTES behind the note mark, in the preview's column.
+Further lines align behind the mark, as the note's own lines do while it
+is written in the field."
+  (let* ((mark (or (limen-inbox--note-prefix) "Notes: "))
+         (lead (make-string limen-inbox--preview-column ?\s))
+         (wrap (concat "\n" lead (make-string (string-width mark) ?\s))))
+    (insert lead mark (replace-regexp-in-string "\n" wrap notes) "\n")))
 
 (defun limen-inbox--insert-options (qid options multi &optional previews)
   "Insert OPTIONS of QID as circle lines with optional PREVIEWS.
@@ -867,8 +916,7 @@ MULTI controls toggling and whether notes are supported."
          (when (and notes-enabled (stringp (nth index previews)))
            (let ((notes (limen-inbox--note qid (1+ index))))
              (when (limen-inbox--notes-p notes)
-               (insert "         Notes: "
-                       (replace-regexp-in-string "\n" "\n         " notes) "\n"))))))
+               (limen-inbox--insert-note notes))))))
      options)))
 
 (defun limen-inbox--question-heading (question)
