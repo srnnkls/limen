@@ -29,6 +29,7 @@
 (require 'transient)
 (require 'limen-hooks)
 
+(declare-function herdr-herd-dispatch "ext:herdr-herd" ())
 (declare-function herdr-herd-live-agents "ext:herdr-herd" (&optional session))
 (declare-function herdr-herd-of-entry "ext:herdr-herd" (entry))
 (declare-function herdr-herd-member-entries "ext:herdr-herd" (herd &optional agents))
@@ -593,7 +594,7 @@ rename <pane> \"herd:<name> %sfinished,exited\"'. A notice opens with
   "Reach the menu from the dashboard and the herd menu."
   (when (and (limen-herd--prefix-loaded-p 'herdr-status-dispatch)
              (not (ignore-errors (transient-get-suffix 'herdr-status-dispatch "n"))))
-    (transient-append-suffix 'herdr-status-dispatch "h"
+    (transient-append-suffix 'herdr-status-dispatch #'herdr-herd-dispatch
       '("n" "notices" limen-herd-dispatch)))
   (when (boundp 'herdr-status-mode-map)
     (define-key herdr-status-mode-map "n" #'limen-herd-dispatch))
