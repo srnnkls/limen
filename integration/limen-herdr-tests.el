@@ -335,6 +335,31 @@
           (should-not (limen-herdr-claude-own-session-p '((cwd . "/tmp")))))
       (delete-directory root t))))
 
+(ert-deftest limen-herdr-attached-p-needs-a-live-terminal-buffer ()
+  (let* ((root (make-temp-file "limen-herdr-attached" t))
+         (herdr-agent--sessions (make-hash-table :test #'equal))
+         (agent-session (limen-herdr-tests--session "claude" root))
+         (integration (limen-open-session :provider 'claude :project-root root))
+         (lone (limen-open-session :provider 'claude :project-root root))
+         (buffer (generate-new-buffer "limen-attached")))
+    (unwind-protect
+        (progn
+          (puthash (cons "/tmp/herdr.sock" "term-claude") agent-session herdr-agent--sessions)
+          (limen-herdr--set-state
+           agent-session (make-limen-herdr-state :provider 'claude :session integration))
+          (should (eq (limen-herdr-agent-session integration) agent-session))
+          (should-not (limen-herdr-agent-session lone))
+          (should-not (limen-herdr-attached-p integration))
+          (setf (herdr-agent-session-buffer agent-session) buffer)
+          (should (limen-herdr-attached-p integration))
+          (kill-buffer buffer)
+          (should-not (limen-herdr-attached-p integration))
+          (should-not (limen-herdr-attached-p lone)))
+      (when (buffer-live-p buffer) (kill-buffer buffer))
+      (limen-close-session integration)
+      (limen-close-session lone)
+      (delete-directory root t))))
+
 (provide 'limen-herdr-tests)
 ;;; limen-herdr-tests.el ends here
 

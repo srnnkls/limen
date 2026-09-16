@@ -79,6 +79,14 @@ active requests the tool-use hook it needs."
            (limen-hooks-request-install "review")))
   :group 'limen-hooks)
 
+(defcustom limen-hooks-review-attached-only t
+  "Whether only an agent whose terminal Emacs shows has its edits reviewed.
+An agent adopted quietly has a session, so its prompts carry context,
+but a diff opening for an agent the user is not looking at is noise:
+attach its terminal to review it.  Nil reviews every agent with a session."
+  :type 'boolean
+  :group 'limen-hooks)
+
 (defcustom limen-hooks-review-function #'limen-hooks-review-with-magit
   "Function shown the absolute path of a project file an agent edited."
   :type 'function
@@ -638,11 +646,14 @@ reverted first, so the editor shows the edit too."
 (defun limen-hooks--review-edit (provider payload session request)
   "Open the diff of the project file PROVIDER's edit tool changed, per PAYLOAD.
 Only an agent Emacs holds a SESSION for is reviewed, within that
-session's project; with `limen-hooks-answer-unattached' the project of
+session's project, and with `limen-hooks-review-attached-only' one whose
+terminal Emacs shows; with `limen-hooks-answer-unattached' the project of
 REQUEST stands in.  Runs after the hook has answered, so the agent never
 waits on it."
   (when (and limen-hooks-review-edits
              (or session limen-hooks-answer-unattached)
+             (or (not limen-hooks-review-attached-only)
+                 (and session (limen-herdr-attached-p session)))
              (equal (alist-get 'hook_event_name payload) "PostToolUse"))
     (when-let* ((entry (limen-provider provider))
                 ((member (alist-get 'tool_name payload)

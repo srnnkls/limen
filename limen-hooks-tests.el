@@ -589,11 +589,14 @@
          (session (limen-open-session :provider 'claude :project-root root
                                       :location (cons (limen-server-key "/tmp/h.sock") "%7")))
          (reviewed nil)
+         (attached t)
          (limen-hooks-review-function (lambda (file) (push file reviewed))))
     (unwind-protect
         (cl-letf (((symbol-function 'run-at-time)
                    (lambda (_time _repeat function &rest arguments)
-                     (apply function arguments))))
+                     (apply function arguments)))
+                  ((symbol-function 'limen-herdr-attached-p)
+                   (lambda (_session) attached)))
           (cl-flet ((fire (provider event tool file &optional pane)
                       (limen-hooks-output
                        (limen-hooks-tests--tool-request provider event tool file root pane)
@@ -617,6 +620,12 @@
               (should-not reviewed)
               (let ((limen-hooks-answer-unattached t))
                 (fire "claude" "PostToolUse" "Edit" inside)
+                (should (equal reviewed (list inside))))
+              (setq reviewed nil attached nil)
+              (fire "claude" "PostToolUse" "Edit" inside "%7")
+              (should-not reviewed)
+              (let ((limen-hooks-review-attached-only nil))
+                (fire "claude" "PostToolUse" "Edit" inside "%7")
                 (should (equal reviewed (list inside)))))))
       (limen-close-session session)
       (delete-directory root t)

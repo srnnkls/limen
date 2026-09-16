@@ -30,6 +30,8 @@
 (declare-function herdr-agent-session-project "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-server "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-terminal "ext:herdr-agent" (session) t)
+(declare-function herdr-agent-session-buffer "ext:herdr-agent" (session) t)
+(defvar herdr-agent--sessions)
 (defvar herdr-send-context-functions)
 
 (defgroup limen-herdr nil
@@ -55,6 +57,23 @@
   (when-let* ((state (herdr-agent-session-adapter-state session))
               ((limen-herdr-state-p state)))
     state))
+
+(defun limen-herdr-agent-session (session)
+  "Return the Herdr agent session integrated as Limen SESSION, or nil."
+  (catch 'found
+    (maphash (lambda (_key agent-session)
+               (when-let* ((state (limen-herdr-state agent-session))
+                           ((eq (limen-herdr-state-session state) session)))
+                 (throw 'found agent-session)))
+             herdr-agent--sessions)
+    nil))
+
+(defun limen-herdr-attached-p (session)
+  "Return non-nil when Emacs shows a terminal for the agent SESSION integrates.
+An agent adopted quietly has a session and no terminal until the user
+opens one."
+  (when-let* ((agent-session (limen-herdr-agent-session session)))
+    (buffer-live-p (herdr-agent-session-buffer agent-session))))
 
 (defun limen-herdr--set-state (session state)
   "Set Herdr SESSION's opaque adapter STATE."
