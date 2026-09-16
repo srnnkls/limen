@@ -86,10 +86,11 @@ active requests the tool-use hook it needs."
 
 (defcustom limen-hooks-review-display-action
   '((display-buffer-reuse-window display-buffer-in-side-window)
-    (side . right) (window-width . 0.45) (inhibit-same-window . t))
+    (side . left) (window-width . 0.45) (inhibit-same-window . t))
   "How the diff of an agent's edit is shown, as a `display-buffer' action.
 The window is never selected: the review appears beside what the user
-is doing and does not interrupt it."
+is doing and does not interrupt it.  It opens on the left, since the
+agent's own terminal takes the right."
   :type 'sexp
   :group 'limen-hooks)
 
