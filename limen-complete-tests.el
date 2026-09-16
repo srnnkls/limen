@@ -61,20 +61,70 @@ field's own table."
       (limen-complete-tests--in-field "@li"
         (should (limen-complete-tests--capf))))))
 
+(defmacro limen-complete-tests--with-tree (&rest body)
+  "Run BODY with `root' bound to a fresh directory holding a small tree.
+The tree is a file `here.txt' and a directory `sub' holding `deep.txt',
+inside a parent directory holding `above.txt' beside it."
+  (declare (indent 0) (debug t))
+  `(let* ((parent (make-temp-file "limen-complete-" t))
+          (root (file-name-as-directory (expand-file-name "tree" parent))))
+     (unwind-protect
+         (progn
+           (make-directory (expand-file-name "sub" root) t)
+           (dolist (file '("../above.txt" "here.txt" "sub/deep.txt"))
+             (with-temp-file (expand-file-name file root) (insert "x")))
+           ,@body)
+       (delete-directory parent t))))
+
+(defun limen-complete-tests--all (capf)
+  "Return every candidate CAPF offers for the text between its bounds."
+  (sort (all-completions (buffer-substring (nth 0 capf) (nth 1 capf))
+                         (nth 2 capf))
+        #'string<))
+
 (ert-deftest limen-complete-completes-a-written-path-against-the-file-system ()
+  "A path from a directory is read from the file system, from the root.
+Reading the project is not needed for it, and `..' climbs out of the
+root the way it would in a shell."
   (clrhash limen-complete--files)
-  (cl-letf (((symbol-function 'limen--project-root)
-             (lambda (_directory) (ert-fail "A written path leaves the project")))
-            ((symbol-function 'project-files)
-             (lambda (_project) (ert-fail "A written path leaves the project"))))
-    (dolist (text '("@../other/file" "@./here" "@/etc/hosts" "@~/notes"))
-      (limen-complete-tests--in-field text
+  (limen-complete-tests--with-tree
+    (cl-letf (((symbol-function 'limen--project-root) (lambda (_directory) root))
+              ((symbol-function 'project-files)
+               (lambda (_project) (ert-fail "A written path leaves the project"))))
+      (dolist (text '("@../other/file" "@./here" "@/etc/hosts" "@~/notes"))
+        (limen-complete-tests--in-field text
+          (let ((capf (limen-complete-tests--capf)))
+            (should (equal (seq-take capf 2) (list 2 (point-max))))
+            (should (functionp (nth 2 capf)))
+            (should (equal (funcall (plist-get (nthcdr 3 capf) :annotation-function)
+                                    "file")
+                           " path")))))
+      (limen-complete-tests--in-field "@./"
+        (should (equal (limen-complete-tests--all (limen-complete-tests--capf))
+                       '("../" "./" "here.txt" "sub/"))))
+      (limen-complete-tests--in-field "@../"
+        (should (member "above.txt"
+                        (limen-complete-tests--all (limen-complete-tests--capf)))))
+      (limen-complete-tests--in-field "@../.."
+        (should (equal (limen-complete-tests--all (limen-complete-tests--capf))
+                       '("../")))))))
+
+(ert-deftest limen-complete-offers-the-file-system-outside-a-project ()
+  "Without a project a name completes from the field's directory, stepwise."
+  (clrhash limen-complete--files)
+  (limen-complete-tests--with-tree
+    (cl-letf (((symbol-function 'limen--project-root) (lambda (_directory) root))
+              ((symbol-function 'project-current) (lambda (&rest _) nil)))
+      (limen-complete-tests--in-field "@h"
         (let ((capf (limen-complete-tests--capf)))
-          (should (equal (seq-take capf 3)
-                         (list 2 (point-max) #'completion-file-name-table)))
+          (should (equal (seq-take capf 2) (list 2 (point-max))))
+          (should (equal (limen-complete-tests--all capf) '("here.txt")))
           (should (equal (funcall (plist-get (nthcdr 3 capf) :annotation-function)
-                                  "file")
-                         " path")))))))
+                                  "here.txt")
+                         " path"))))
+      (limen-complete-tests--in-field "@sub/"
+        (should (equal (limen-complete-tests--all (limen-complete-tests--capf))
+                       '("../" "./" "deep.txt")))))))
 
 (ert-deftest limen-complete-offers-annotations-of-the-visible-sessions ()
   (clrhash limen-complete--files)

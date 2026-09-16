@@ -106,20 +106,32 @@ taken it has a prefix to offer candidates for rather than none."
   (let ((opened (limen-complete--opened begin)))
     (mapcar (lambda (candidate) (concat opened candidate)) candidates)))
 
+(defun limen-complete--path-table (directory)
+  "Return a table completing a path as written from DIRECTORY.
+One directory is read per step, so a path is as cheap to complete far
+from DIRECTORY as next to it."
+  (lambda (string predicate action)
+    (let ((default-directory directory))
+      (completion-file-name-table string predicate action))))
+
 (defun limen-complete-files (begin end)
   "Complete a file between BEGIN and END.
-A path written from a directory -- `~', `/', `.' or `..' -- completes
-against the file system, so a file outside the project is reached the
-way it is written.  Anything else completes against the project."
-  (if (string-match-p "\\`[~/.]" (limen-complete--written begin end))
-      (list (1+ begin) end #'completion-file-name-table
+Inside a project, a name completes against the project's files, listed
+once and reused.  A path written from a directory -- `~', `/', `.' or
+`..' -- completes against the file system from the root, so a file
+outside the project is reached the way it is written; outside any
+project every name does, from the directory the field belongs to."
+  (let* ((root (or (limen-complete--root) default-directory))
+         (files (and (not (string-match-p "\\`[~/.]"
+                                          (limen-complete--written begin end)))
+                     (limen-complete--project-files root))))
+    (if files
+        (list begin end (limen-complete--carrying begin files)
+              :exclusive 'no :company-prefix-length t
+              :annotation-function (lambda (_file) " file"))
+      (list (1+ begin) end (limen-complete--path-table root)
             :exclusive 'no :company-prefix-length t
-            :annotation-function (lambda (_file) " path"))
-    (when-let* ((root (limen-complete--root))
-                (files (limen-complete--project-files root)))
-      (list begin end (limen-complete--carrying begin files)
-            :exclusive 'no :company-prefix-length t
-            :annotation-function (lambda (_file) " file")))))
+            :annotation-function (lambda (_file) " path")))))
 
 (defun limen-complete-annotations (begin end)
   "Complete an annotation of a visible session between BEGIN and END."
