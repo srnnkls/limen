@@ -79,6 +79,18 @@ the gutter.  With nothing kept on either side the text is sent alone."
               ((limen-herdr-state-p state)))
     state))
 
+(defun limen-herdr-session-for (agent-session)
+  "Return the open Limen session AGENT-SESSION runs in, or nil.
+The bridge state Herdr keeps on AGENT-SESSION names it; failing that,
+the pane the agent runs in does, the way a prompt hook finds it."
+  (or (when-let* ((state (limen-herdr-state agent-session))
+                  (session (limen-herdr-state-session state))
+                  ((not (limen-session-closed-p session))))
+        session)
+      (limen-find-session-at
+       (cons (limen-server-key (herdr-agent-session-server agent-session))
+             (herdr-agent-session-pane agent-session)))))
+
 (defun limen-herdr-agent-session (session)
   "Return the Herdr agent session integrated as Limen SESSION, or nil."
   (catch 'found
@@ -491,9 +503,7 @@ The first returning non-nil has delivered it.")
                   (terminal (alist-get 'terminal_id entry))
                   (agent-session
                    (herdr-agent-resolve-session (cons server terminal)))
-                  (state (limen-herdr-state agent-session))
-                  (session (limen-herdr-state-session state))
-                  ((not (limen-session-closed-p session))))
+                  (session (limen-herdr-session-for agent-session)))
         (let ((context (limen-herdr--send-context-snapshot session))
               (root (limen-session-project-root session)))
           (unless (or (alist-get 'items context) (alist-get 'buffer context))

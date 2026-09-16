@@ -448,20 +448,26 @@ harness session id Herdr reports for the agent."
 
 (defun limen-hooks--compose (target text context)
   "Return TEXT alone when CONTEXT will reach TARGET through its prompt hook.
-Return nil to let Herdr append CONTEXT to the message."
+The hook carries the draft recorded for TARGET's session when CONTEXT is
+its rendering, and a snapshot taken here when it is not.  Return nil,
+letting Herdr append CONTEXT to the message, when TARGET's provider has
+no hook installed, no session answers for its pane, or the buffer sent
+from gives no snapshot."
   (when (and limen-hooks-mode context)
     (when-let* ((agent-session (condition-case nil
                                    (herdr-agent-resolve-session target)
                                  (error nil)))
-                (state (limen-herdr-state agent-session))
-                (session (limen-herdr-state-session state))
-                ((not (limen-session-closed-p session)))
-                (draft (gethash session limen-hooks--drafts))
-                ((equal (car draft) context))
+                (session (limen-herdr-session-for agent-session))
                 ((limen-hooks-installed-p (limen-session-provider session))))
-      (remhash session limen-hooks--drafts)
-      (puthash session (cdr draft) limen-hooks--pending)
-      text)))
+      (let ((draft (gethash session limen-hooks--drafts)))
+        (remhash session limen-hooks--drafts)
+        (when-let* ((pending (if (equal (car draft) context)
+                                 (cdr draft)
+                               (condition-case nil
+                                   (limen-herdr--send-context-snapshot session)
+                                 (error nil)))))
+          (puthash session pending limen-hooks--pending)
+          text)))))
 
 (defun limen-hooks--queue-push (session context _root)
   "Carry CONTEXT on SESSION's next prompt when its provider has hooks installed."
