@@ -286,13 +286,19 @@ With LIVE, add the `limen context' pointer to the header block."
         (items . ,items)))))
 
 (defun limen-herdr--current-context (session)
-  "Return explicit context for the current buffer and SESSION."
+  "Return explicit context for the current buffer and SESSION.
+A file outside the project of SESSION is sent as well: sending from it
+is the user's own choice, and its path stays absolute.  A file inside
+it that the project's path policy denies is refused."
   (let ((root (limen-session-project-root session)))
     (if (derived-mode-p 'dired-mode)
         (limen-herdr--dired-context root)
       (let ((file (buffer-file-name)))
-        (unless (and file (limen-project-file-p file root))
-          (user-error "Current file has no matching Limen integration"))
+        (unless file
+          (user-error "Current buffer visits no file"))
+        (when (and (limen--project-file-confined-p file root)
+                   (limen--project-path-denied-p file root))
+          (user-error "Current file is denied by the project path policy"))
         (limen-editor-context-snapshot)))))
 
 (defun limen-herdr--virtual-context ()
@@ -309,12 +315,12 @@ With LIVE, add the `limen context' pointer to the header block."
 
 (defun limen-herdr--send-context-snapshot (session)
   "Return point context for SESSION with a current-line fallback.
-Project file buffers and Dired report as explicit context; other
-project-confined buffers report their name, mode, and text at point."
+File buffers and Dired report as explicit context; other buffers report
+their name, mode, and text at point.  Sending is the user's own choice,
+so a buffer outside the project of SESSION reports the same way."
   (let ((virtual (and (not (derived-mode-p 'dired-mode))
-                      (eq (limen--buffer-kind (current-buffer)
-                                              (limen-session-project-root session))
-                          'virtual))))
+                      (not buffer-file-name)
+                      (not (string-prefix-p " " (buffer-name))))))
     (if (or (derived-mode-p 'dired-mode) (use-region-p))
         (if virtual
             (limen-herdr--virtual-context)
