@@ -380,7 +380,7 @@ in the range it sits."
                             text)
                     rows)
               (when (eql number point-line)
-                (push (format "%s│%s^ point" gutter
+                (push (format "%s·%s▲ point" gutter
                               (make-string (1+ point-column) ?\s))
                       rows)))
             (string-join

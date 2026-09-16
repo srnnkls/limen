@@ -99,7 +99,7 @@
                      '("  ╭─[alpha.el:3:3]"
                        "2 │   \"Doc.\""
                        "3 ┃   (beta))"
-                       "  │    ^ point"
+                       "  ·    ▲ point"
                        "4 │ "
                        "  ╰─")))
       (let ((limen-herdr-context-window 0))
@@ -110,7 +110,7 @@
            (rows (split-string (limen-herdr--excerpt context 1 0) "\n")))
       (should (equal (nth 0 rows) "  ╭─[*scratch*:1:0]"))
       (should (equal (nth 1 rows) "1 ┃ (defun alpha ()"))
-      (should (equal (nth 2 rows) "  │ ^ point"))
+      (should (equal (nth 2 rows) "  · ▲ point"))
       (should (equal (nth 4 rows) "3 ┃   (beta))"))
       (should (equal (car (last rows)) "  ╰─")))))
 
@@ -181,7 +181,7 @@
                              (regexp-quote (format "file: %s:1:0-1:7" outside))
                              text))
                     (should (string-match-p "1 ┃ outside" text))
-                    (should (string-match-p "│ +\\^ point" text))
+                    (should (string-match-p "· +▲ point" text))
                     (should (equal (cdar drafts) text))
                     (should (equal (alist-get 'text (caar drafts)) "outside")))))
               (with-current-buffer (find-file-noselect denied)
