@@ -48,9 +48,10 @@ every keystroke."
     (?# . limen-complete-annotations)
     (?/ . limen-complete-skills))
   "Completion sources keyed by the character that opens them.
-Each function is called with the position just after that character and
-the end of the field, and returns a `completion-at-point' list, or nil
-to offer nothing."
+Each function is called with the position of that character and the end
+of the field, and returns a `completion-at-point' list, or nil to offer
+nothing.  The character belongs to what is completed, so a field that
+has just taken it already has a prefix to offer candidates for."
   :type '(alist :key-type character :value-type function)
   :group 'limen-complete)
 
@@ -90,25 +91,50 @@ to offer nothing."
         (puthash root (cons (current-time) files) limen-complete--files)
         files))))
 
+(defun limen-complete--opened (begin)
+  "Return the character opening a source at BEGIN, as a string."
+  (char-to-string (char-after begin)))
+
+(defun limen-complete--written (begin end)
+  "Return the text written behind the character at BEGIN, up to END."
+  (buffer-substring-no-properties (min (1+ begin) end) end))
+
+(defun limen-complete--carrying (begin candidates)
+  "Return CANDIDATES behind the character opening a source at BEGIN.
+The character stays inside what is completed, so a field that has just
+taken it has a prefix to offer candidates for rather than none."
+  (let ((opened (limen-complete--opened begin)))
+    (mapcar (lambda (candidate) (concat opened candidate)) candidates)))
+
 (defun limen-complete-files (begin end)
-  "Complete a project file between BEGIN and END."
-  (when-let* ((root (limen-complete--root))
-              (files (limen-complete--project-files root)))
-    (list begin end files
-          :exclusive 'no :company-prefix-length 0
-          :annotation-function (lambda (_file) " file"))))
+  "Complete a file between BEGIN and END.
+A path written from a directory -- `~', `/', `.' or `..' -- completes
+against the file system, so a file outside the project is reached the
+way it is written.  Anything else completes against the project."
+  (if (string-match-p "\\`[~/.]" (limen-complete--written begin end))
+      (list (1+ begin) end #'completion-file-name-table
+            :exclusive 'no :company-prefix-length 0
+            :annotation-function (lambda (_file) " path"))
+    (when-let* ((root (limen-complete--root))
+                (files (limen-complete--project-files root)))
+      (list begin end (limen-complete--carrying begin files)
+            :exclusive 'no :company-prefix-length 0
+            :annotation-function (lambda (_file) " file")))))
 
 (defun limen-complete-annotations (begin end)
   "Complete an annotation of a visible session between BEGIN and END."
-  (when-let* (((fboundp 'limen-scholia-annotation-references))
+  (when-let* (((or (fboundp 'limen-scholia-annotation-references)
+                   (require 'limen-scholia nil t)))
               (root (limen-complete--root))
               (references (limen-scholia-annotation-references root)))
-    (list begin end (mapcar #'car references)
-          :exclusive 'no :company-prefix-length 0
-          :annotation-function
-          (lambda (reference)
-            (when-let* ((text (cdr (assoc reference references))))
-              (concat " " (car (split-string text "\n"))))))))
+    (let ((opened (limen-complete--opened begin)))
+      (list begin end (limen-complete--carrying begin (mapcar #'car references))
+            :exclusive 'no :company-prefix-length 0
+            :annotation-function
+            (lambda (candidate)
+              (when-let* ((text (cdr (assoc (string-remove-prefix opened candidate)
+                                            references))))
+                (concat " " (car (split-string text "\n")))))))))
 
 (defun limen-complete--skill-names (provider root)
   "Return PROVIDER's skills below ROOT, asking the harness once."
@@ -136,15 +162,19 @@ the field was opened with."
   "Complete a skill of the message's harness between BEGIN and END."
   (when-let* ((provider (limen-complete--provider))
               (skills (limen-complete--skill-names provider (limen-complete--root))))
-    (append (list begin end (mapcar #'car skills)
-                  :exclusive 'no :company-prefix-length 0
-                  :annotation-function
-                  (lambda (skill)
-                    (if-let* ((description (cdr (assoc skill skills))))
-                        (concat " " (car (split-string description "\\. ")))
-                      (format " %s skill" (limen-provider-name provider)))))
-            (when-let* ((exit (limen-complete--skill-exit provider (1- begin))))
-              (list :exit-function exit)))))
+    (let ((opened (limen-complete--opened begin)))
+      (append (list begin end (limen-complete--carrying
+                               begin (mapcar #'car skills))
+                    :exclusive 'no :company-prefix-length 0
+                    :annotation-function
+                    (lambda (candidate)
+                      (if-let* ((description
+                                 (cdr (assoc (string-remove-prefix opened candidate)
+                                             skills))))
+                          (concat " " (car (split-string description "\\. ")))
+                        (format " %s skill" (limen-provider-name provider)))))
+              (when-let* ((exit (limen-complete--skill-exit provider begin)))
+                (list :exit-function exit))))))
 
 
 ;;;; Routing
@@ -177,7 +207,7 @@ opens none completes on TABLE, which is what the field was given -- for a
 Herdr message, the messages sent before it."
   (or (when-let* ((trigger (limen-complete--trigger (car bounds) (point)))
                   (source (alist-get (car trigger) limen-complete-sources)))
-        (funcall source (1+ (cdr trigger)) (cdr bounds)))
+        (funcall source (cdr trigger) (cdr bounds)))
       (cera-complete-with-table bounds table)))
 
 (defun limen-complete-forget ()

@@ -27,13 +27,13 @@ field's own table."
   (let ((limen-complete-sources '((?@ . (lambda (begin end) (list 'files begin end)))
                                   (?# . (lambda (begin end) (list 'notes begin end))))))
     (limen-complete-tests--in-field "@lim"
-      (should (equal (limen-complete-tests--capf) '(files 2 5))))
+      (should (equal (limen-complete-tests--capf) '(files 1 5))))
     (limen-complete-tests--in-field "look at @lim"
-      (should (equal (limen-complete-tests--capf) '(files 10 13))))
+      (should (equal (limen-complete-tests--capf) '(files 9 13))))
     (limen-complete-tests--in-field "see #anno"
-      (should (equal (limen-complete-tests--capf) '(notes 6 10))))
+      (should (equal (limen-complete-tests--capf) '(notes 5 10))))
     (limen-complete-tests--in-field "@"
-      (should (equal (limen-complete-tests--capf) '(files 2 2))))
+      (should (equal (limen-complete-tests--capf) '(files 1 2))))
     (cl-letf (((symbol-function 'cera-complete-with-table)
                (lambda (_bounds table) (list 'history table))))
       (dolist (text '("mail@example" "@done " "plain"))
@@ -51,15 +51,30 @@ field's own table."
                (lambda (_project) '("/tmp/project/limen.el" "/tmp/project/bin/limen"))))
       (limen-complete-tests--in-field "@li"
         (let ((capf (limen-complete-tests--capf)))
-          (should (equal (seq-take capf 3) '(2 4 ("limen.el" "bin/limen"))))
+          (should (equal (seq-take capf 3) '(1 4 ("@limen.el" "@bin/limen"))))
           (should (equal (funcall (plist-get (nthcdr 3 capf) :annotation-function)
-                                  "limen.el")
+                                  "@limen.el")
                          " file")))))
     (cl-letf (((symbol-function 'limen--project-root) (lambda (_directory) root))
               ((symbol-function 'project-files)
                (lambda (_project) (ert-fail "A recent listing is reused"))))
       (limen-complete-tests--in-field "@li"
         (should (limen-complete-tests--capf))))))
+
+(ert-deftest limen-complete-completes-a-written-path-against-the-file-system ()
+  (clrhash limen-complete--files)
+  (cl-letf (((symbol-function 'limen--project-root)
+             (lambda (_directory) (ert-fail "A written path leaves the project")))
+            ((symbol-function 'project-files)
+             (lambda (_project) (ert-fail "A written path leaves the project"))))
+    (dolist (text '("@../other/file" "@./here" "@/etc/hosts" "@~/notes"))
+      (limen-complete-tests--in-field text
+        (let ((capf (limen-complete-tests--capf)))
+          (should (equal (seq-take capf 3)
+                         (list 2 (point-max) #'completion-file-name-table)))
+          (should (equal (funcall (plist-get (nthcdr 3 capf) :annotation-function)
+                                  "file")
+                         " path")))))))
 
 (ert-deftest limen-complete-offers-annotations-of-the-visible-sessions ()
   (clrhash limen-complete--files)
@@ -68,9 +83,9 @@ field's own table."
              (lambda (_root) '(("limen.el:12" . "needs a test\nsecond line")))))
     (limen-complete-tests--in-field "#lim"
       (let ((capf (limen-complete-tests--capf)))
-        (should (equal (seq-take capf 3) '(2 5 ("limen.el:12"))))
+        (should (equal (seq-take capf 3) '(1 5 ("#limen.el:12"))))
         (should (equal (funcall (plist-get (nthcdr 3 capf) :annotation-function)
-                                "limen.el:12")
+                                "#limen.el:12")
                        " needs a test")))))
   (cl-letf (((symbol-function 'limen--project-root) (lambda (_directory) "/tmp/p/"))
             ((symbol-function 'limen-scholia-annotation-references)
@@ -89,11 +104,11 @@ field's own table."
                    ("review" . nil)))))
       (limen-complete-tests--in-field "/re"
         (let ((capf (limen-complete-tests--capf)))
-          (should (equal (seq-take capf 3) '(2 4 ("git" "review"))))
+          (should (equal (seq-take capf 3) '(1 4 ("/git" "/review"))))
           (should-not (plist-get (nthcdr 3 capf) :exit-function))
-          (should (equal (funcall (plist-get (nthcdr 3 capf) :annotation-function) "git")
+          (should (equal (funcall (plist-get (nthcdr 3 capf) :annotation-function) "/git")
                          " Modern git workflows"))
-          (should (equal (funcall (plist-get (nthcdr 3 capf) :annotation-function) "review")
+          (should (equal (funcall (plist-get (nthcdr 3 capf) :annotation-function) "/review")
                          " claude skill")))))
     (setq limen-complete--skills nil)
     (cl-letf (((symbol-function 'limen--project-root) (lambda (_directory) "/tmp/p/"))
@@ -105,7 +120,7 @@ field's own table."
           (should exit)
           (goto-char (point-max))
           (insert "sh")
-          (funcall exit "bash" 'finished)
+          (funcall exit "/bash" 'finished)
           (should (equal (buffer-string) "$bash")))))))
 
 (ert-deftest limen-complete-offers-no-skills-without-an-agent-to-send-to ()

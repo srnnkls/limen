@@ -493,7 +493,7 @@ Legacy question-level text is preserved until its first edit."
 
 (defun limen-inbox--note-prefix ()
   "Return the note mark the inline field closes into, or nil."
-  (when (fboundp 'herdr-status-mark)
+  (when (or (fboundp 'herdr-status-mark) (require 'herdr-status nil t))
     (herdr-status-mark limen-inbox-note-glyph 'limen-inbox-note-mark)))
 
 (defconst limen-inbox--preview-column 9
