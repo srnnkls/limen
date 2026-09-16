@@ -51,6 +51,14 @@ Nil resolves `limen' on variable `exec-path', then the package's bin/limen."
   :type '(integer 0)
   :group 'limen-hooks)
 
+(defcustom limen-hooks-context-repeat 5
+  "Shortened prompts a session takes before its context is repeated whole.
+A prompt whose context has not changed carries a line saying so, and one
+whose context differs carries the fields that differ.  Zero repeats
+nothing on its own."
+  :type 'natnum
+  :group 'limen-hooks)
+
 (defcustom limen-hooks-answer-unattached nil
   "Whether a prompt from a pane Emacs holds no session for still gets context.
 A hook names the pane it ran in, and the context goes to the session
@@ -157,6 +165,9 @@ event is added to the context the prompt carries.")
 
 (defvar limen-hooks--last (make-hash-table :test #'eq)
   "Block injected by the previous prompt hook per session.")
+
+(defvar limen-hooks--shortened (make-hash-table :test #'eq)
+  "Prompts a session has taken shortened context for since its last whole one.")
 
 ;;; Settings files
 
@@ -428,7 +439,8 @@ harness session id Herdr reports for the agent."
   "Drop every record kept for SESSION."
   (remhash session limen-hooks--drafts)
   (remhash session limen-hooks--pending)
-  (remhash session limen-hooks--last))
+  (remhash session limen-hooks--last)
+  (remhash session limen-hooks--shortened))
 
 (defun limen-hooks--draft (session context _root text)
   "Remember CONTEXT and its rendered TEXT as SESSION's latest draft."
@@ -590,19 +602,75 @@ the prompt already carries, is that selection.  A selection longer than
        "")
      (or (limen-hooks--selection-block focus text) ""))))
 
+(defun limen-hooks--block-parts (block)
+  "Return BLOCK as its heading, its field lines, and the text below them."
+  (let* ((fence (string-search "\n```" block))
+         (head (if fence (substring block 0 fence) block))
+         (body (if fence (substring block fence) ""))
+         (lines (split-string head "\n")))
+    (list (car lines) (cdr lines) body)))
+
+(defun limen-hooks--field-name (line)
+  "Return the name LINE gives its value, or LINE itself."
+  (if (string-match "\\`\\([a-z_]+\\):" line)
+      (match-string 1 line)
+    line))
+
+(defun limen-hooks--changed-fields (block last)
+  "Return BLOCK with the fields LAST already carried left out, or nil.
+Nothing comes back when a field the agent was told changed cannot be
+told apart from one it was not: an unnamed line, or a changed body."
+  (pcase-let ((`(,heading ,lines ,body) (limen-hooks--block-parts block))
+              (`(,_ ,last-lines ,last-body) (limen-hooks--block-parts last)))
+    (when (and (equal body last-body)
+               (seq-every-p (lambda (line)
+                              (not (equal line (limen-hooks--field-name line))))
+                            (append lines last-lines)))
+      (let ((changed (seq-remove (lambda (line) (member line last-lines)) lines))
+            (kept (seq-filter (lambda (line) (member line last-lines)) lines)))
+        (when changed
+          (string-join
+           (append (list (concat heading " — changed since the last prompt"))
+                   changed
+                   (when kept
+                     (list (format "unchanged: %s"
+                                   (string-join
+                                    (mapcar #'limen-hooks--field-name kept)
+                                    ", ")))))
+           "\n"))))))
+
 (defun limen-hooks--prompt-context (session root)
-  "Return the context injected into SESSION's next prompt below ROOT."
+  "Return the context injected into SESSION's next prompt below ROOT.
+An explicit send, and every `limen-hooks-context-repeat' prompt,
+carries the whole block; in between a prompt carries the fields that
+changed, or one line saying the context stands as it was."
   (let ((pending (and session (gethash session limen-hooks--pending))))
     (when session
       (remhash session limen-hooks--pending))
-    (let ((block (limen-hooks--render pending root)))
+    (let* ((block (limen-hooks--render pending root))
+           (last (and session (gethash session limen-hooks--last)))
+           (shortened (and session (gethash session limen-hooks--shortened 0)))
+           (whole (lambda ()
+                    (puthash session block limen-hooks--last)
+                    (puthash session 0 limen-hooks--shortened)
+                    block))
+           (short (lambda (text)
+                    (puthash session block limen-hooks--last)
+                    (puthash session (1+ shortened) limen-hooks--shortened)
+                    text)))
       (cond
        ((null session) block)
-       ((and (null pending) (equal block (gethash session limen-hooks--last)))
-        "Emacs context: unchanged; `limen context` reads the live state.")
-       (t
-        (puthash session block limen-hooks--last)
-        block)))))
+       (pending (funcall whole))
+       ((null last) (funcall whole))
+       ((and (> limen-hooks-context-repeat 0)
+             (>= shortened limen-hooks-context-repeat))
+        (funcall whole))
+       ((equal block last)
+        (funcall short
+                 "Emacs context: unchanged; `limen context` reads the live state."))
+       ((limen-hooks--changed-fields block last)
+        (funcall short (limen-hooks--changed-fields block last)))
+       (t (funcall whole))))))
 
 (defun limen-hooks--decode (value)
   "Decode the Base64 request field VALUE, or return nil."

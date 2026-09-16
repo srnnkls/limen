@@ -96,7 +96,7 @@
                       (line . 3) (column . 2) (end_line . 3) (end_column . 9)))
            (excerpt (limen-herdr--excerpt context 3 3)))
       (should (equal (split-string excerpt "\n")
-                     '("  ╭─[alpha.el:3:3]"
+                     '("  ╭─ alpha.el:3:3 ─"
                        "2 │   \"Doc.\""
                        "3 ┃   (beta))"
                        "  ·    ▲ point"
@@ -108,7 +108,7 @@
            (context '((buffer . "*scratch*")
                       (line . 1) (column . 0) (end_line . 3) (end_column . 9)))
            (rows (split-string (limen-herdr--excerpt context 1 0) "\n")))
-      (should (equal (nth 0 rows) "  ╭─[*scratch*:1:0]"))
+      (should (equal (nth 0 rows) "  ╭─ *scratch*:1:0 ─"))
       (should (equal (nth 1 rows) "1 ┃ (defun alpha ()"))
       (should (equal (nth 2 rows) "  · ▲ point"))
       (should (equal (nth 4 rows) "3 ┃   (beta))"))

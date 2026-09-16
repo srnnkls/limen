@@ -156,6 +156,67 @@
       (should-not (alist-get 'hooks (limen-hooks-tests--read file))))
     (should-error (limen-hooks-settings-file 'pi) :type 'limen-invalid-arguments)))
 
+(ert-deftest limen-hooks-prompt-context-shortens-until-it-is-due-whole ()
+  (let* ((session (limen-open-session :provider 'claude :project-root "/tmp/p"))
+         (limen-hooks--pending (make-hash-table :test #'eq))
+         (limen-hooks--last (make-hash-table :test #'eq))
+         (limen-hooks--shortened (make-hash-table :test #'eq))
+         (limen-hooks-context-repeat 2)
+         (blocks (list (concat "Emacs context\nfile: a.el:1:0\nmode: fundamental-mode\n"
+                               "live: `limen context`")
+                       (concat "Emacs context\nfile: a.el:9:0\nmode: fundamental-mode\n"
+                               "live: `limen context`")))
+         (rendered (car blocks)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'limen-hooks--render)
+                   (lambda (&rest _) rendered)))
+          (should (equal (limen-hooks--prompt-context session "/tmp/p") (car blocks)))
+          (should (equal (limen-hooks--prompt-context session "/tmp/p")
+                         "Emacs context: unchanged; `limen context` reads the live state."))
+          (setq rendered (cadr blocks))
+          (should (equal (limen-hooks--prompt-context session "/tmp/p")
+                         (concat "Emacs context — changed since the last prompt\n"
+                                 "file: a.el:9:0\n"
+                                 "unchanged: mode, live")))
+          (should (equal (limen-hooks--prompt-context session "/tmp/p") (cadr blocks)))
+          (should (equal (limen-hooks--prompt-context session "/tmp/p")
+                         "Emacs context: unchanged; `limen context` reads the live state."))
+          (puthash session '((path . "/tmp/p/a.el") (line . 1) (column . 0))
+                   limen-hooks--pending)
+          (should (equal (limen-hooks--prompt-context session "/tmp/p") (cadr blocks)))
+          (should (equal (gethash session limen-hooks--shortened) 0))
+          (let ((limen-hooks-context-repeat 0))
+            (setq rendered (car blocks))
+            (should (equal (limen-hooks--prompt-context session "/tmp/p")
+                           (concat "Emacs context — changed since the last prompt\n"
+                                   "file: a.el:1:0\n"
+                                   "unchanged: mode, live")))
+            (dotimes (_ 3)
+              (should (equal (limen-hooks--prompt-context session "/tmp/p")
+                             "Emacs context: unchanged; `limen context` reads the live state.")))))
+      (unless (limen-session-closed-p session)
+        (limen-close-session session)))))
+
+(ert-deftest limen-hooks-prompt-context-sends-whole-what-it-cannot-shorten ()
+  (let* ((session (limen-open-session :provider 'claude :project-root "/tmp/p"))
+         (limen-hooks--pending (make-hash-table :test #'eq))
+         (limen-hooks--last (make-hash-table :test #'eq))
+         (limen-hooks--shortened (make-hash-table :test #'eq))
+         (with-text (concat "Emacs context\nfile: a.el:1:0\n"
+                            "live: `limen context`\n\n```\nalpha\n```"))
+         (changed-text (concat "Emacs context\nfile: a.el:1:0\n"
+                               "live: `limen context`\n\n```\nbeta\n```"))
+         (rendered with-text))
+    (unwind-protect
+        (cl-letf (((symbol-function 'limen-hooks--render)
+                   (lambda (&rest _) rendered)))
+          (should (equal (limen-hooks--prompt-context session "/tmp/p") with-text))
+          (setq rendered changed-text)
+          (should (equal (limen-hooks--prompt-context session "/tmp/p") changed-text))
+          (should (equal (gethash session limen-hooks--shortened) 0)))
+      (unless (limen-session-closed-p session)
+        (limen-close-session session)))))
+
 (ert-deftest limen-hooks-output-renders-pending-context-then-recent ()
   (limen-hooks-tests--with-trail
     (let* ((root (file-truename (make-temp-file "limen-hooks-root" t)))
@@ -204,10 +265,10 @@
               (limen-hooks-tests--visit (nth 0 files) 1)
               (should (equal (limen-hooks-tests--context request root)
                              (cons "UserPromptSubmit"
-                                   (concat "Emacs context\n"
+                                   (concat "Emacs context — changed since the last prompt\n"
                                            "focus: a.el:1\n"
                                            "recent: a.el:1, c.el:3, b.el:2 (visited before this prompt, newest first)\n"
-                                           "live: `limen context`; `limen --help` lists every command")))))
+                                           "unchanged: live")))))
             (let ((limit (let ((limen-hooks-recent-limit 1))
                            (limen-hooks-tests--context request root))))
               (should (string-match-p "recent: a\\.el:1 (" (cdr limit))))

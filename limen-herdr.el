@@ -384,7 +384,7 @@ in the range it sits."
                               (make-string (1+ point-column) ?\s))
                       rows)))
             (string-join
-             (append (list (format "%s╭─[%s:%d:%d]" gutter
+             (append (list (format "%s╭─ %s:%d:%d ─" gutter
                                    (if-let* ((path (alist-get 'path context)))
                                        (file-name-nondirectory path)
                                      (or (alist-get 'buffer context) ""))
