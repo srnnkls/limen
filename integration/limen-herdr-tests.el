@@ -284,16 +284,47 @@
                  (should (equal server "/tmp/herdr.sock"))
                  (list agent)))
               ((symbol-function 'limen-herdr-claude-adopt)
-               (lambda (actual server &optional display)
+               (lambda (actual server &optional display &rest _)
                  (setq adopted (list actual server display)))))
-      (let ((limen-herdr-claude-auto-adopt-predicate (lambda (_agent) t)))
+      (let ((limen-herdr-claude-auto-adopt-predicate (lambda (_agent) t))
+            (limen-herdr-claude-adopt-quietly nil))
         (limen-herdr-claude--maybe-adopt
          "/tmp/herdr.sock" "pane.agent_detected"
          '((agent . "claude") (pane_id . "pane-1")))
         (should (equal adopted (list agent "/tmp/herdr.sock" nil)))))))
 
+(ert-deftest limen-herdr-claude-auto-adoption-seeds-the-agents-already-running ()
+  (let ((claude '((agent . "claude") (pane_id . "%1") (terminal_id . "t1")
+                  (server_key . "/tmp/herdr.sock") (cwd . "/tmp")))
+        (codex '((agent . "codex") (pane_id . "%2") (terminal_id . "t2")
+                 (server_key . "/tmp/herdr.sock") (cwd . "/tmp")))
+        (limen-herdr-mode t)
+        (limen-herdr-claude--adopt-queue nil)
+        (limen-herdr-claude--adopt-timer nil)
+        (limen-herdr-claude-auto-adopt-predicate (lambda (_agent) t))
+        (herdr-agent-event-functions nil)
+        adopted)
+    (unwind-protect
+        (cl-letf (((symbol-function 'herdr-herd-live-agents)
+                   (lambda (&optional _session) (list codex claude)))
+                  ((symbol-function 'limen-herdr-claude-adopt)
+                   (lambda (agent &optional server &rest _)
+                     (push (cons (alist-get 'terminal_id agent) server) adopted))))
+          (limen-herdr-claude-auto-adopt-mode 1)
+          (should (equal (mapcar (lambda (queued) (alist-get 'terminal_id (car queued)))
+                                 limen-herdr-claude--adopt-queue)
+                         '("t1")))
+          (should (timerp limen-herdr-claude--adopt-timer))
+          (cancel-timer limen-herdr-claude--adopt-timer)
+          (limen-herdr-claude--drain-adoptions)
+          (should (equal adopted '(("t1" . "/tmp/herdr.sock")))))
+      (when limen-herdr-claude--adopt-timer
+        (cancel-timer limen-herdr-claude--adopt-timer))
+      (limen-herdr-claude-auto-adopt-mode -1))))
+
 (provide 'limen-herdr-tests)
 ;;; limen-herdr-tests.el ends here
+
 
 (ert-deftest limen-herdr-push-context-offers-the-hook-then-types-into-the-pane ()
   (let* ((root (file-truename (make-temp-file "limen-herdr-push" t)))

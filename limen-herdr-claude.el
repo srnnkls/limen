@@ -16,6 +16,7 @@
 (declare-function herdr-agent-adopt "ext:herdr-agent"
                   (agent &rest arguments) t)
 (declare-function herdr-agent-list "ext:herdr-agent" (&optional server-key))
+(declare-function herdr-herd-live-agents "ext:herdr-herd" (&optional session))
 (declare-function herdr-agent-session-server "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-terminal "ext:herdr-agent" (session) t)
 (defvar herdr-agent-event-functions)
@@ -148,9 +149,24 @@ The attachment stays off screen; nothing you are looking at moves."
           (limen-herdr-claude--queue-adoption agent server-key)
         (limen-herdr-claude--adopt-now agent server-key)))))
 
+(defun limen-herdr-claude--seed ()
+  "Queue adoption of every Claude agent already running that the predicate accepts.
+Detection events reach Emacs only for agents that start after it does;
+the ones running before it are taken up here, one idle moment at a time.
+A prompt hook gives context only to a pane Emacs holds a session for,
+so an agent left out here would stay unaware of Emacs."
+  (when (fboundp 'herdr-herd-live-agents)
+    (condition-case nil
+        (dolist (agent (herdr-herd-live-agents))
+          (when (and (equal (alist-get 'agent agent) "claude")
+                     (funcall limen-herdr-claude-auto-adopt-predicate agent))
+            (limen-herdr-claude--queue-adoption agent (alist-get 'server_key agent))))
+      (error nil))))
+
 ;;;###autoload
 (define-minor-mode limen-herdr-claude-auto-adopt-mode
-  "Adopt detected Herdr Claude Code agents into Limen."
+  "Adopt detected Herdr Claude Code agents into Limen.
+Enabling also takes up the Claude agents already running."
   :global t
   :group 'limen-herdr
   (if limen-herdr-claude-auto-adopt-mode
@@ -158,7 +174,8 @@ The attachment stays off screen; nothing you are looking at moves."
         (unless limen-herdr-mode
           (limen-herdr-mode 1))
         (add-hook 'herdr-agent-event-functions
-                  #'limen-herdr-claude--maybe-adopt))
+                  #'limen-herdr-claude--maybe-adopt)
+        (limen-herdr-claude--seed))
     (remove-hook 'herdr-agent-event-functions
                  #'limen-herdr-claude--maybe-adopt)))
 
