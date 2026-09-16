@@ -84,18 +84,22 @@ field's own table."
     (cl-letf (((symbol-function 'limen--project-root) (lambda (_directory) "/tmp/p/"))
               ((symbol-function 'herdr-message--target-harness) (lambda (_target) "claude"))
               ((symbol-function 'limen-provider-skills)
-               (lambda (_provider _root) '("git" "review"))))
+               (lambda (_provider _root)
+                 '(("git" . "Modern git workflows. Use when branching.")
+                   ("review" . nil)))))
       (limen-complete-tests--in-field "/re"
         (let ((capf (limen-complete-tests--capf)))
           (should (equal (seq-take capf 3) '(2 4 ("git" "review"))))
           (should-not (plist-get (nthcdr 3 capf) :exit-function))
           (should (equal (funcall (plist-get (nthcdr 3 capf) :annotation-function) "git")
+                         " Modern git workflows"))
+          (should (equal (funcall (plist-get (nthcdr 3 capf) :annotation-function) "review")
                          " claude skill")))))
     (setq limen-complete--skills nil)
     (cl-letf (((symbol-function 'limen--project-root) (lambda (_directory) "/tmp/p/"))
               ((symbol-function 'herdr-message--target-harness) (lambda (_target) "codex"))
               ((symbol-function 'limen-provider-skills)
-               (lambda (_provider _root) '("bash"))))
+               (lambda (_provider _root) '(("bash" . "Bash patterns")))))
       (limen-complete-tests--in-field "/ba"
         (let ((exit (plist-get (nthcdr 3 (limen-complete-tests--capf)) :exit-function)))
           (should exit)
@@ -115,33 +119,64 @@ field's own table."
     (unwind-protect
         (let ((root (expand-file-name "project" home))
               (configuration (expand-file-name ".claude" home)))
-          (dolist (skill '("git" "review"))
-            (make-directory (expand-file-name (format ".claude/skills/%s" skill) home) t)
-            (with-temp-file (expand-file-name
-                             (format ".claude/skills/%s/SKILL.md" skill) home)
-              (insert "skill")))
+          (make-directory (expand-file-name ".claude/skills/git" home) t)
+          (with-temp-file (expand-file-name ".claude/skills/git/SKILL.md" home)
+            (insert "---\nname: git\ndescription: Personal git\n---\n"))
+          (make-directory (expand-file-name ".claude/skills/review" home) t)
+          (with-temp-file (expand-file-name ".claude/skills/review/SKILL.md" home)
+            (insert "# review\n"))
           (make-directory (expand-file-name ".claude/skills/draft" home) t)
           (make-directory (expand-file-name ".claude/skills/git" root) t)
           (with-temp-file (expand-file-name ".claude/skills/git/SKILL.md" root)
-            (insert "skill"))
+            (insert "---\ndescription: The project's own\n---\n"))
           (make-directory (expand-file-name ".claude/skills/deploy" root) t)
           (with-temp-file (expand-file-name ".claude/skills/deploy/SKILL.md" root)
-            (insert "skill"))
+            (insert "---\ndescription: \"Ship it\"\n---\n"))
           (let ((provider (limen-provider--make
                            :name 'claude
-                           :skill-directories
+                           :skill-source
                            (lambda (project)
-                             (limen-provider--skill-directories configuration project))
+                             (limen-provider--directory-skills configuration project))
                            :skill-reference (lambda (skill) (concat "/" skill)))))
             (should (equal (limen-provider-skills provider root)
-                           '("deploy" "git" "review")))
-            (should (equal (limen-provider-skills provider nil) '("git" "review")))
+                           '(("deploy" . "Ship it")
+                             ("git" . "The project's own")
+                             ("review" . nil))))
+            (should (equal (limen-provider-skills provider nil)
+                           '(("git" . "Personal git") ("review" . nil))))
             (should (equal (limen-provider-skill-call provider "git") "/git"))))
       (delete-directory home t))))
 
+(ert-deftest limen-complete-reads-the-skills-codex-lists-for-itself ()
+  (let ((dump (json-serialize
+               (vector
+                `((type . "message") (role . "developer")
+                  (content . [((type . "input_text")
+                               (text . ,(string-join
+                                         '("<skills_instructions>"
+                                           "### Skill roots"
+                                           "- `r0` = `/home/.codex/skills`"
+                                           "### Available skills"
+                                           "- bash: Ultra-concise bash patterns. (file: r0/bash/SKILL.md)"
+                                           "- git: Modern git workflows (file: r0/git/SKILL.md)"
+                                           "</skills_instructions>")
+                                         "\n")))]))))))
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (program _infile _buffer _display &rest arguments)
+                 (should (equal program "codex"))
+                 (should (equal arguments '("debug" "prompt-input")))
+                 (insert dump)
+                 0)))
+      (should (equal (limen-provider--codex-skills nil)
+                     '(("bash" . "Ultra-concise bash patterns.")
+                       ("git" . "Modern git workflows")))))
+    (cl-letf (((symbol-function 'call-process) (lambda (&rest _) 1)))
+      (should-not (limen-provider--codex-skills nil)))))
+
 (ert-deftest limen-complete-mode-takes-and-gives-back-the-field-completion ()
   (cl-progv '(cera-completion-function) '(original)
-    (limen-complete-mode 1)
+    (cl-letf (((symbol-function 'limen-complete-warm) #'ignore))
+      (limen-complete-mode 1))
     (should (eq (symbol-value 'cera-completion-function) #'limen-complete-in-field))
     (limen-complete-mode -1)
     (should (eq (symbol-value 'cera-completion-function) 'original))))

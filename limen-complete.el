@@ -111,12 +111,12 @@ to offer nothing."
               (concat " " (car (split-string text "\n"))))))))
 
 (defun limen-complete--skill-names (provider root)
-  "Return PROVIDER's skills below ROOT, reading them once."
+  "Return PROVIDER's skills below ROOT, asking the harness once."
   (let ((key (cons (limen-provider-name provider) root)))
     (or (cdr (assoc key limen-complete--skills))
-        (let ((names (limen-provider-skills provider root)))
-          (push (cons key names) limen-complete--skills)
-          names))))
+        (let ((skills (limen-provider-skills provider root)))
+          (push (cons key skills) limen-complete--skills)
+          skills))))
 
 (defun limen-complete--skill-exit (provider position)
   "Return the function rewriting the character at POSITION for PROVIDER.
@@ -135,12 +135,14 @@ the field was opened with."
 (defun limen-complete-skills (begin end)
   "Complete a skill of the message's harness between BEGIN and END."
   (when-let* ((provider (limen-complete--provider))
-              (names (limen-complete--skill-names provider (limen-complete--root))))
-    (append (list begin end names
+              (skills (limen-complete--skill-names provider (limen-complete--root))))
+    (append (list begin end (mapcar #'car skills)
                   :exclusive 'no :company-prefix-length 0
                   :annotation-function
-                  (lambda (_skill)
-                    (format " %s skill" (limen-provider-name provider))))
+                  (lambda (skill)
+                    (if-let* ((description (cdr (assoc skill skills))))
+                        (concat " " (car (split-string description "\\. ")))
+                      (format " %s skill" (limen-provider-name provider)))))
             (when-let* ((exit (limen-complete--skill-exit provider (1- begin))))
               (list :exit-function exit)))))
 
@@ -179,31 +181,53 @@ Herdr message, the messages sent before it."
       (cera-complete-with-table bounds table)))
 
 (defun limen-complete-forget ()
-  "Forget the cached project files and skills, reading them again on demand."
+  "Forget the cached project files and skills, asking for them again on demand."
   (interactive)
   (clrhash limen-complete--files)
   (setq limen-complete--skills nil))
 
+(defun limen-complete-warm ()
+  "Ask every harness for its skills now, so completing one does not wait.
+A harness that answers through its own command takes about a second to
+answer, which is a second the field would otherwise spend on the first
+skill written in it."
+  (interactive)
+  (let ((root (limen-complete--root)))
+    (dolist (provider (limen-providers))
+      (when (limen-provider-skill-source provider)
+        (limen-complete--skill-names provider root)))))
+
 (defvar limen-complete--previous nil
   "Completion function the field had before the mode took it.")
+
+(defvar limen-complete--warm-timer nil
+  "Timer asking the harnesses for their skills once the editor falls idle.")
 
 ;;;###autoload
 (define-minor-mode limen-complete-mode
   "Offer Limen's sources inside a Cera field.
 `@' completes a project file, `#' an annotation of the visible scholia
 sessions, and `/' a skill of the harness the message is going to, in
-that harness's own form."
+that harness's own form.  Skills are asked for once the editor falls
+idle, so the first one written in a field does not wait for the harness
+to answer."
   :global t
   :group 'limen-complete
   (require 'cera nil t)
   (cond
    (limen-complete-mode
     (limen-complete-forget)
+    (setq limen-complete--warm-timer
+          (run-with-idle-timer 1 nil #'limen-complete-warm))
     (when (boundp 'cera-completion-function)
       (setq limen-complete--previous cera-completion-function
             cera-completion-function #'limen-complete-in-field)))
-   ((boundp 'cera-completion-function)
-    (setq cera-completion-function limen-complete--previous))))
+   (t
+    (when limen-complete--warm-timer
+      (cancel-timer limen-complete--warm-timer)
+      (setq limen-complete--warm-timer nil))
+    (when (boundp 'cera-completion-function)
+      (setq cera-completion-function limen-complete--previous)))))
 
 (provide 'limen-complete)
 ;;; limen-complete.el ends here

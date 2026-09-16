@@ -32,12 +32,12 @@ QUESTION-TOOLS name the tools that ask the user a question and
 TRANSCRIPT-QUESTIONS-P says those questions must be read from the
 transcript instead.  EDIT-TOOLS name the tools that change files.
 SESSION-NAME maps a session id to the name the harness gave it.
-SKILL-DIRECTORIES receives a project root, or nil, and returns the
-directories the harness reads skills from.  SKILL-REFERENCE maps a skill
-name to what the harness is sent to invoke it.
+SKILL-SOURCE receives a project root, or nil, and returns the harness's
+skills as an alist of name and description.  SKILL-REFERENCE maps a
+skill name to what the harness is sent to invoke it.
 CAPABILITIES is the plist `limen-herdr-status' reports."
   name config-directory hook-settings route arguments question-tools
-  transcript-questions-p edit-tools session-name skill-directories
+  transcript-questions-p edit-tools session-name skill-source
   skill-reference capabilities)
 
 (defvar limen-provider--registry nil
@@ -111,18 +111,61 @@ project's below a directory of the same name in the project."
                           (directory-file-name configuration)))
                  root)))))
 
+(defun limen-provider--skill-description (file)
+  "Return the description SKILL.md FILE carries in its front matter, or nil."
+  (with-temp-buffer
+    (insert-file-contents file nil 0 4096)
+    (goto-char (point-min))
+    (when (re-search-forward "^description:[ \t]*\\(.*\\)$" nil t)
+      (string-trim (match-string 1) "[ \t\"']+" "[ \t\"']+"))))
+
+(defun limen-provider--directory-skills (configuration root)
+  "Return the skills below CONFIGURATION, and below ROOT, as name and description.
+A skill is a directory holding a SKILL.md.  A project's skill of some
+name is the one that answers for it."
+  (let (skills)
+    (dolist (directory (limen-provider--skill-directories configuration root))
+      (when (file-directory-p directory)
+        (dolist (entry (directory-files directory t "\\`[^.]"))
+          (let ((file (expand-file-name "SKILL.md" entry)))
+            (when (file-exists-p file)
+              (setf (alist-get (file-name-nondirectory
+                                (directory-file-name entry))
+                               skills nil nil #'equal)
+                    (limen-provider--skill-description file)))))))
+    (sort skills (lambda (a b) (string< (car a) (car b))))))
+
+(defconst limen-provider--codex-skill-line
+  "\\`- \\([a-zA-Z0-9][^:`]*\\): \\(.*?\\)[ \t]*(file: [^)]*)\\'"
+  "Regexp matching one skill of Codex's own listing.")
+
+(defun limen-provider--codex-skills (root)
+  "Return the skills Codex lists for ROOT, as name and description.
+Codex resolves its own, the project's and its bundled skills, so its
+answer is taken over reading the directories they live in."
+  (let ((default-directory (or root default-directory)))
+    (with-temp-buffer
+      (when (zerop (ignore-errors
+                     (call-process "codex" nil t nil "debug" "prompt-input")))
+        (goto-char (point-min))
+        (let (skills)
+          (dolist (message (ignore-errors (json-parse-buffer :object-type 'alist
+                                                             :array-type 'list)))
+            (dolist (part (alist-get 'content message))
+              (let ((text (alist-get 'text part)))
+                (when (and (stringp text) (string-search "<skills_instructions>" text))
+                  (dolist (line (split-string text "\n"))
+                    (when (string-match limen-provider--codex-skill-line line)
+                      (setf (alist-get (match-string 1 line) skills nil nil #'equal)
+                            (match-string 2 line))))))))
+          (sort skills (lambda (a b) (string< (car a) (car b)))))))))
+
 (defun limen-provider-skills (provider &optional root)
-  "Return the skills PROVIDER offers, with ROOT's own, sorted and unique.
-A skill is a directory holding a SKILL.md, named as the harness names it."
-  (when-let* ((directories (limen-provider-skill-directories provider)))
-    (let (names)
-      (dolist (directory (funcall directories root))
-        (when (file-directory-p directory)
-          (dolist (entry (directory-files directory t "\\`[^.]"))
-            (when (file-exists-p (expand-file-name "SKILL.md" entry))
-              (cl-pushnew (file-name-nondirectory (directory-file-name entry))
-                          names :test #'equal)))))
-      (sort names #'string<))))
+  "Return the skills PROVIDER offers below ROOT, as name and description.
+A harness that lists its own is asked; one that does not has the
+directories it reads them from read instead."
+  (when-let* ((skills (limen-provider-skill-source provider)))
+    (funcall skills root)))
 
 (defun limen-provider-skill-call (provider skill)
   "Return what PROVIDER is sent to invoke SKILL."
@@ -147,9 +190,9 @@ A skill is a directory holding a SKILL.md, named as the harness names it."
   :question-tools '("AskUserQuestion")
   :edit-tools '("Edit" "Write" "MultiEdit")
   :session-name #'limen-provider--claude-session-name
-  :skill-directories (lambda (root)
-                       (limen-provider--skill-directories
-                        (limen-provider--claude-config-directory) root))
+  :skill-source (lambda (root)
+                  (limen-provider--directory-skills
+                   (limen-provider--claude-config-directory) root))
   :skill-reference (lambda (skill) (concat "/" skill))
   :capabilities '(:transport hooks :operations cli
                   :passive-context prompt :explicit-context prompt :diffs nil)))
@@ -172,9 +215,10 @@ A skill is a directory holding a SKILL.md, named as the harness names it."
                  arguments))
   :question-tools '("request_user_input")
   :transcript-questions-p t
-  :skill-directories (lambda (root)
-                       (limen-provider--skill-directories
-                        (limen-provider--codex-home) root))
+  :skill-source (lambda (root)
+                  (or (limen-provider--codex-skills root)
+                      (limen-provider--directory-skills
+                       (limen-provider--codex-home) root)))
   :skill-reference (lambda (skill) (concat "$" skill))
   :capabilities '(:transport streamable-http :operations registry
                   :passive-context resource :explicit-context terminal :diffs t)))
