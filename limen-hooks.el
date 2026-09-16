@@ -27,7 +27,8 @@
 
 (declare-function herdr-agent-resolve-session "ext:herdr-agent" (&optional target))
 (declare-function magit-diff-unstaged "ext:magit-diff" (&optional args files))
-(declare-function magit-file-relative-name "ext:magit-git" (&optional file tramp))
+(defvar magit-display-buffer-noselect)
+(defvar magit-display-buffer-function)
 (defvar herdr-message-compose-functions)
 
 (defgroup limen-hooks nil
@@ -79,6 +80,15 @@ active requests the tool-use hook it needs."
 (defcustom limen-hooks-review-function #'limen-hooks-review-with-magit
   "Function shown the absolute path of a project file an agent edited."
   :type 'function
+  :group 'limen-hooks)
+
+(defcustom limen-hooks-review-display-action
+  '((display-buffer-reuse-window display-buffer-in-side-window)
+    (side . right) (window-width . 0.45) (inhibit-same-window . t))
+  "How the diff of an agent's edit is shown, as a `display-buffer' action.
+The window is never selected: the review appears beside what the user
+is doing and does not interrupt it."
+  :type 'sexp
   :group 'limen-hooks)
 
 (defun limen-hooks-providers ()
@@ -590,19 +600,31 @@ the prompt already carries, is that selection.  A selection longer than
         (decode-coding-string (base64-decode-string value) 'utf-8)
       (error (signal 'limen-invalid-request '("Malformed hook request"))))))
 
+(defun limen-hooks--display-review (buffer)
+  "Show BUFFER per `limen-hooks-review-display-action' and return its window."
+  (display-buffer buffer limen-hooks-review-display-action))
+
 (defun limen-hooks-review-with-magit (file)
-  "Show FILE's unstaged changes in a Magit diff, or a VC diff without Magit."
+  "Show the unstaged changes of FILE's repository, without taking the window.
+A Magit diff of the whole repository, so an agent's edits add up in one
+buffer per repository as they land; a VC diff of FILE without Magit."
   (let ((default-directory (file-name-directory file)))
     (if (require 'magit nil t)
-        (magit-diff-unstaged nil (list (magit-file-relative-name file)))
+        (let ((magit-display-buffer-noselect t)
+              (magit-display-buffer-function #'limen-hooks--display-review))
+          (magit-diff-unstaged))
       (with-current-buffer (find-file-noselect file)
-        (vc-diff)))))
+        (let ((display-buffer-overriding-action limen-hooks-review-display-action))
+          (vc-diff))))))
 
 (defun limen-hooks--review-edit (provider payload session request)
   "Open the diff of the project file PROVIDER's edit tool changed, per PAYLOAD.
-SESSION or REQUEST names the project the file must lie in.  Runs after
-the hook has answered, so the agent never waits on it."
+Only an agent Emacs holds a SESSION for is reviewed, within that
+session's project; with `limen-hooks-answer-unattached' the project of
+REQUEST stands in.  Runs after the hook has answered, so the agent never
+waits on it."
   (when (and limen-hooks-review-edits
+             (or session limen-hooks-answer-unattached)
              (equal (alist-get 'hook_event_name payload) "PostToolUse"))
     (when-let* ((entry (limen-provider provider))
                 ((member (alist-get 'tool_name payload)
