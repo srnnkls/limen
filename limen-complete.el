@@ -113,12 +113,12 @@ against the file system, so a file outside the project is reached the
 way it is written.  Anything else completes against the project."
   (if (string-match-p "\\`[~/.]" (limen-complete--written begin end))
       (list (1+ begin) end #'completion-file-name-table
-            :exclusive 'no :company-prefix-length 0
+            :exclusive 'no :company-prefix-length t
             :annotation-function (lambda (_file) " path"))
     (when-let* ((root (limen-complete--root))
                 (files (limen-complete--project-files root)))
       (list begin end (limen-complete--carrying begin files)
-            :exclusive 'no :company-prefix-length 0
+            :exclusive 'no :company-prefix-length t
             :annotation-function (lambda (_file) " file")))))
 
 (defun limen-complete-annotations (begin end)
@@ -129,7 +129,7 @@ way it is written.  Anything else completes against the project."
               (references (limen-scholia-annotation-references root)))
     (let ((opened (limen-complete--opened begin)))
       (list begin end (limen-complete--carrying begin (mapcar #'car references))
-            :exclusive 'no :company-prefix-length 0
+            :exclusive 'no :company-prefix-length t
             :annotation-function
             (lambda (candidate)
               (when-let* ((text (cdr (assoc (string-remove-prefix opened candidate)
@@ -165,7 +165,7 @@ the field was opened with."
     (let ((opened (limen-complete--opened begin)))
       (append (list begin end (limen-complete--carrying
                                begin (mapcar #'car skills))
-                    :exclusive 'no :company-prefix-length 0
+                    :exclusive 'no :company-prefix-length t
                     :annotation-function
                     (lambda (candidate)
                       (if-let* ((description
