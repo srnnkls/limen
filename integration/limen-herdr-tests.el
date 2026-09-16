@@ -3,6 +3,7 @@
 (require 'cl-lib)
 (require 'ert)
 (require 'herdr-agent)
+(require 'herdr-herd)
 (require 'limen-herdr)
 (require 'limen-herdr-claude)
 (require 'limen-hooks)

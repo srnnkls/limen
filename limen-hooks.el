@@ -27,6 +27,8 @@
 
 (declare-function herdr-agent-resolve-session "ext:herdr-agent" (&optional target))
 (declare-function magit-diff-unstaged "ext:magit-diff" (&optional args files))
+(declare-function magit-file-tracked-p "ext:magit-git" (file))
+(declare-function magit-file-relative-name "ext:magit-git" (&optional file tracked))
 (defvar magit-display-buffer-noselect)
 (defvar magit-display-buffer-function)
 (defvar herdr-message-compose-functions)
@@ -604,18 +606,33 @@ the prompt already carries, is that selection.  A selection longer than
   "Show BUFFER per `limen-hooks-review-display-action' and return its window."
   (display-buffer buffer limen-hooks-review-display-action))
 
+(defun limen-hooks--revert-visiting (file)
+  "Bring an unmodified buffer visiting FILE up to date with the disk."
+  (when-let* ((buffer (get-file-buffer file))
+              ((not (buffer-modified-p buffer))))
+    (with-current-buffer buffer
+      (revert-buffer t t t))))
+
 (defun limen-hooks-review-with-magit (file)
-  "Show the unstaged changes of FILE's repository, without taking the window.
-A Magit diff of the whole repository, so an agent's edits add up in one
-buffer per repository as they land; a VC diff of FILE without Magit."
+  "Show what changed in FILE's repository, without taking the window.
+A Magit diff of the repository's unstaged changes, so an agent's edits
+add up in one buffer per repository as they land.  A file git does not
+track yet has no diff, so the file itself is shown instead.  Without
+Magit, a VC diff of FILE.  An unmodified buffer visiting FILE is
+reverted first, so the editor shows the edit too."
+  (limen-hooks--revert-visiting file)
   (let ((default-directory (file-name-directory file)))
-    (if (require 'magit nil t)
-        (let ((magit-display-buffer-noselect t)
-              (magit-display-buffer-function #'limen-hooks--display-review))
-          (magit-diff-unstaged))
+    (cond
+     ((not (require 'magit nil t))
       (with-current-buffer (find-file-noselect file)
         (let ((display-buffer-overriding-action limen-hooks-review-display-action))
-          (vc-diff))))))
+          (vc-diff))))
+     ((magit-file-tracked-p (magit-file-relative-name file))
+      (let ((magit-display-buffer-noselect t)
+            (magit-display-buffer-function #'limen-hooks--display-review))
+        (magit-diff-unstaged)))
+     (t
+      (limen-hooks--display-review (find-file-noselect file))))))
 
 (defun limen-hooks--review-edit (provider payload session request)
   "Open the diff of the project file PROVIDER's edit tool changed, per PAYLOAD.

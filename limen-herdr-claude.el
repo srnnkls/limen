@@ -155,7 +155,7 @@ Detection events reach Emacs only for agents that start after it does;
 the ones running before it are taken up here, one idle moment at a time.
 A prompt hook gives context only to a pane Emacs holds a session for,
 so an agent left out here would stay unaware of Emacs."
-  (when (fboundp 'herdr-herd-live-agents)
+  (when (require 'herdr-herd nil t)
     (condition-case nil
         (dolist (agent (herdr-herd-live-agents))
           (when (and (equal (alist-get 'agent agent) "claude")
