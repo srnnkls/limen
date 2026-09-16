@@ -537,16 +537,24 @@
               (end-of-line)
               (let ((mark-active t)
                     (transient-mark-mode t))
-                (should (string-match-p
-                         "^focus: a\\.el:1:0-3:6$"
-                         (cdr (limen-hooks-tests--context request root))))
+                (let ((block (cdr (limen-hooks-tests--context request root))))
+                  (should (string-match-p "^focus: a\\.el:1:0-3:6$" block))
+                  (should (string-suffix-p "\n\n```\nline 1\nline 2\nline 3\n```" block)))
                 (should (equal (cdr (limen-hooks-tests--context request root))
                                "Emacs context: unchanged; `limen context` reads the live state."))
                 (forward-line -1)
                 (end-of-line)
-                (should (string-match-p
-                         "^focus: a\\.el:1:0-2:6$"
-                         (cdr (limen-hooks-tests--context request root)))))))
+                (let ((limen-hooks-selection-limit 9))
+                  (let ((block (cdr (limen-hooks-tests--context request root))))
+                    (should (string-match-p "^focus: a\\.el:1:0-2:6$" block))
+                    (should (string-suffix-p
+                             "\n\n```\nline 1\nli\n```\n(4 more characters selected)" block))))
+                (puthash session '((path . "/elsewhere/b.el") (line . 1) (column . 0)
+                                   (end_line . 2) (end_column . 6) (text . "line 1\nline 2"))
+                         limen-hooks--pending)
+                (let ((block (cdr (limen-hooks-tests--context request root))))
+                  (should (= 3 (length (split-string block "```"))))
+                  (should (string-suffix-p "```\nline 1\nline 2\n```" block))))))
         (when (buffer-live-p buffer)
           (with-current-buffer buffer (set-buffer-modified-p nil))
           (kill-buffer buffer))

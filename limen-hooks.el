@@ -58,6 +58,12 @@ directory lies in."
   :type 'boolean
   :group 'limen-hooks)
 
+(defcustom limen-hooks-selection-limit 2000
+  "Characters of the selected text a prompt carries.
+A longer selection is cut there and the prompt says how much is left."
+  :type '(integer 0)
+  :group 'limen-hooks)
+
 (defcustom limen-hooks-review-edits nil
   "Whether an agent's edit to a project file opens its diff in Emacs.
 The diff opens once the edit has landed and holds nothing up; the agent
@@ -471,15 +477,18 @@ project answers for a pane Emacs never took up."
       (when-let* ((line (alist-get 'line (alist-get 'point focus))))
         (number-to-string line))))
 
-(defun limen-hooks--focus-line (root)
-  "Return the `focus:' header line for ROOT, or nil when point is outside it.
+(defun limen-hooks--focus (root)
+  "Return the focus record for a hook answered below ROOT, or nil."
+  (limen--focus-get nil (limen-make-request :interface 'cli :source 'hook
+                                            :project-root root
+                                            :frame (selected-frame)
+                                            :window (selected-window))))
+
+(defun limen-hooks--focus-line (focus root)
+  "Return the `focus:' header line for FOCUS below ROOT, or nil without one.
 Where the cursor sits is what a prompt usually means and rarely says, and
 a region says it more exactly still."
-  (when-let* ((request (limen-make-request :interface 'cli :source 'hook
-                                           :project-root root
-                                           :frame (selected-frame)
-                                           :window (selected-window)))
-              (focus (limen--focus-get nil request))
+  (when-let* ((focus)
               (where (if-let* ((file (alist-get 'file focus)))
                          (limen-herdr--context-path file root)
                        (alist-get 'name focus))))
@@ -487,6 +496,25 @@ a region says it more exactly still."
             (if-let* ((position (limen-hooks--focus-position focus)))
                 (concat ":" position)
               ""))))
+
+(defun limen-hooks--fence (text)
+  "Return TEXT as a fenced block on its own paragraph."
+  (format "\n\n```\n%s\n```" (string-trim-right text)))
+
+(defun limen-hooks--selection-block (focus &optional sent)
+  "Return the fenced text FOCUS has selected, or nil.
+Nothing is returned when there is no selection or when SENT, the text
+the prompt already carries, is that selection.  A selection longer than
+`limen-hooks-selection-limit' is cut there."
+  (when-let* ((text (alist-get 'text (alist-get 'selection focus)))
+              ((not (string-empty-p text)))
+              ((not (equal text sent))))
+    (let ((rest (- (length text) limen-hooks-selection-limit)))
+      (concat (limen-hooks--fence
+               (if (> rest 0) (substring text 0 limen-hooks-selection-limit) text))
+              (if (> rest 0)
+                  (format "\n(%d more characters selected)" rest)
+                "")))))
 
 (defun limen-hooks--recent-line (root context)
   "Return the `recent:' header line for ROOT, omitting CONTEXT's own file."
@@ -525,19 +553,21 @@ a region says it more exactly still."
          (extra (mapcan (lambda (function)
                           (copy-sequence (funcall function context root)))
                         limen-herdr-context-fields-functions))
-         (focus (limen-hooks--focus-line root))
+         (focus (limen-hooks--focus root))
+         (focus-line (limen-hooks--focus-line focus root))
          (recent (limen-hooks--recent-line root context))
          (text (alist-get 'text context)))
     (concat
      "Emacs context\n"
      (string-join (append fields extra
-                          (and focus (list focus))
+                          (and focus-line (list focus-line))
                           (and recent (list recent))
                           (list limen-hooks--live-line))
                   "\n")
      (if (and text (not (string-empty-p text)))
-         (format "\n\n```\n%s\n```" (string-trim-right text))
-       ""))))
+         (limen-hooks--fence text)
+       "")
+     (or (limen-hooks--selection-block focus text) ""))))
 
 (defun limen-hooks--prompt-context (session root)
   "Return the context injected into SESSION's next prompt below ROOT."
