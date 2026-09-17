@@ -237,5 +237,55 @@
       (limen-message-disable)
       (mapc #'cancel-timer timers))))
 
+(ert-deftest limen-message-integration-field-reopens-holding-its-draft ()
+  (let* ((limen-message-context t)
+         (limen-message-summary nil)
+         (limen-message--drafts (make-hash-table :test #'equal))
+         (herdr-message-show-agent nil)
+         (herdr-message-history nil)
+         (herdr-message-compose-functions nil)
+         (target '("/tmp/limen-message.sock" . "terminal-1"))
+         timers sent)
+    (unwind-protect
+        (progn
+          (limen-message-enable)
+          (save-window-excursion
+            (with-temp-buffer
+              (text-mode)
+              (set-window-buffer (selected-window) (current-buffer))
+              (insert "source line\n")
+              (goto-char (point-min))
+              (cl-letf (((symbol-function 'herdr-message--target-label) (lambda (_) "Test agent"))
+                        ((symbol-function 'herdr-message--field-prefix) (lambda (_) "*"))
+                        ((symbol-function 'herdr-agent-find) (lambda (&rest _) nil))
+                        ((symbol-function 'herdr-agent-prompt)
+                         (lambda (_target text) (push text sent)))
+                        ((symbol-function 'run-at-time)
+                         (lambda (&rest _) (let ((timer (timer-create)))
+                                             (push timer timers) timer)))
+                        ((symbol-function 'exit-recursive-edit) #'ignore))
+                ;; Written, then put away rather than sent.
+                (cl-letf (((symbol-function 'recursive-edit)
+                           (lambda () (insert "half a message")
+                             (limen-message--dismiss))))
+                  (should (eq (condition-case nil
+                                  (progn (herdr-message-read-field target nil) 'returned)
+                                (quit 'quit))
+                              'quit)))
+                (should (equal (gethash target limen-message--drafts) "half a message"))
+                (should (equal (buffer-string) "source line\n"))
+                ;; Opened again, the field holds what was left in it.
+                (cl-letf (((symbol-function 'recursive-edit)
+                           (lambda ()
+                             (should (equal (cera-input-text) "half a message"))
+                             (insert " finished")
+                             (cera-accept))))
+                  (herdr-message-read-field target nil))
+                (should (equal sent '("half a message finished")))
+                (should-not (gethash target limen-message--drafts))
+                (should (equal (buffer-string) "source line\n"))))))
+      (limen-message-disable)
+      (mapc #'cancel-timer timers))))
+
 (provide 'limen-message-integration-tests)
 ;;; limen-message-tests.el ends here

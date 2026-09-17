@@ -77,6 +77,10 @@ uses its existing authentication; failures leave the composer usable."
 (defvar cera-session-start-hook)
 (declare-function cera-pane "ext:cera" (&rest properties))
 (declare-function cera-update-pane "ext:cera" (id text))
+(declare-function cera-input-text "ext:cera" ())
+(declare-function cera-pane-kind "ext:cera" (pane) t)
+(declare-function cera-set-pane-text "ext:cera" (pane text))
+(declare-function cera-cancel "ext:cera" ())
 (declare-function herdr-agent-find "ext:herdr-agent" (server-key terminal-id))
 (declare-function herdr-agent-session-agent-session "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-kind "ext:herdr-agent" (session) t)
@@ -93,6 +97,21 @@ uses its existing authentication; failures leave the composer usable."
 (defconst limen-message--timeout 30)
 (defconst limen-message--rpc-timeout 10)
 (defvar limen-message--summaries (make-hash-table :test #'equal))
+(defvar limen-message--scopes (make-hash-table :test #'equal)
+  "The memex session each agent was found in, keyed by target.
+An agent keeps the session it is running, so the lookup that found it
+stands for as long as Emacs does.")
+
+(defvar limen-message--replies (make-hash-table :test #'equal)
+  "What each session last answered, keyed by its scope.
+The pane is drawn from this the moment it opens and redrawn when the
+read comes back, so reopening a field shows the message at once.")
+
+(defvar limen-message--drafts (make-hash-table :test #'equal)
+  "What was written to each agent and not yet sent, keyed by target.
+A field dismissed rather than sent is reopened holding it again, so
+`s-m' puts the message away and takes it out where it was left.")
+
 (defvar limen-message--recaps (make-hash-table :test #'equal)
   "The recap last written for each session, keyed by its scope.
 A session that has moved on since has no recap of its own yet, so the
@@ -206,9 +225,25 @@ so drawn nowhere."
 
 (defun limen-message--set-latest (state text)
   "Hold TEXT as STATE's message, shown whole or previewed at will."
-  (setf (limen-message--state-latest state)
-        (and (stringp text) (not (string-blank-p text)) text))
+  (let ((latest (and (stringp text) (not (string-blank-p text)) text)))
+    (setf (limen-message--state-latest state) latest)
+    (when-let* ((latest)
+                (scope (limen-message--state-scope state)))
+      (when (>= (hash-table-count limen-message--replies) 32)
+        (clrhash limen-message--replies))
+      (puthash scope latest limen-message--replies)))
   (limen-message--show-context state))
+
+(defun limen-message--remember (state scope)
+  "Hold SCOPE as STATE's session and draw what is already known of it."
+  (setf (limen-message--state-scope state) scope)
+  (puthash (limen-message--state-target state) scope limen-message--scopes)
+  (when-let* (((limen-message--state-context state))
+              (reply (gethash scope limen-message--replies)))
+    (limen-message--set-latest state reply))
+  (when-let* (((limen-message--state-summary state))
+              (recap (gethash scope limen-message--recaps)))
+    (limen-message--set-recap state recap)))
 
 (defun limen-message--cancel-requests (state)
   "Cancel STATE's outstanding Memex requests through its public API."
@@ -388,8 +423,26 @@ Own the returned request and bound each RPC to ten seconds."
            :offset offset :limit (- end offset))
         (error (limen-message--unavailable state))))))
 
-(defun limen-message--locate (state source kind value)
-  "Look up STATE's indexed session for SOURCE, KIND and VALUE."
+(defun limen-message--count (state)
+  "Ask for the record count of STATE's session, and read back from there."
+  (condition-case nil
+      (let ((scope (limen-message--state-scope state)))
+        (limen-message--request
+         state #'memex-api-session-page (list (nth 1 scope) (nth 2 scope))
+         (lambda (page)
+           (when (limen-message--current-p state)
+             (let ((total (alist-get 'total page)))
+               (if (and (integerp total) (> total 0))
+                   (limen-message--page state total)
+                 (limen-message--unavailable state)))))
+         :offset 0 :limit 1))
+    (error (limen-message--unavailable state))))
+
+(defun limen-message--locate (state source kind value &optional reindexed)
+  "Look up STATE's indexed session for SOURCE, KIND and VALUE.
+A session the index has not seen is looked for once more behind a scan,
+which REINDEXED then marks as spent.  Scanning first would put its whole
+cost in front of every field, where the session is almost always known."
   (limen-message--request
    state #'memex-api-sessions nil
    (lambda (rows)
@@ -402,29 +455,22 @@ Own the returned request and bound each RPC to ten seconds."
                       (stringp (alist-get 'session_id row))
                       (stringp (alist-get 'source_path row)))) rows)))
          (if (/= (length matches) 1)
-             (limen-message--unavailable state)
+             (if reindexed
+                 (limen-message--unavailable state)
+               (limen-message--request
+                state #'memex-api-index nil
+                (lambda (_result)
+                  (limen-message--locate state source kind value t))))
            (let ((row (car matches)))
-             (setf (limen-message--state-scope state)
-                   (list source (alist-get 'session_id row) (alist-get 'source_path row)))
-             (condition-case nil
-                 (limen-message--request
-                  state #'memex-api-session-page
-                  (list (alist-get 'session_id row) (alist-get 'source_path row))
-                  (lambda (page)
-                    (when (limen-message--current-p state)
-                      (let ((total (alist-get 'total page)))
-                        (if (and (integerp total) (> total 0))
-                            (limen-message--page state total)
-                          (limen-message--unavailable state)))))
-                  :offset 0 :limit 1)
-               (error (limen-message--unavailable state))))))))
+             (limen-message--remember
+              state (list source (alist-get 'session_id row)
+                          (alist-get 'source_path row)))
+             (limen-message--count state))))))
    :source source :session-id (and (equal kind "id") value)
    :source-path (and (equal kind "path") value) :limit 2))
 
 (defun limen-message--resolve (state)
-  "Reindex, then resolve STATE's cached Herdr identity through Memex.
-Session lookup reads the index without refreshing it, so a composer
-opened on a session indexed after the last scan would find nothing."
+  "Resolve STATE's cached Herdr identity through Memex."
   (when (limen-message--current-p state)
     (condition-case nil
         (let* ((target (limen-message--state-target state))
@@ -436,9 +482,10 @@ opened on a session indexed after the last scan would find nothing."
           (if (not (and (stringp value) (member kind '("id" "path"))
                         (stringp source) (require 'memex-api nil t)))
               (limen-message--unavailable state)
-            (limen-message--request
-             state #'memex-api-index nil
-             (lambda (_result) (limen-message--locate state source kind value)))))
+            (if-let* ((scope (gethash target limen-message--scopes)))
+                (progn (limen-message--remember state scope)
+                       (limen-message--count state))
+              (limen-message--locate state source kind value))))
       (error (limen-message--unavailable state)))))
 
 (defconst limen-message--command
@@ -521,10 +568,28 @@ opened on a session indexed after the last scan would find nothing."
        (limen-message--stop-process state)
        (limen-message--fall-back-recap state)))))
 
+(defun limen-message--dismiss ()
+  "Put away the field open in this buffer, saving its draft.
+Return non-nil when one was open, which is what makes the key that opens
+a field close it again."
+  (when-let* ((buffer (seq-find (lambda (buffer)
+                                  (buffer-local-value 'limen-message--active buffer))
+                                (buffer-list)))
+              (state (buffer-local-value 'limen-message--active buffer)))
+    (with-current-buffer buffer
+      (when-let* ((text (cera-input-text)))
+        (if (string-blank-p text)
+            (remhash (limen-message--state-target state) limen-message--drafts)
+          (puthash (limen-message--state-target state) text
+                   limen-message--drafts)))
+      (cera-cancel)
+      t)))
+
 (defun limen-message--read-field (original target context)
   "Call ORIGINAL for TARGET and CONTEXT with optional read-only panes."
   (if (not limen-message-context)
       (funcall original target context)
+    (limen-message--dismiss)
     (if (not (and (not (minibufferp))
                   (not (get-buffer-process (current-buffer)))
                   (require 'cera nil t) (fboundp 'cera-pane)
@@ -543,6 +608,10 @@ opened on a session indexed after the last scan would find nothing."
                           (limen-message--state-decorated state))
                       defaults
                     (setf (limen-message--state-decorated state) t)
+                    (when-let* ((draft (gethash target limen-message--drafts))
+                                (input (cl-find 'input defaults
+                                                :key #'cera-pane-kind)))
+                      (cera-set-pane-text input draft))
                     (append
                      (list (cera-pane :id 'limen-context :kind 'readonly
                                       :text "" :bracket nil :prefix nil))
@@ -573,7 +642,9 @@ opened on a session indexed after the last scan would find nothing."
                         (push (run-at-time 0 nil #'limen-message--resolve state)
                               (limen-message--state-timers state))))
                     cera-session-start-hook)))
-        (unwind-protect (funcall original target context)
+        (unwind-protect
+            (prog1 (funcall original target context)
+              (remhash target limen-message--drafts))
           (limen-message--close state))))))
 
 (defun limen-message-enable ()
