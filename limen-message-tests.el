@@ -510,6 +510,28 @@
         (should (equal (limen-message--state-latest state) "earlier reply"))
         (should (string-match-p "earlier reply" (cdar updates)))))))
 
+(ert-deftest limen-message-a-session-that-lost-its-records-is-looked-up-again ()
+  (limen-message-tests--state
+    (let (order)
+      (puthash (limen-message--state-target state) '("claude" "id" "/gone")
+               limen-message--scopes)
+      (cl-letf (((symbol-function 'require) (lambda (&rest _) t))
+                ((symbol-function 'herdr-agent-find) (lambda (&rest _) 'session))
+                ((symbol-function 'herdr-agent-session-agent-session)
+                 (lambda (_) '((kind . "id") (value . "id"))))
+                ((symbol-function 'herdr-agent-session-kind) (lambda (_) "claude"))
+                ((symbol-function 'memex-api-index)
+                 (lambda (callback &rest _) (push 'index order) (funcall callback '())))
+                ((symbol-function 'memex-api-sessions)
+                 (lambda (callback &rest _) (push 'sessions order) (funcall callback '())))
+                ((symbol-function 'memex-api-session-page)
+                 (lambda (_id _path callback &rest _)
+                   (push 'page order) (funcall callback '((total . 0))))))
+        (limen-message--resolve state)
+        (should (equal (reverse order) '(page sessions index sessions)))
+        (should-not (gethash (limen-message--state-target state)
+                             limen-message--scopes))))))
+
 (ert-deftest limen-message-rpc-timeout-cancels-handle-and-ignores-late-response ()
   (limen-message-tests--state
     (let ((handle (make-pipe-process :name "limen-test-timeout" :noquery t))

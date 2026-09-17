@@ -423,20 +423,24 @@ Own the returned request and bound each RPC to ten seconds."
            :offset offset :limit (- end offset))
         (error (limen-message--unavailable state))))))
 
-(defun limen-message--count (state)
-  "Ask for the record count of STATE's session, and read back from there."
-  (condition-case nil
-      (let ((scope (limen-message--state-scope state)))
-        (limen-message--request
-         state #'memex-api-session-page (list (nth 1 scope) (nth 2 scope))
-         (lambda (page)
-           (when (limen-message--current-p state)
-             (let ((total (alist-get 'total page)))
-               (if (and (integerp total) (> total 0))
-                   (limen-message--page state total)
-                 (limen-message--unavailable state)))))
-         :offset 0 :limit 1))
-    (error (limen-message--unavailable state))))
+(defun limen-message--count (state &optional lost)
+  "Ask for the record count of STATE\='s session, and read back from there.
+A session that holds nothing is gone as far as the field is concerned,
+and LOST, where given, is called to look for its replacement."
+  (let ((missing (lambda ()
+                   (if lost (funcall lost) (limen-message--unavailable state)))))
+    (condition-case nil
+        (let ((scope (limen-message--state-scope state)))
+          (limen-message--request
+           state #'memex-api-session-page (list (nth 1 scope) (nth 2 scope))
+           (lambda (page)
+             (when (limen-message--current-p state)
+               (let ((total (alist-get 'total page)))
+                 (if (and (integerp total) (> total 0))
+                     (limen-message--page state total)
+                   (funcall missing)))))
+           :offset 0 :limit 1))
+      (error (funcall missing)))))
 
 (defun limen-message--locate (state source kind value &optional reindexed)
   "Look up STATE's indexed session for SOURCE, KIND and VALUE.
@@ -484,7 +488,10 @@ cost in front of every field, where the session is almost always known."
               (limen-message--unavailable state)
             (if-let* ((scope (gethash target limen-message--scopes)))
                 (progn (limen-message--remember state scope)
-                       (limen-message--count state))
+                       (limen-message--count
+                        state (lambda ()
+                                (remhash target limen-message--scopes)
+                                (limen-message--locate state source kind value))))
               (limen-message--locate state source kind value))))
       (error (limen-message--unavailable state)))))
 
