@@ -31,6 +31,8 @@
 (declare-function herdr-agent-session-server "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-terminal "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-buffer "ext:herdr-agent" (session) t)
+(declare-function limen-message-enable "limen-message" ())
+(declare-function limen-message-disable "limen-message" ())
 (defvar herdr-agent--sessions)
 (defvar herdr-send-context-functions)
 
@@ -610,8 +612,12 @@ other has the rendered context typed into the agent's pane."
           (progn
             (unless (require 'herdr-agent nil t)
               (error "Limen Herdr mode requires herdr-agent"))
-            (limen-herdr--register))
-        (limen-herdr--unregister))
+            (limen-herdr--register)
+            (when (require 'limen-message nil t)
+              (limen-message-enable)))
+        (limen-herdr--unregister)
+        (when (featurep 'limen-message)
+          (limen-message-disable)))
     (error
      (setq limen-herdr-mode (not limen-herdr-mode))
      (signal (car err) (cdr err)))))
