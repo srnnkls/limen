@@ -228,6 +228,22 @@
     (limen-message--set-latest state nil)
     (should (equal (cdr (assq 'limen-context updates)) ""))))
 
+(ert-deftest limen-message-an-unsummarizable-page-keeps-the-recap-shown ()
+  (limen-message-tests--state
+    (let ((limen-message--recaps (make-hash-table :test #'equal))
+          (limen-message--summary-limit 8))
+      (setf (limen-message--state-summary state) t
+            (limen-message--state-scope state) '("claude" "id" "/one")
+            (limen-message--state-records state)
+            (list (limen-message-tests--record 1 "assistant" "a long answer")))
+      (puthash '("claude" "id" "/one") "earlier recap" limen-message--recaps)
+      (cl-letf (((symbol-function 'limen-message--generate)
+                 (lambda (&rest _) (ert-fail "Unexpected generation"))))
+        (limen-message--finish state)
+        (should (equal (limen-message--state-recap state) "earlier recap"))
+        (should (equal (limen-message-tests--bare (cdar updates))
+                       "earlier recap\na long answer"))))))
+
 (ert-deftest limen-message-summary-cache-uses-content-and-session ()
   (limen-message-tests--state
     (let ((limen-message--summaries (make-hash-table :test #'equal)) (calls 0))
@@ -696,7 +712,7 @@
                                                   target "source")
                        "sent"))))
     (should-not (gethash target limen-message--drafts))
-    ;; A field put away rather than sent keeps it.
+    ;; A field abandoned rather than put away leaves nothing behind either.
     (puthash target "left unsent" limen-message--drafts)
     (with-temp-buffer
       (cl-letf (((symbol-function 'require) (lambda (&rest _) t))
@@ -707,6 +723,34 @@
         (should (eq (condition-case nil
                         (limen-message--read-field (lambda (&rest _) (signal 'quit nil))
                                                     target "source")
+                      (quit 'quit))
+                    'quit))))
+    (should-not (gethash target limen-message--drafts))))
+
+(ert-deftest limen-message-a-field-put-away-keeps-its-draft ()
+  (let ((limen-message-context t)
+        (limen-message--drafts (make-hash-table :test #'equal))
+        (cera-read-context-function nil) (cera-session-keymap nil)
+        (cera-session-start-hook nil)
+        (target '("server" . "terminal")))
+    (puthash target "left unsent" limen-message--drafts)
+    (with-temp-buffer
+      (cl-letf (((symbol-function 'require) (lambda (&rest _) t))
+                ((symbol-function 'cera-pane) (lambda (&rest properties) properties))
+                ((symbol-function 'cera-pane-kind) (lambda (_) 'other))
+                ((symbol-function 'cera-update-pane) #'ignore)
+                ((symbol-function 'cera-read-stack) #'ignore)
+                ((symbol-function 'cera-input-text) (lambda () "left unsent"))
+                ((symbol-function 'cera-cancel) #'ignore)
+                ((symbol-function 'run-at-time) (lambda (&rest _) (timer-create))))
+        (should (eq (condition-case nil
+                        (limen-message--read-field
+                         (lambda (&rest _)
+                           (funcall cera-read-context-function nil)
+                           (run-hook-with-args 'cera-session-start-hook nil)
+                           (limen-message--dismiss)
+                           (signal 'quit nil))
+                         target "source")
                       (quit 'quit))
                     'quit))))
     (should (equal (gethash target limen-message--drafts) "left unsent"))))

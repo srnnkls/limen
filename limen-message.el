@@ -121,7 +121,7 @@ one before it stands until the new one arrives.")
 (cl-defstruct (limen-message--state (:constructor limen-message--make-state))
   buffer token target context summary live timers process stderr directory decorated started close-hook
   scope records requests (retrieving t) (scanned 0) (chars 0)
-  recap latest expanded)
+  recap latest expanded dismissed)
 
 (defun limen-message--current-p (state)
   "Return non-nil while STATE owns its original composer."
@@ -373,12 +373,10 @@ Own the returned request and bound each RPC to ten seconds."
                                                   (alist-get 'doc_id r))) selected)
                         (secure-hash 'sha256 text))))
         (if (or (null selected) (> (length text) limen-message--summary-limit))
-            (limen-message--set-recap state nil)
+            (limen-message--fall-back-recap state)
           (if-let* ((cached (gethash key limen-message--summaries)))
               (limen-message--set-recap state cached)
-            (limen-message--set-recap
-             state (gethash (limen-message--state-scope state)
-                            limen-message--recaps))
+            (limen-message--fall-back-recap state)
             (limen-message--generate state key text)))))))
 
 (defun limen-message--page (state end)
@@ -589,6 +587,7 @@ a field close it again."
             (remhash (limen-message--state-target state) limen-message--drafts)
           (puthash (limen-message--state-target state) text
                    limen-message--drafts)))
+      (setf (limen-message--state-dismissed state) t)
       (cera-cancel)
       t)))
 
@@ -650,8 +649,9 @@ a field close it again."
                               (limen-message--state-timers state))))
                     cera-session-start-hook)))
         (unwind-protect
-            (prog1 (funcall original target context)
-              (remhash target limen-message--drafts))
+            (funcall original target context)
+          (unless (limen-message--state-dismissed state)
+            (remhash target limen-message--drafts))
           (limen-message--close state))))))
 
 (defun limen-message-enable ()
