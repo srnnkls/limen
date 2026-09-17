@@ -121,7 +121,7 @@ one before it stands until the new one arrives.")
 (cl-defstruct (limen-message--state (:constructor limen-message--make-state))
   buffer token target context summary live timers process stderr directory decorated started close-hook
   scope records requests (retrieving t) (scanned 0) (chars 0)
-  recap latest expanded dismissed)
+  recap latest expanded dismissed recap-timer)
 
 (defun limen-message--current-p (state)
   "Return non-nil while STATE owns its original composer."
@@ -245,6 +245,11 @@ so drawn nowhere."
               (recap (gethash scope limen-message--recaps)))
     (limen-message--set-recap state recap)))
 
+(defun limen-message--cancel-timers (state)
+  "Cancel STATE's timers, apart from the one bounding a running recap."
+  (dolist (timer (limen-message--state-timers state)) (cancel-timer timer))
+  (setf (limen-message--state-timers state) nil))
+
 (defun limen-message--cancel-requests (state)
   "Cancel STATE's outstanding Memex requests through its public API."
   (setf (limen-message--state-retrieving state) nil)
@@ -294,8 +299,10 @@ Own the returned request and bound each RPC to ten seconds."
 
 (defun limen-message--stop-process (state)
   "Stop only STATE's recap process and release its stderr buffer."
-  (dolist (timer (limen-message--state-timers state)) (cancel-timer timer))
-  (setf (limen-message--state-timers state) nil)
+  (limen-message--cancel-timers state)
+  (when-let* ((timer (limen-message--state-recap-timer state)))
+    (setf (limen-message--state-recap-timer state) nil)
+    (cancel-timer timer))
   (when-let* ((process (limen-message--state-process state)))
     (setf (limen-message--state-process state) nil)
     (when (process-live-p process) (delete-process process)))
@@ -313,7 +320,9 @@ Own the returned request and bound each RPC to ten seconds."
   "Invalidate STATE and cancel its outstanding work."
   (setf (limen-message--state-live state) nil)
   (limen-message--cancel-requests state)
-  (limen-message--stop-process state)
+  (limen-message--cancel-timers state)
+  ;; A recap being generated is left to finish.  It is no longer drawn,
+  ;; but it is what the next field opened on this session starts with.
   (when (buffer-live-p (limen-message--state-buffer state))
     (with-current-buffer (limen-message--state-buffer state)
       (when-let* ((hook (limen-message--state-close-hook state)))
@@ -421,6 +430,16 @@ Own the returned request and bound each RPC to ten seconds."
            :offset offset :limit (- end offset))
         (error (limen-message--unavailable state))))))
 
+(defun limen-message--rescan (state &optional lost)
+  "Scan for what STATE\='s session has said since, and read it back.
+The index only holds what it was last shown, so a session read straight
+from it answers with whatever it said the last time it was scanned.  The
+scan runs behind what is already on screen, where its cost is unseen.
+LOST is carried through to `limen-message--count'."
+  (limen-message--request
+   state #'memex-api-index nil
+   (lambda (_result) (limen-message--count state lost))))
+
 (defun limen-message--count (state &optional lost)
   "Ask for the record count of STATE\='s session, and read back from there.
 A session that holds nothing is gone as far as the field is concerned,
@@ -467,7 +486,9 @@ cost in front of every field, where the session is almost always known."
              (limen-message--remember
               state (list source (alist-get 'session_id row)
                           (alist-get 'source_path row)))
-             (limen-message--count state))))))
+             (if reindexed
+                 (limen-message--count state)
+               (limen-message--rescan state)))))))
    :source source :session-id (and (equal kind "id") value)
    :source-path (and (equal kind "path") value) :limit 2))
 
@@ -486,7 +507,7 @@ cost in front of every field, where the session is almost always known."
               (limen-message--unavailable state)
             (if-let* ((scope (gethash target limen-message--scopes)))
                 (progn (limen-message--remember state scope)
-                       (limen-message--count
+                       (limen-message--rescan
                         state (lambda ()
                                 (remhash target limen-message--scopes)
                                 (limen-message--locate state source kind value))))
@@ -509,6 +530,18 @@ cost in front of every field, where the session is almost always known."
    state (and (limen-message--state-scope state)
               (gethash (limen-message--state-scope state)
                        limen-message--recaps))))
+
+(defun limen-message--hold-recap (state key recap)
+  "Keep RECAP under KEY, and as the last word of STATE\='s session.
+A recap outlives the field it was asked for, so that the next one opened
+starts with what the session last said rather than the turn before it."
+  (when (>= (hash-table-count limen-message--summaries) 32)
+    (clrhash limen-message--summaries))
+  (puthash key recap limen-message--summaries)
+  (when-let* ((scope (limen-message--state-scope state)))
+    (when (>= (hash-table-count limen-message--recaps) 32)
+      (clrhash limen-message--recaps))
+    (puthash scope recap limen-message--recaps)))
 
 (defun limen-message--generate (state key text)
   "Generate STATE's recap of TEXT asynchronously, caching under KEY."
@@ -535,19 +568,17 @@ cost in front of every field, where the session is almost always known."
                    (lambda (process _event)
                      (when (memq (process-status process) '(exit signal))
                        (when timer (cancel-timer timer))
-                       (when (and (limen-message--current-p state)
-                                  (eq process (limen-message--state-process state)))
+                       (when (eq process (limen-message--state-process state))
                          (let ((recap (limen-message--recap-text output)))
                            (if (and (not overflow) (eq (process-status process) 'exit)
                                     (zerop (process-exit-status process))
                                     (not (string-empty-p recap)))
                                (progn
-                                 (when (>= (hash-table-count limen-message--summaries) 32)
-                                   (clrhash limen-message--summaries))
-                                 (puthash key (limen-message--recap-text recap)
-                                          limen-message--summaries)
-                                 (limen-message--set-recap state recap))
-                             (limen-message--fall-back-recap state))))
+                                 (limen-message--hold-recap state key recap)
+                                 (when (limen-message--current-p state)
+                                   (limen-message--set-recap state recap)))
+                             (when (limen-message--current-p state)
+                               (limen-message--fall-back-recap state)))))
                        (limen-message--stop-process state)))))))
           (setf (limen-message--state-process state) process)
           (when-let* ((error-process (get-buffer-process stderr)))
@@ -566,7 +597,7 @@ cost in front of every field, where the session is almost always known."
                          (when (limen-message--current-p state)
                            (limen-message--fall-back-recap state))
                          (limen-message--stop-process state))))
-          (push timer (limen-message--state-timers state))
+          (setf (limen-message--state-recap-timer state) timer)
           (process-send-string process text)
           (process-send-eof process))
       (error
