@@ -12,7 +12,6 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'seq)
-(require 'limen-term)
 
 (defface limen-message-recap
   '((t :inherit default))
@@ -85,8 +84,6 @@ uses its existing authentication; failures leave the composer usable."
 (declare-function cera-set-pane-text "ext:cera" (pane text))
 (declare-function cera-cancel "ext:cera" ())
 (declare-function herdr-agent-find "ext:herdr-agent" (server-key terminal-id))
-(declare-function herdr-agent--public-target "ext:herdr-agent" (target))
-(declare-function herdr--record-session-target "ext:herdr" (target))
 (declare-function herdr-agent-session-agent-session "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-kind "ext:herdr-agent" (session) t)
 (declare-function memex-cancel-rpc "ext:memex-core" (process))
@@ -959,41 +956,14 @@ a field close it again."
             (remhash target limen-message--drafts))
           (limen-message--close state))))))
 
-(defcustom limen-message-preserve-input t
-  "Whether a draft in the agent's prompt survives a message sent to it.
-Only a terminal this Emacs holds and shows can be driven that way; every
-other session takes the message the way it always did, appended to
-whatever its prompt already carries."
-  :type 'boolean
-  :group 'limen-message)
-
-(defun limen-message--reveal (target)
-  "Show the terminal this Emacs holds for TARGET, if it shows none.
-A terminal off screen is read as it was some time ago rather than as it
-is, so it has to be on one before its prompt can be read."
-  (when-let* ((buffer (limen-term-buffer target)))
-    (unless (get-buffer-window buffer t)
-      (display-buffer buffer))))
-
-(defun limen-message--prompt (send target text)
-  "Send TEXT to TARGET under the draft in its prompt, or leave it to SEND."
-  (when limen-message-preserve-input
-    (limen-message--reveal target))
-  (if (and limen-message-preserve-input (limen-term-deliver target text))
-      (progn (herdr--record-session-target (herdr-agent--public-target target))
-             target)
-    (funcall send target text)))
-
 (defun limen-message-enable ()
   "Install optional message-field context without loading its dependencies."
   (advice-add 'herdr-message-read-field :around #'limen-message--read-field)
-  (advice-add 'herdr-agent-prompt :around #'limen-message--prompt)
   (add-hook 'herdr-message-compose-functions #'limen-message-record -100))
 
 (defun limen-message-disable ()
   "Remove optional message-field context and close outstanding work."
   (advice-remove 'herdr-message-read-field #'limen-message--read-field)
-  (advice-remove 'herdr-agent-prompt #'limen-message--prompt)
   (remove-hook 'herdr-message-compose-functions #'limen-message-record)
   (dolist (buffer (buffer-list))
     (when-let* ((state (buffer-local-value 'limen-message--active buffer)))

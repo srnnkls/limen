@@ -961,56 +961,5 @@
       (limen-message-toggle-user)
       (should-not limen-message-user-messages))))
 
-(defvar limen-message-tests--sent nil
-  "Where a message went, newest last.")
-
-(defun limen-message-tests--daemon (_target text)
-  "Record TEXT as the message the daemon was given."
-  (push (cons 'daemon text) limen-message-tests--sent)
-  'daemon)
-
-(defmacro limen-message-tests--sending (deliver &rest body)
-  "Run BODY with a send whose terminal delivery answers DELIVER.
-Answer what reached the terminal and what reached the daemon, in order."
-  (declare (indent 1) (debug t))
-  `(let ((limen-message-tests--sent nil))
-     (cl-letf (((symbol-function 'limen-term-buffer) (lambda (_target) nil))
-               ((symbol-function 'limen-term-deliver)
-                (lambda (_target text)
-                  (when ,deliver
-                    (push (cons 'terminal text) limen-message-tests--sent)
-                    t)))
-               ((symbol-function 'herdr-agent--public-target) #'identity)
-               ((symbol-function 'herdr--record-session-target)
-                (lambda (target)
-                  (push (cons 'recorded target) limen-message-tests--sent))))
-       ,@body
-       (nreverse limen-message-tests--sent))))
-
-(ert-deftest limen-message-a-message-goes-through-the-terminal-holding-the-draft ()
-  (let ((limen-message-preserve-input t))
-    (should (equal (limen-message-tests--sending t
-                     (should (equal (limen-message--prompt
-                                     #'limen-message-tests--daemon
-                                     '("local" . "w1:p1") "a message")
-                                    '("local" . "w1:p1"))))
-                   '((terminal . "a message") (recorded "local" . "w1:p1"))))))
-
-(ert-deftest limen-message-a-message-falls-back-to-the-daemon ()
-  (let ((limen-message-preserve-input t))
-    (should (equal (limen-message-tests--sending nil
-                     (should (eq (limen-message--prompt
-                                  #'limen-message-tests--daemon
-                                  '("local" . "w1:p1") "a message")
-                                 'daemon)))
-                   '((daemon . "a message"))))))
-
-(ert-deftest limen-message-preservation-turned-off-never-touches-the-terminal ()
-  (let ((limen-message-preserve-input nil))
-    (should (equal (limen-message-tests--sending t
-                     (limen-message--prompt #'limen-message-tests--daemon
-                                            '("local" . "w1:p1") "a message"))
-                   '((daemon . "a message"))))))
-
 (provide 'limen-message-tests)
 ;;; limen-message-tests.el ends here
