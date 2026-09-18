@@ -12,6 +12,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'seq)
+(require 'limen-term)
 
 (defface limen-message-recap
   '((t :inherit default))
@@ -78,18 +79,31 @@ uses its existing authentication; failures leave the composer usable."
 (declare-function cera-pane "ext:cera" (&rest properties))
 (declare-function cera-update-pane "ext:cera" (id text))
 (declare-function cera-input-text "ext:cera" ())
+(declare-function cera-input-bounds "ext:cera" ())
+(declare-function cera-set-input "ext:cera" (text))
 (declare-function cera-pane-kind "ext:cera" (pane) t)
 (declare-function cera-set-pane-text "ext:cera" (pane text))
 (declare-function cera-cancel "ext:cera" ())
 (declare-function herdr-agent-find "ext:herdr-agent" (server-key terminal-id))
+(declare-function herdr-agent--public-target "ext:herdr-agent" (target))
+(declare-function herdr--record-session-target "ext:herdr" (target))
 (declare-function herdr-agent-session-agent-session "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-kind "ext:herdr-agent" (session) t)
 (declare-function memex-cancel-rpc "ext:memex-core" (process))
+(declare-function lectio-render "ext:lectio" (markdown &optional code))
+(declare-function memex-herdr-open-session "ext:memex-herdr"
+                  (session-id source-path &optional doc-id))
 (declare-function memex-api-sessions "ext:memex-api" (callback &rest keys))
 (declare-function memex-api-index "ext:memex-api" (callback &rest keys))
 (declare-function memex-api-session-page "ext:memex-api" (id path callback &rest keys))
 
-(defconst limen-message--page-size 32)
+(defcustom limen-message-page-size 128
+  "Records read in one page of a session.
+Memex serves a page whole, tool traffic and talk together, and a session
+carries several times more of the former: a page this size usually holds
+the messages the field reads back, where a smaller one costs a request
+per message."
+  :type 'natnum :group 'limen-message)
 (defconst limen-message--scan-limit 256)
 (defconst limen-message--char-limit 131072)
 (defconst limen-message--summary-limit 24000)
@@ -107,6 +121,47 @@ stands for as long as Emacs does.")
 The pane is drawn from this the moment it opens and redrawn when the
 read comes back, so reopening a field shows the message at once.")
 
+(defcustom limen-message-markdown t
+  "Draw what the agent said as the markdown it was written in.
+Rendering is `lectio-render', which answers with text a buffer can hold;
+without lectio, and with this off, the message is drawn as it came."
+  :type 'boolean :group 'limen-message)
+
+(defcustom limen-message-messages 8
+  "Messages of the agent's the field reads back for walking.
+A session carries far more tool traffic than talk, so reading back this
+many takes several pages of it; `limen-message--scan-limit' still bounds
+how much is read whatever this asks for."
+  :type 'natnum :group 'limen-message)
+
+(defface limen-message-agent-rule
+  '((((class color) (min-colors 88)) :foreground "#d97757")
+    (t :inherit warning))
+  "Face of the rule beside what the agent said, while both sides are shown."
+  :group 'limen-message)
+
+(defface limen-message-user-rule
+  '((((class color) (min-colors 88)) :foreground "#6ea8fe")
+    (t :inherit link))
+  "Face of the rule beside what was asked, while both sides are shown."
+  :group 'limen-message)
+
+(defcustom limen-message-user-messages nil
+  "Whether the composer shows what was asked beside what was answered.
+With this off the pane walks the agent's messages alone.  With it on the
+turn's question stands among them, and the rule beside each says which
+side it came from."
+  :type 'boolean :group 'limen-message)
+
+(defcustom limen-message-history-limit 32
+  "Messages kept per agent for walking back through what was sent."
+  :type 'natnum :group 'limen-message)
+
+(defvar limen-message--history (make-hash-table :test #'equal)
+  "What was sent to each agent, newest first, keyed by target.
+Herdr keeps one history for every agent together; this is the one the
+field walks, so the messages offered are the ones this agent was sent.")
+
 (defvar limen-message--drafts (make-hash-table :test #'equal)
   "What was written to each agent and not yet sent, keyed by target.
 A field dismissed rather than sent is reopened holding it again, so
@@ -121,7 +176,8 @@ one before it stands until the new one arrives.")
 (cl-defstruct (limen-message--state (:constructor limen-message--make-state))
   buffer token target context summary live timers process stderr directory decorated started close-hook
   scope records requests (retrieving t) (scanned 0) (chars 0)
-  recap latest expanded dismissed recap-timer)
+  recap latest role messages (cursor 0) history (recalled nil) draft
+  expanded dismissed recap-timer)
 
 (defun limen-message--current-p (state)
   "Return non-nil while STATE owns its original composer."
@@ -155,16 +211,20 @@ one before it stands until the new one arrives.")
         (concat (substring plain 0 (1- limen-message--recap-max-chars)) "…")
       plain)))
 
-(defun limen-message--callout (text face &optional bare)
-  "Return TEXT in FACE, each line behind the preview rule.
+(defun limen-message--callout (text face &optional bare rule-face)
+  "Return TEXT behind the preview rule, FACE under whatever it already wears.
+Markdown comes drawn in faces of its own, so FACE is put beneath them
+rather than over them: a heading or a code span keeps how it was drawn.
 BARE keeps the rule's width as blank space instead, so text that stands
 on its own still begins in the column the quoted message does."
   (let* ((rule (concat limen-message-rule " "))
          (margin (if bare
                      (make-string (string-width rule) ?\s)
-                   (propertize rule 'face limen-message-rule-face))))
+                   (propertize rule 'face (or rule-face limen-message-rule-face)))))
     (mapconcat (lambda (line)
-                 (concat margin (propertize line 'face face)))
+                 (let ((line (copy-sequence line)))
+                   (add-face-text-property 0 (length line) face t line)
+                   (concat margin line)))
                (split-string text "\n") "\n")))
 
 (defun limen-message--headroom (text)
@@ -181,13 +241,41 @@ Empty TEXT is left empty, which is how the pane is hidden."
                          'line-spacing limen-message-headroom text)
       text)))
 
+(defvar limen-message--rendered (make-hash-table :test #'equal)
+  "Markdown already drawn, keyed by the text it was drawn from.
+The pane is redrawn on every step through the messages, and drawing the
+same one again costs what drawing it the first time did.")
+
+(defun limen-message--rendered (text)
+  "Return TEXT drawn as markdown, or TEXT where it cannot be."
+  (if (not (and limen-message-markdown (stringp text)
+                (not (string-blank-p text))
+                (or (fboundp 'lectio-render) (require 'lectio nil t))))
+      text
+    (or (gethash text limen-message--rendered)
+        (let ((drawn (condition-case nil (lectio-render text) (error nil))))
+          (when (>= (hash-table-count limen-message--rendered) 32)
+            (clrhash limen-message--rendered))
+          (puthash text (or drawn text) limen-message--rendered)))))
+
+(defun limen-message--rule-face (state)
+  "Return the face the rule beside STATE's message is drawn in.
+While both sides are shown the rule says which one spoke; with the
+agent's alone there is nothing to tell apart."
+  (if (not limen-message-user-messages)
+      limen-message-rule-face
+    (if (equal (limen-message--state-role state) "user")
+        'limen-message-user-rule
+      'limen-message-agent-rule)))
+
 (defun limen-message--show-context (state)
   "Draw STATE's context pane: its recap line, then the message under it.
 The recap keeps its line while it is still being written, so the pane
 does not jump as it arrives.  With neither line the pane is empty, and
 so drawn nowhere."
   (let ((recap (limen-message--state-recap state))
-        (text (limen-message--state-latest state)))
+        (rule (limen-message--rule-face state))
+        (text (limen-message--rendered (limen-message--state-latest state))))
     (limen-message--update
      state 'limen-context
      (if (not (or recap text))
@@ -198,8 +286,145 @@ so drawn nowhere."
                (limen-message--callout
                 (if (limen-message--state-expanded state)
                     (or text "") (limen-message--preview (or text "")))
-                limen-message-text-face))
+                limen-message-text-face nil rule))
          "\n"))))))
+
+(defun limen-message-transcript ()
+  "Show the memex transcript of the agent the active composer writes to.
+The session is the one the composer already found for the agent, so the
+transcript opens without looking it up again."
+  (interactive)
+  (let* ((state limen-message--active)
+         (target (and state (limen-message--state-target state)))
+         (scope (or (and state (limen-message--state-scope state))
+                    (and target (gethash target limen-message--scopes)))))
+    (unless scope
+      (user-error "Memex knows no session for this agent"))
+    (unless (or (fboundp 'memex-herdr-open-session)
+                (require 'memex-herdr nil t))
+      (user-error "Reading a transcript requires memex-herdr"))
+    (memex-herdr-open-session (nth 1 scope) (nth 2 scope))))
+
+(defun limen-message--step (step)
+  "Show the message STEP turns away from the one the composer shows.
+A positive STEP goes back through what the agent said, a negative one
+returns towards its latest.  The end of what was read stops the walk
+rather than wrapping it."
+  (let* ((state limen-message--active)
+         (messages (and state (limen-message--current-p state)
+                        (limen-message--state-messages state))))
+    (unless messages
+      (user-error "Memex has no indexed message for this agent"))
+    (let* ((cursor (limen-message--state-cursor state))
+           (wanted (+ cursor step))
+           (bounded (max 0 (min wanted (1- (length messages))))))
+      (when (/= bounded cursor)
+        (setf (limen-message--state-cursor state) bounded
+              (limen-message--state-role state) (car (nth bounded messages))
+              (limen-message--state-latest state) (cdr (nth bounded messages)))
+        (limen-message--show-context state))
+      (message "Message %d of %d%s" (1+ bounded) (length messages)
+               (if (= bounded 0) ", the latest" "")))))
+
+(defun limen-message-older ()
+  "Show the message the agent sent before the one above the composer."
+  (interactive)
+  (limen-message--step 1))
+
+(defun limen-message-newer ()
+  "Show the message the agent sent after the one above the composer."
+  (interactive)
+  (limen-message--step -1))
+
+(defun limen-message-record (target text _context)
+  "Keep TEXT as the latest message sent to TARGET and compose nothing.
+It rides `herdr-message-compose-functions' ahead of whatever composes
+the prompt, since the first composer to answer ends that run, and
+answers nil itself so the composing is left alone."
+  (when (and (stringp text) (not (string-blank-p text)))
+    (let ((history (delete text (gethash target limen-message--history))))
+      (puthash target (seq-take (cons text history) limen-message-history-limit)
+               limen-message--history)))
+  nil)
+
+(defun limen-message--state-history-p ()
+  "Return non-nil when the composer here has messages sent to walk."
+  (when-let* ((state limen-message--active)
+              ((limen-message--current-p state)))
+    (limen-message--state-history state)))
+
+(defun limen-message--walk-history (step)
+  "Write the message STEP entries further back into the field.
+A positive STEP goes back through what was sent, a negative one returns
+towards the draft the walk started from, which is held while it lasts."
+  (when-let* ((state limen-message--active)
+              ((limen-message--current-p state))
+              (history (limen-message--state-history state)))
+    (let* ((recalled (limen-message--state-recalled state))
+           (wanted (if recalled (+ recalled step) (and (> step 0) (1- step))))
+           (bounded (and wanted (max -1 (min wanted (1- (length history)))))))
+      (cond
+       ((null bounded) nil)
+       ((< bounded 0)
+        (setf (limen-message--state-recalled state) nil)
+        (cera-set-input (or (limen-message--state-draft state) ""))
+        (message "Draft"))
+       (t
+        (unless recalled
+          (setf (limen-message--state-draft state) (cera-input-text)))
+        (setf (limen-message--state-recalled state) bounded)
+        (cera-set-input (nth bounded history))
+        (message "Sent %d of %d" (1+ bounded) (length history)))))))
+
+(defun limen-message--without-completion (command)
+  "Return COMMAND unless a completion menu is open on the input."
+  (unless (bound-and-true-p completion-in-region-mode) command))
+
+(defun limen-message-history-older ()
+  "Write the message sent before the one in the field into it.
+Away from the first line of the input the point moves up instead, so a
+message of several lines is still moved around in."
+  (interactive)
+  (if (and (limen-message--state-history-p)
+           (limen-message--input-edge-p 'first))
+      (limen-message--walk-history 1)
+    (call-interactively #'previous-line)))
+
+(defun limen-message-history-newer ()
+  "Write the message sent after the one in the field into it.
+Away from the last line of the input, or with the draft already back,
+the point moves down instead."
+  (interactive)
+  (if (and (limen-message--state-history-p)
+           (limen-message--state-recalled limen-message--active)
+           (limen-message--input-edge-p 'last))
+      (limen-message--walk-history -1)
+    (call-interactively #'next-line)))
+
+(defun limen-message--input-edge-p (edge)
+  "Return non-nil when the point sits on the input's EDGE line.
+EDGE is `first' or `last'.  Walking the history takes the keys that move
+the point only where the point has nowhere left to go, so a message of
+several lines is still moved around in."
+  (when-let* ((bounds (and (fboundp 'cera-input-bounds) (cera-input-bounds))))
+    (if (eq edge 'first)
+        (<= (point) (save-excursion (goto-char (car bounds))
+                                    (line-end-position)))
+      (>= (point) (save-excursion (goto-char (cdr bounds))
+                                  (line-beginning-position))))))
+
+(defun limen-message-toggle-user ()
+  "Show what was asked beside what was answered, or the answers alone.
+The messages are built again from what was already read, so the walk
+takes in both sides from where it stands."
+  (interactive)
+  (setq limen-message-user-messages (not limen-message-user-messages))
+  (when-let* ((state limen-message--active)
+              ((limen-message--current-p state)))
+    (limen-message--finish state))
+  (message (if limen-message-user-messages
+               "Showing both sides"
+             "Showing what the agent said")))
 
 (defun limen-message-toggle ()
   "Show the whole message in the active composer, or only its preview."
@@ -352,24 +577,50 @@ Own the returned request and bound each RPC to ten seconds."
   "Return distinct turn identities in newest-first RECORDS."
   (delete-dups (mapcar #'limen-message--turn records)))
 
+(defun limen-message--turn-text (records turn &optional role)
+  "Return what ROLE said in TURN of newest-first RECORDS.
+ROLE defaults to the assistant."
+  (let ((role (or role "assistant")))
+    (mapconcat (lambda (record) (alist-get 'text record))
+               (reverse (cl-remove-if-not
+                         (lambda (record)
+                           (and (equal (alist-get 'role record) role)
+                                (equal (limen-message--turn record) turn)))
+                         records))
+               "\n")))
+
+(defun limen-message--messages (records &optional roles)
+  "Return what ROLES said in each turn of RECORDS, newest first.
+Each message is a cons of the role it came from and its text.  ROLES
+defaults to the assistant alone."
+  (let* ((roles (or roles '("assistant")))
+         (said (cl-remove-if-not
+                (lambda (record) (member (alist-get 'role record) roles))
+                records)))
+    (delq nil
+          (mapcan
+           (lambda (turn)
+             (delq nil
+                   (mapcar (lambda (role)
+                             (let ((text (limen-message--turn-text said turn role)))
+                               (unless (string-blank-p text) (cons role text))))
+                           roles)))
+           (limen-message--turns said)))))
+
+(defun limen-message--roles ()
+  "Return the roles the composer shows."
+  (if limen-message-user-messages '("assistant" "user") '("assistant")))
+
 (defun limen-message--finish (state)
   "Display the bounded history accumulated in STATE."
   (limen-message--cancel-requests state)
   (let* ((records (limen-message--state-records state))
-         (assistant (cl-find "assistant" records
-                             :key (lambda (r) (alist-get 'role r)) :test #'equal))
-         (turn (and assistant (limen-message--turn assistant))))
-    (if assistant
-        (progn
-          (when (limen-message--state-context state)
-            (limen-message--set-latest
-             state (mapconcat (lambda (r) (alist-get 'text r))
-                              (reverse (cl-remove-if-not
-                                        (lambda (r) (and (equal (alist-get 'role r) "assistant")
-                                                         (equal (limen-message--turn r) turn)))
-                                        records)) "\n"))))
-      (when (limen-message--state-context state)
-        (limen-message--set-latest state nil)))
+         (messages (limen-message--messages records (limen-message--roles))))
+    (setf (limen-message--state-messages state) messages
+          (limen-message--state-cursor state) 0
+          (limen-message--state-role state) (car-safe (car messages)))
+    (when (limen-message--state-context state)
+      (limen-message--set-latest state (cdr-safe (car messages))))
     (when (limen-message--state-summary state)
       (let* ((turns (seq-take (limen-message--turns records) 5))
              (selected (reverse (cl-remove-if-not
@@ -388,11 +639,26 @@ Own the returned request and bound each RPC to ten seconds."
             (limen-message--fall-back-recap state)
             (limen-message--generate state key text)))))))
 
+(defun limen-message--read-enough-p (state)
+  "Return non-nil when STATE holds the messages the field reads back.
+The oldest turn read may have begun before the page that carries it, so
+it does not count towards what was asked for: one turn older than the
+message wanted stands for the whole of it."
+  (let* ((records (limen-message--state-records state))
+         (oldest (limen-message--turn (car (last records))))
+         (complete (cl-remove-if
+                    (lambda (turn) (equal turn oldest))
+                    (limen-message--turns
+                     (cl-remove-if-not
+                      (lambda (record) (equal (alist-get 'role record) "assistant"))
+                      records)))))
+    (>= (length complete) (max 1 limen-message-messages))))
+
 (defun limen-message--page (state end)
   "Fetch the bounded page immediately before END for STATE."
   (when (limen-message--current-p state)
     (let* ((scope (limen-message--state-scope state))
-           (offset (max 0 (- end limen-message--page-size))))
+           (offset (max 0 (- end limen-message-page-size))))
       (condition-case nil
           (limen-message--request
            state #'memex-api-session-page (list (nth 1 scope) (nth 2 scope))
@@ -415,13 +681,7 @@ Own the returned request and bound each RPC to ten seconds."
                            (and (or (not (limen-message--state-summary state))
                                     (> (length (limen-message--turns
                                                 (limen-message--state-records state))) 5))
-                                (let* ((records (limen-message--state-records state))
-                                       (assistant (cl-find "assistant" records
-                                                           :key (lambda (r) (alist-get 'role r))
-                                                           :test #'equal)))
-                                  (and assistant
-                                       (not (equal (limen-message--turn assistant)
-                                                   (limen-message--turn (car (last records)))))))))
+                                (limen-message--read-enough-p state)))
                        (limen-message--finish state))
                       ((>= (limen-message--state-scanned state) limen-message--scan-limit)
                        (limen-message--unavailable state))
@@ -635,7 +895,8 @@ a field close it again."
       (let* ((state (limen-message--make-state
                      :buffer (current-buffer) :token (make-symbol "composer")
                      :target target :context limen-message-context
-                     :summary limen-message-summary :live t))
+                     :summary limen-message-summary :live t
+                     :history (gethash target limen-message--history)))
              (previous-context cera-read-context-function)
              (cera-read-context-function
               (lambda (panes)
@@ -655,6 +916,19 @@ a field close it again."
                      defaults)))))
              (cera-session-keymap
               (let ((map (make-sparse-keymap)))
+                (define-key map (kbd "C-c C-t") #'limen-message-transcript)
+                (dolist (binding '(("C-p" . limen-message-history-older)
+                                   ("<up>" . limen-message-history-older)
+                                   ("C-n" . limen-message-history-newer)
+                                   ("<down>" . limen-message-history-newer)))
+                  ;; The completion menu takes these keys to move through its
+                  ;; candidates while it is open.
+                  (define-key map (kbd (car binding))
+                              `(menu-item "" ,(cdr binding)
+                                          :filter limen-message--without-completion)))
+                (define-key map (kbd "C-c C-u") #'limen-message-toggle-user)
+                (define-key map (kbd "M-p") #'limen-message-older)
+                (define-key map (kbd "M-n") #'limen-message-newer)
                 (define-key map (kbd "C-c C-v")
                             `(menu-item "" limen-message-toggle
                                         :filter ,(lambda (command)
@@ -685,13 +959,42 @@ a field close it again."
             (remhash target limen-message--drafts))
           (limen-message--close state))))))
 
+(defcustom limen-message-preserve-input t
+  "Whether a draft in the agent's prompt survives a message sent to it.
+Only a terminal this Emacs holds and shows can be driven that way; every
+other session takes the message the way it always did, appended to
+whatever its prompt already carries."
+  :type 'boolean
+  :group 'limen-message)
+
+(defun limen-message--reveal (target)
+  "Show the terminal this Emacs holds for TARGET, if it shows none.
+A terminal off screen is read as it was some time ago rather than as it
+is, so it has to be on one before its prompt can be read."
+  (when-let* ((buffer (limen-term-buffer target)))
+    (unless (get-buffer-window buffer t)
+      (display-buffer buffer))))
+
+(defun limen-message--prompt (send target text)
+  "Send TEXT to TARGET under the draft in its prompt, or leave it to SEND."
+  (when limen-message-preserve-input
+    (limen-message--reveal target))
+  (if (and limen-message-preserve-input (limen-term-deliver target text))
+      (progn (herdr--record-session-target (herdr-agent--public-target target))
+             target)
+    (funcall send target text)))
+
 (defun limen-message-enable ()
   "Install optional message-field context without loading its dependencies."
-  (advice-add 'herdr-message-read-field :around #'limen-message--read-field))
+  (advice-add 'herdr-message-read-field :around #'limen-message--read-field)
+  (advice-add 'herdr-agent-prompt :around #'limen-message--prompt)
+  (add-hook 'herdr-message-compose-functions #'limen-message-record -100))
 
 (defun limen-message-disable ()
   "Remove optional message-field context and close outstanding work."
   (advice-remove 'herdr-message-read-field #'limen-message--read-field)
+  (advice-remove 'herdr-agent-prompt #'limen-message--prompt)
+  (remove-hook 'herdr-message-compose-functions #'limen-message-record)
   (dolist (buffer (buffer-list))
     (when-let* ((state (buffer-local-value 'limen-message--active buffer)))
       (limen-message--close state))))

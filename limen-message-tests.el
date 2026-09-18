@@ -77,7 +77,8 @@
 
 (ert-deftest limen-message-api-total-not-analytics-and-filtered-exact-session ()
   (limen-message-tests--state
-    (let (sessions-callback page-callback calls filters)
+    (let ((limen-message-page-size 32)
+          sessions-callback page-callback calls filters)
       (cl-letf (((symbol-function 'require) (lambda (&rest _) t))
                 ((symbol-function 'herdr-agent-find) (lambda (&rest _) 'session))
                 ((symbol-function 'herdr-agent-session-agent-session)
@@ -164,7 +165,7 @@
 (ert-deftest limen-message-paging-backward-completes-boundary-turn ()
   (limen-message-tests--state
     (setf (limen-message--state-scope state) '("claude" "id" "/opaque"))
-    (let (offsets)
+    (let ((limen-message-page-size 32) offsets)
       (cl-letf (((symbol-function 'memex-api-session-page)
                  (lambda (_id _path callback &rest keys)
                    (let ((offset (plist-get keys :offset)))
@@ -182,7 +183,8 @@
   (dolist (limit '(records chars))
     (limen-message-tests--state
       (setf (limen-message--state-scope state) '("claude" "id" "/opaque"))
-      (let ((limen-message--scan-limit 1)
+      (let ((limen-message-page-size 32)
+            (limen-message--scan-limit 1)
             (limen-message--char-limit (if (eq limit 'chars) 1 100)))
         (cl-letf (((symbol-function 'memex-api-session-page)
                    (lambda (_id _path callback &rest _)
@@ -430,7 +432,7 @@
 (ert-deftest limen-message-context-only-stops-at-complete-latest-turn ()
   (limen-message-tests--state
     (setf (limen-message--state-scope state) '("claude" "id" "/opaque"))
-    (let ((limen-message--scan-limit 32) (calls 0))
+    (let ((limen-message--scan-limit 32) (limen-message-messages 1) (calls 0))
       (cl-letf (((symbol-function 'memex-api-session-page)
                  (lambda (_id _path callback &rest _)
                    (cl-incf calls)
@@ -443,6 +445,29 @@
         (should (= calls 1))
         (should (equal (limen-message--state-latest state) "full reply"))
         (should (string-match-p "full reply" (cdar updates)))))))
+
+(ert-deftest limen-message-reads-back-the-messages-the-walk-wants ()
+  (limen-message-tests--state
+    (setf (limen-message--state-scope state) '("claude" "id" "/opaque"))
+    (let ((limen-message--scan-limit 256) (limen-message-messages 3)
+          (limen-message-page-size 32) (calls 0))
+      (cl-letf (((symbol-function 'memex-api-session-page)
+                 (lambda (_id _path callback &rest _)
+                   (cl-incf calls)
+                   (let ((turn (* calls 10)))
+                     (funcall callback
+                              `((records . ,(append
+                                             (list (limen-message-tests--record
+                                                    turn "assistant"
+                                                    (format "reply %d" calls)))
+                                             (make-list 30 (limen-message-tests--record
+                                                            turn "tool_result" "tool"))))))))))
+        (limen-message--page state 320)
+        ;; One page carries one message under its tool traffic, so three
+        ;; wanted means paging back until three stand complete.
+        (should (= calls 4))
+        (should (equal (mapcar #'cdr (limen-message--state-messages state))
+                       '("reply 1" "reply 2" "reply 3" "reply 4")))))))
 
 (ert-deftest limen-message-explicit-reasoning-flag-is-not-conversation ()
   (should-not (limen-message--conversation-p
@@ -764,6 +789,228 @@
                       (quit 'quit))
                     'quit))))
     (should (equal (gethash target limen-message--drafts) "left unsent"))))
+
+(ert-deftest limen-message-messages-are-what-the-assistant-said-per-turn ()
+  (let ((records (list (limen-message-tests--record 3 "assistant" "newest")
+                       (limen-message-tests--record 2 "user" "question")
+                       (limen-message-tests--record 2 "assistant" "last block")
+                       (limen-message-tests--record 2 "assistant" "first block")
+                       (limen-message-tests--record 1 "assistant" "oldest"))))
+    (should (equal (limen-message--messages records)
+                   '(("assistant" . "newest")
+                     ("assistant" . "first block\nlast block")
+                     ("assistant" . "oldest"))))
+    (should-not (limen-message--messages
+                 (list (limen-message-tests--record 1 "user" "only asked"))))
+    (should (equal (limen-message--messages
+                    (list (limen-message-tests--record 2 "assistant" "answered")
+                          (limen-message-tests--record 2 "user" "asked"))
+                    '("assistant" "user"))
+                   '(("assistant" . "answered") ("user" . "asked"))))))
+
+(ert-deftest limen-message-walks-back-through-what-the-agent-said ()
+  (limen-message-tests--state
+    (setf (limen-message--state-scope state) '("claude" "id" "/opaque"))
+    (cl-letf (((symbol-function 'memex-api-session-page)
+               (lambda (_id _path callback &rest _)
+                 (funcall callback
+                          `((records . ,(list
+                                         (limen-message-tests--record 1 "assistant" "oldest")
+                                         (limen-message-tests--record 2 "assistant" "middle")
+                                         (limen-message-tests--record 3 "assistant" "newest"))))))))
+      (limen-message--page state 8))
+    (should (equal (limen-message--state-latest state) "newest"))
+    (should (= (limen-message--state-cursor state) 0))
+    (limen-message-older)
+    (should (equal (limen-message--state-latest state) "middle"))
+    (limen-message-older)
+    (limen-message-older)
+    (should (equal (limen-message--state-latest state) "oldest"))
+    (should (= (limen-message--state-cursor state) 2))
+    (limen-message-newer)
+    (should (equal (limen-message--state-latest state) "middle"))
+    ;; Walking back leaves the cache holding the latest, not what is shown.
+    (should (equal (gethash (limen-message--state-scope state)
+                            limen-message--replies)
+                   "newest"))
+    (should (seq-some (lambda (update)
+                        (string-match-p "middle" (or (cdr update) "")))
+                      updates))))
+
+(ert-deftest limen-message-record-keeps-what-each-agent-was-sent ()
+  (let ((limen-message--history (make-hash-table :test #'equal))
+        (limen-message-history-limit 3)
+        (one '("server" . "one"))
+        (two '("server" . "two")))
+    (should-not (limen-message-record one "first" nil))
+    (limen-message-record one "second" nil)
+    (limen-message-record two "elsewhere" nil)
+    (limen-message-record one "   " nil)
+    (limen-message-record one "first" nil)
+    (should (equal (gethash one limen-message--history) '("first" "second")))
+    (should (equal (gethash two limen-message--history) '("elsewhere")))
+    (dolist (text '("a" "b" "c"))
+      (limen-message-record one text nil))
+    (should (equal (gethash one limen-message--history) '("c" "b" "a")))))
+
+(ert-deftest limen-message-walks-back-through-what-was-sent ()
+  (limen-message-tests--state
+    (let ((input "draft")
+          (bounds (cons (point-min) (point-max))))
+      (setf (limen-message--state-history state) '("newest" "older"))
+      (cl-letf (((symbol-function 'cera-input-text) (lambda () input))
+                ((symbol-function 'cera-input-bounds) (lambda () bounds))
+                ((symbol-function 'cera-set-input) (lambda (text) (setq input text))))
+        ;; Nothing recalled yet: the key moves the point instead.
+        (ignore-errors (limen-message-history-newer))
+        (should (equal input "draft"))
+        (limen-message-history-older)
+        (should (equal input "newest"))
+        (should (= (limen-message--state-recalled state) 0))
+        (limen-message-history-older)
+        (limen-message-history-older)
+        (should (equal input "older"))
+        (should (= (limen-message--state-recalled state) 1))
+        (limen-message-history-newer)
+        (should (equal input "newest"))
+        (limen-message-history-newer)
+        (should (equal input "draft"))
+        (should-not (limen-message--state-recalled state))))))
+
+(ert-deftest limen-message-message-keys-say-when-there-is-nothing-indexed ()
+  (limen-message-tests--state
+    (should-error (limen-message-older) :type 'user-error)
+    (should-error (limen-message-newer) :type 'user-error)))
+
+(ert-deftest limen-message-history-keys-yield-where-the-point-can-still-move ()
+  (limen-message-tests--state
+    (insert "first line\nlast line")
+    (let ((bounds (cons (point-min) (point-max))))
+      (cl-letf (((symbol-function 'cera-input-bounds) (lambda () bounds)))
+        (goto-char (point-min))
+        (should (limen-message--input-edge-p 'first))
+        (should-not (limen-message--input-edge-p 'last))
+        (goto-char (point-max))
+        (should (limen-message--input-edge-p 'last))
+        (should-not (limen-message--input-edge-p 'first))))))
+
+(ert-deftest limen-message-draws-the-message-as-the-markdown-it-was ()
+  (limen-message-tests--state
+    (let ((drawn 0)
+          (limen-message--rendered (make-hash-table :test #'equal)))
+      (cl-letf (((symbol-function 'lectio-render)
+                 (lambda (markdown &optional _code)
+                   (cl-incf drawn)
+                   (upcase markdown))))
+        (limen-message--set-latest state "**bold** reply")
+        (should (string-match-p "BOLD" (cdar updates)))
+        ;; Redrawing the same message draws it once.
+        (limen-message--show-context state)
+        (should (= drawn 1))
+        (let ((limen-message-markdown nil))
+          (limen-message--show-context state)
+          (should (string-match-p "\\*\\*bold\\*\\*" (cdar updates))))))))
+
+(ert-deftest limen-message-markdown-that-cannot-be-drawn-is-left-as-it-came ()
+  (let ((limen-message--rendered (make-hash-table :test #'equal)))
+    (cl-letf (((symbol-function 'lectio-render)
+               (lambda (&rest _) (error "No renderer"))))
+      (should (equal (limen-message--rendered "plain") "plain")))
+    (cl-letf (((symbol-function 'require) (lambda (&rest _) nil))
+              ((symbol-function 'fboundp) (lambda (&rest _) nil)))
+      (should (equal (limen-message--rendered "plain") "plain")))))
+
+(ert-deftest limen-message-callout-keeps-the-faces-the-markdown-was-drawn-in ()
+  (let* ((drawn (concat "plain " (propertize "bold" 'face 'bold)))
+         (callout (limen-message--callout drawn 'limen-message-text-face))
+         (at (lambda (needle)
+               (get-text-property (string-match needle callout) 'face callout))))
+    (should (equal (funcall at "plain") 'limen-message-text-face))
+    (should (equal (funcall at "bold") '(bold limen-message-text-face)))))
+
+(ert-deftest limen-message-history-keys-stand-back-for-the-completion-menu ()
+  (let ((completion-in-region-mode nil))
+    (should (eq (limen-message--without-completion 'limen-message-history-older)
+                'limen-message-history-older)))
+  (let ((completion-in-region-mode t))
+    (should-not (limen-message--without-completion 'limen-message-history-older))))
+
+(ert-deftest limen-message-toggle-user-shows-both-sides-and-says-which-spoke ()
+  (limen-message-tests--state
+    (let ((limen-message-user-messages nil))
+      (setf (limen-message--state-records state)
+            (list (limen-message-tests--record 2 "assistant" "answered")
+                  (limen-message-tests--record 2 "user" "asked"))
+            (limen-message--state-scope state) '("claude" "id" "/opaque"))
+      (limen-message--finish state)
+      (should (equal (mapcar #'cdr (limen-message--state-messages state))
+                     '("answered")))
+      (should (eq (limen-message--rule-face state) limen-message-rule-face))
+      (limen-message-toggle-user)
+      (should limen-message-user-messages)
+      (should (equal (limen-message--state-messages state)
+                     '(("assistant" . "answered") ("user" . "asked"))))
+      (should (eq (limen-message--rule-face state) 'limen-message-agent-rule))
+      (limen-message-older)
+      (should (equal (limen-message--state-latest state) "asked"))
+      (should (eq (limen-message--rule-face state) 'limen-message-user-rule))
+      (let ((pane (cdar updates)))
+        (should (text-property-any 0 (length pane) 'face 'limen-message-user-rule pane))
+        (should-not (text-property-any 0 (length pane) 'face
+                                       'limen-message-agent-rule pane)))
+      (limen-message-toggle-user)
+      (should-not limen-message-user-messages))))
+
+(defvar limen-message-tests--sent nil
+  "Where a message went, newest last.")
+
+(defun limen-message-tests--daemon (_target text)
+  "Record TEXT as the message the daemon was given."
+  (push (cons 'daemon text) limen-message-tests--sent)
+  'daemon)
+
+(defmacro limen-message-tests--sending (deliver &rest body)
+  "Run BODY with a send whose terminal delivery answers DELIVER.
+Answer what reached the terminal and what reached the daemon, in order."
+  (declare (indent 1) (debug t))
+  `(let ((limen-message-tests--sent nil))
+     (cl-letf (((symbol-function 'limen-term-buffer) (lambda (_target) nil))
+               ((symbol-function 'limen-term-deliver)
+                (lambda (_target text)
+                  (when ,deliver
+                    (push (cons 'terminal text) limen-message-tests--sent)
+                    t)))
+               ((symbol-function 'herdr-agent--public-target) #'identity)
+               ((symbol-function 'herdr--record-session-target)
+                (lambda (target)
+                  (push (cons 'recorded target) limen-message-tests--sent))))
+       ,@body
+       (nreverse limen-message-tests--sent))))
+
+(ert-deftest limen-message-a-message-goes-through-the-terminal-holding-the-draft ()
+  (let ((limen-message-preserve-input t))
+    (should (equal (limen-message-tests--sending t
+                     (should (equal (limen-message--prompt
+                                     #'limen-message-tests--daemon
+                                     '("local" . "w1:p1") "a message")
+                                    '("local" . "w1:p1"))))
+                   '((terminal . "a message") (recorded "local" . "w1:p1"))))))
+
+(ert-deftest limen-message-a-message-falls-back-to-the-daemon ()
+  (let ((limen-message-preserve-input t))
+    (should (equal (limen-message-tests--sending nil
+                     (should (eq (limen-message--prompt
+                                  #'limen-message-tests--daemon
+                                  '("local" . "w1:p1") "a message")
+                                 'daemon)))
+                   '((daemon . "a message"))))))
+
+(ert-deftest limen-message-preservation-turned-off-never-touches-the-terminal ()
+  (let ((limen-message-preserve-input nil))
+    (should (equal (limen-message-tests--sending t
+                     (limen-message--prompt #'limen-message-tests--daemon
+                                            '("local" . "w1:p1") "a message"))
+                   '((daemon . "a message"))))))
 
 (provide 'limen-message-tests)
 ;;; limen-message-tests.el ends here
