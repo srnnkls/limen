@@ -59,6 +59,13 @@ the line without Limen knowing the theme."
   :type 'face
   :group 'limen-message)
 
+(defcustom limen-message-rule-offset 2
+  "Pixels the rule stands off the edge of the pane.
+What the rule is moved by, the gap after it gives back, so the message
+beside it keeps its column."
+  :type 'natnum
+  :group 'limen-message)
+
 (defcustom limen-message-context nil
   "Show the latest indexed assistant reply above the message field."
   :type 'boolean :group 'limen-message)
@@ -218,16 +225,30 @@ put in another buffer than the one the composer was opened in."
         (concat (substring plain 0 (1- limen-message--recap-max-chars)) "…")
       plain)))
 
+(defun limen-message--margin (rule-face)
+  "Return the rule drawn in RULE-FACE, with the gap that follows it.
+`limen-message-rule-offset' moves the rule off the edge by pixels the
+gap gives back, so the text beside it stands where it stood."
+  (let* ((column (frame-char-width))
+         (offset (if (> column (1+ limen-message-rule-offset))
+                     limen-message-rule-offset
+                   0))
+         (rule (propertize limen-message-rule 'face rule-face)))
+    (if (zerop offset)
+        (concat rule " ")
+      (concat (propertize " " 'display `(space :width (,offset)))
+              rule
+              (propertize " " 'display `(space :width (,(- column offset))))))))
+
 (defun limen-message--callout (text face &optional bare rule-face)
   "Return TEXT behind the preview rule, FACE under whatever it already wears.
 Markdown comes drawn in faces of its own, so FACE is put beneath them
 rather than over them: a heading or a code span keeps how it was drawn.
 BARE keeps the rule's width as blank space instead, so text that stands
 on its own still begins in the column the quoted message does."
-  (let* ((rule (concat limen-message-rule " "))
-         (margin (if bare
-                     (make-string (string-width rule) ?\s)
-                   (propertize rule 'face (or rule-face limen-message-rule-face)))))
+  (let* ((margin (if bare
+                     (make-string (string-width (concat limen-message-rule " ")) ?\s)
+                   (limen-message--margin (or rule-face limen-message-rule-face)))))
     (mapconcat (lambda (line)
                  (let ((line (copy-sequence line)))
                    (add-face-text-property 0 (length line) face t line)

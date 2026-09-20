@@ -17,14 +17,14 @@
 (defun limen-message-tests--bare (text)
   "Return TEXT without the headroom line and the margin each line carries."
   (let* ((text (if (string-prefix-p "\n" text) (substring text 1) text))
-         (rule (concat limen-message-rule " "))
-         (width (string-width rule))
-         (blank (make-string width ?\s)))
+         (offset (if (string-prefix-p " " (limen-message--margin 'default)) " " ""))
+         (rule (concat offset limen-message-rule " "))
+         (blank (make-string (string-width (concat limen-message-rule " ")) ?\s)))
     (string-trim-right
      (mapconcat (lambda (line)
                   (cond
-                   ((string-prefix-p rule line) (substring line width))
-                   ((string-prefix-p blank line) (substring line width))
+                   ((string-prefix-p rule line) (substring line (length rule)))
+                   ((string-prefix-p blank line) (substring line (length blank)))
                    (t line)))
                 (split-string text "\n") "\n"))))
 
