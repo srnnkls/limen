@@ -132,12 +132,24 @@ agent's own terminal takes the right."
   "Further (EVENT . MATCHER) specs consumers need installed.
 MATCHER is nil or the provider's tool matcher string.")
 
-(defun limen-hooks-events ()
-  "Return every (EVENT . MATCHER) spec the installed hooks must cover."
+(defvar limen-hooks-provider-events nil
+  "Specs only some providers understand, keyed by provider name.
+Each value is a list of (EVENT . MATCHER) specs installed for that
+provider alone, for an event the others have no notion of.")
+
+(defun limen-hooks-events (&optional provider)
+  "Return every (EVENT . MATCHER) spec the installed hooks must cover.
+With PROVIDER, the specs that provider alone understands are included
+and the other providers' left out; without one, every spec is returned,
+which is what asking whether an event is still needed wants."
   (append (and limen-hooks-mode limen-hooks--base-events)
           (and limen-hooks-mode limen-hooks-review-edits
                (limen-hooks--review-events))
-          limen-hooks-extra-events))
+          limen-hooks-extra-events
+          (if provider
+              (copy-sequence (alist-get provider limen-hooks-provider-events))
+            (mapcan (lambda (entry) (copy-sequence (cdr entry)))
+                    limen-hooks-provider-events))))
 
 (defconst limen-hooks--timeout 5
   "Seconds a provider waits for the hook before continuing without it.")
@@ -259,7 +271,7 @@ SPEC is (EVENT . MATCHER); one event can carry a group per matcher."
                    (limen-hooks-settings-file provider))))
     (seq-every-p (lambda (spec)
                    (limen-hooks--spec-installed-p settings spec provider))
-                 (limen-hooks-events))))
+                 (limen-hooks-events provider))))
 
 (defun limen-hooks--settings-events (settings)
   "Return the names of every event SETTINGS registers handlers for."
@@ -288,7 +300,7 @@ SPEC is (EVENT . MATCHER); one event can carry a group per matcher."
          (settings (limen-hooks--read-settings file))
          (hooks (alist-get 'hooks settings))
          changed)
-    (pcase-dolist (`(,event . ,matcher) (limen-hooks-events))
+    (pcase-dolist (`(,event . ,matcher) (limen-hooks-events provider))
       (unless (limen-hooks--spec-installed-p settings (cons event matcher) provider)
         (setf (alist-get (intern event) hooks)
               (vconcat (limen-hooks--event-groups settings event)
