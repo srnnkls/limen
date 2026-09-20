@@ -1072,5 +1072,26 @@
           (limen-message--generate state 'key "conversation"))
         (should (equal (limen-message--state-recap state) "earlier recap"))))))
 
+(ert-deftest limen-message-messages-are-held-apart-by-a-gap ()
+  (limen-message-tests--state
+    (let ((limen-message-message-counts '(2))
+          (limen-message-message-gap 3)
+          (limen-message-markdown nil))
+      (setf (limen-message--state-records state)
+            (list (limen-message-tests--record 2 "assistant" "second")
+                  (limen-message-tests--record 1 "assistant" "first"))
+            (limen-message--state-scope state) '("claude" "id" "/opaque"))
+      (limen-message--finish state)
+      (let* ((pane (cdar updates))
+             (gaps (let (found (position 0))
+                     (while (< position (length pane))
+                       (when (eq (get-text-property position 'line-spacing pane) 3)
+                         (push (aref pane position) found))
+                       (setq position (1+ position)))
+                     found)))
+        ;; The one gap sits on the newline between the two messages.
+        (should (equal gaps (list ?\n)))
+        (should (equal (limen-message-tests--bare pane) "\nfirst\nsecond"))))))
+
 (provide 'limen-message-tests)
 ;;; limen-message-tests.el ends here

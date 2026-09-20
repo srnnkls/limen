@@ -179,6 +179,10 @@ installed, fails or says nothing steps aside for the next."
   "The model claude is asked for a recap with."
   :type 'string :group 'limen-message)
 
+(defcustom limen-message-message-gap 3
+  "Pixels of blank space kept between the messages the pane shows."
+  :type 'natnum :group 'limen-message)
+
 (defcustom limen-message-message-counts '(1 2 3)
   "How many messages the pane shows, as the steps a cycle runs through.
 `limen-message-cycle-messages' moves to the next of these and wraps at
@@ -282,6 +286,19 @@ on its own still begins in the column the quoted message does."
                    (concat margin line)))
                (split-string text "\n") "\n")))
 
+(defun limen-message--stacked (parts)
+  "Return PARTS joined, held apart by `limen-message-message-gap'.
+The space is asked for with `line-spacing' on the newline between them,
+which is the character the display takes the room under a line from."
+  (let ((text (copy-sequence (string-join parts "\n")))
+        (offset 0))
+    (dolist (part (butlast parts))
+      (setq offset (+ offset (length part)))
+      (put-text-property offset (1+ offset) 'line-spacing
+                         limen-message-message-gap text)
+      (setq offset (1+ offset)))
+    text))
+
 (defun limen-message--headroom (text)
   "Return TEXT held off the lines above and below by `limen-message-headroom'.
 A zero-width space draws nothing, so the space is asked for with
@@ -350,19 +367,21 @@ so drawn nowhere."
      state 'limen-context
      (if (not (or recap window))
          ""
-       (limen-message--headroom
-        (string-join
-         (cons (limen-message--callout (or recap "") limen-message-recap-face t)
-               (mapcar
-                (lambda (message)
-                  (let ((text (or (limen-message--rendered (cdr message)) "")))
-                    (limen-message--callout
-                     (if (limen-message--state-expanded state)
-                         text (limen-message--preview text))
-                     limen-message-text-face nil
-                     (limen-message--rule-face (car message)))))
-                window))
-         "\n"))))))
+       (let ((messages
+              (mapcar
+               (lambda (message)
+                 (let ((text (or (limen-message--rendered (cdr message)) "")))
+                   (limen-message--callout
+                    (if (limen-message--state-expanded state)
+                        text (limen-message--preview text))
+                    limen-message-text-face nil
+                    (limen-message--rule-face (car message)))))
+               window)))
+         (limen-message--headroom
+          (string-join
+           (cons (limen-message--callout (or recap "") limen-message-recap-face t)
+                 (and messages (list (limen-message--stacked messages))))
+           "\n")))))))
 
 (defun limen-message-transcript ()
   "Show the memex transcript of the agent the active composer writes to.
