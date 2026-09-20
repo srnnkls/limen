@@ -293,7 +293,7 @@
             (setq second-session
                   (limen-open-session :provider 'second :project-root second-root))
             (should (= (cl-count #'limen-editor-selection-context-changed
-                                 post-command-hook)
+                                 post-command-hook :test #'eq)
                        1))
             (limen-session-subscribe
              first-session

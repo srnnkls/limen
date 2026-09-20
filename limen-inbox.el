@@ -665,7 +665,7 @@ rule begins and the preview stays in its column."
   (append (make-list (length old) "right")
           '("ctrl+a" "ctrl+k")
           (apply #'append
-                 (make-list (cl-count ?\n old)
+                 (make-list (cl-count ?\n old :test #'eql)
                             '("backspace" "ctrl+a" "ctrl+k")))))
 
 (defun limen-inbox--preview-answer (target value id keys)

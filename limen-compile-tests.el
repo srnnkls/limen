@@ -272,7 +272,7 @@
             (should
              (equal (list (string-bytes text)
                           (length text)
-                          (cl-mismatch text expected-tail)
+                          (cl-mismatch text expected-tail :test #'eql)
                           (string-match-p (regexp-quote sentinel-secret) text))
                     '(65536 65535 nil nil)))
             (should (multibyte-string-p text))
