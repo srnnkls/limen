@@ -375,6 +375,7 @@
                 ((symbol-function 'cera-pane) #'list)
                 ((symbol-function 'cera-update-pane) #'ignore)
                 ((symbol-function 'cera-read-stack) #'ignore)
+                ((symbol-function 'cera-origin-buffer) #'current-buffer)
                 ((symbol-function 'run-at-time)
                  (lambda (&rest _)
                    (should started) (setq scheduled t) (timer-create))))
@@ -777,6 +778,7 @@
                 ((symbol-function 'cera-read-stack) #'ignore)
                 ((symbol-function 'cera-input-text) (lambda () "left unsent"))
                 ((symbol-function 'cera-cancel) #'ignore)
+                ((symbol-function 'cera-origin-buffer) #'current-buffer)
                 ((symbol-function 'run-at-time) (lambda (&rest _) (timer-create))))
         (should (eq (condition-case nil
                         (limen-message--read-field

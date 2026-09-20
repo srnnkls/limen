@@ -83,6 +83,7 @@ uses its existing authentication; failures leave the composer usable."
 (declare-function cera-pane-kind "ext:cera" (pane) t)
 (declare-function cera-set-pane-text "ext:cera" (pane text))
 (declare-function cera-cancel "ext:cera" ())
+(declare-function cera-origin-buffer "ext:cera" ())
 (declare-function herdr-agent-find "ext:herdr-agent" (server-key terminal-id))
 (declare-function herdr-agent-session-agent-session "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-kind "ext:herdr-agent" (session) t)
@@ -175,6 +176,15 @@ one before it stands until the new one arrives.")
   scope records requests (retrieving t) (scanned 0) (chars 0)
   recap latest role messages (cursor 0) history (recalled nil) draft
   expanded dismissed recap-timer)
+
+(defun limen-message--state-here ()
+  "Return the composer state of the buffer the field here was opened for.
+The field's commands run wherever its input is written, which cera may
+put in another buffer than the one the composer was opened in."
+  (buffer-local-value 'limen-message--active
+                      (if (fboundp 'cera-origin-buffer)
+                          (cera-origin-buffer)
+                        (current-buffer))))
 
 (defun limen-message--current-p (state)
   "Return non-nil while STATE owns its original composer."
@@ -291,7 +301,7 @@ so drawn nowhere."
 The session is the one the composer already found for the agent, so the
 transcript opens without looking it up again."
   (interactive)
-  (let* ((state limen-message--active)
+  (let* ((state (limen-message--state-here))
          (target (and state (limen-message--state-target state)))
          (scope (or (and state (limen-message--state-scope state))
                     (and target (gethash target limen-message--scopes)))))
@@ -307,7 +317,7 @@ transcript opens without looking it up again."
 A positive STEP goes back through what the agent said, a negative one
 returns towards its latest.  The end of what was read stops the walk
 rather than wrapping it."
-  (let* ((state limen-message--active)
+  (let* ((state (limen-message--state-here))
          (messages (and state (limen-message--current-p state)
                         (limen-message--state-messages state))))
     (unless messages
@@ -346,7 +356,7 @@ answers nil itself so the composing is left alone."
 
 (defun limen-message--state-history-p ()
   "Return non-nil when the composer here has messages sent to walk."
-  (when-let* ((state limen-message--active)
+  (when-let* ((state (limen-message--state-here))
               ((limen-message--current-p state)))
     (limen-message--state-history state)))
 
@@ -354,7 +364,7 @@ answers nil itself so the composing is left alone."
   "Write the message STEP entries further back into the field.
 A positive STEP goes back through what was sent, a negative one returns
 towards the draft the walk started from, which is held while it lasts."
-  (when-let* ((state limen-message--active)
+  (when-let* ((state (limen-message--state-here))
               ((limen-message--current-p state))
               (history (limen-message--state-history state)))
     (let* ((recalled (limen-message--state-recalled state))
@@ -393,7 +403,7 @@ Away from the last line of the input, or with the draft already back,
 the point moves down instead."
   (interactive)
   (if (and (limen-message--state-history-p)
-           (limen-message--state-recalled limen-message--active)
+           (limen-message--state-recalled (limen-message--state-here))
            (limen-message--input-edge-p 'last))
       (limen-message--walk-history -1)
     (call-interactively #'next-line)))
@@ -416,7 +426,7 @@ The messages are built again from what was already read, so the walk
 takes in both sides from where it stands."
   (interactive)
   (setq limen-message-user-messages (not limen-message-user-messages))
-  (when-let* ((state limen-message--active)
+  (when-let* ((state (limen-message--state-here))
               ((limen-message--current-p state)))
     (limen-message--finish state))
   (message (if limen-message-user-messages
@@ -426,7 +436,7 @@ takes in both sides from where it stands."
 (defun limen-message-toggle ()
   "Show the whole message in the active composer, or only its preview."
   (interactive)
-  (when-let* ((state limen-message--active)
+  (when-let* ((state (limen-message--state-here))
               ((limen-message--current-p state))
               ((limen-message--state-latest state)))
     (setf (limen-message--state-expanded state)
@@ -929,9 +939,9 @@ a field close it again."
                 (define-key map (kbd "C-c C-v")
                             `(menu-item "" limen-message-toggle
                                         :filter ,(lambda (command)
-                                                   (when (and (eq (current-buffer)
+                                                   (when (and (eq (cera-origin-buffer)
                                                                   (limen-message--state-buffer state))
-                                                              (eq limen-message--active state)
+                                                              (eq (limen-message--state-here) state)
                                                               (limen-message--state-latest state))
                                                      command))))
                 (if cera-session-keymap
@@ -939,14 +949,15 @@ a field close it again."
                   map)))
              (cera-session-start-hook
               (cons (lambda (_session)
-                      (when (and (eq (current-buffer) (limen-message--state-buffer state))
+                      (when (and (eq (cera-origin-buffer) (limen-message--state-buffer state))
                                  (limen-message--state-decorated state)
                                  (not (limen-message--state-started state)))
                         (setf (limen-message--state-started state) t)
-                        (setq limen-message--active state)
-                        (setf (limen-message--state-close-hook state)
-                              (lambda () (limen-message--close state)))
-                        (add-hook 'kill-buffer-hook (limen-message--state-close-hook state) nil t)
+                        (with-current-buffer (limen-message--state-buffer state)
+                          (setq limen-message--active state)
+                          (setf (limen-message--state-close-hook state)
+                                (lambda () (limen-message--close state)))
+                          (add-hook 'kill-buffer-hook (limen-message--state-close-hook state) nil t))
                         (push (run-at-time 0 nil #'limen-message--resolve state)
                               (limen-message--state-timers state))))
                     cera-session-start-hook)))
