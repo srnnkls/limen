@@ -158,6 +158,12 @@ turn's question stands among them, and the rule beside each says which
 side it came from."
   :type 'boolean :group 'limen-message)
 
+(defcustom limen-message-message-counts '(1 2 3)
+  "How many messages the pane shows, as the steps a cycle runs through.
+`limen-message-cycle-messages' moves to the next of these and wraps at
+the end, so the first is what a composer opens with."
+  :type '(repeat natnum) :group 'limen-message)
+
 (defcustom limen-message-history-limit 32
   "Messages kept per agent for walking back through what was sent."
   :type 'natnum :group 'limen-message)
@@ -182,7 +188,7 @@ one before it stands until the new one arrives.")
   buffer token target context summary live timers process stderr directory decorated started close-hook
   scope records requests (retrieving t) (scanned 0) (chars 0)
   recap latest role messages (cursor 0) history (recalled nil) draft
-  expanded dismissed recap-timer)
+  expanded shown dismissed recap-timer)
 
 (defun limen-message--state-here ()
   "Return the composer state of the buffer the field here was opened for.
@@ -286,15 +292,31 @@ same one again costs what drawing it the first time did.")
             (clrhash limen-message--rendered))
           (puthash text (or drawn text) limen-message--rendered)))))
 
-(defun limen-message--rule-face (state)
-  "Return the face the rule beside STATE's message is drawn in.
+(defun limen-message--rule-face (role)
+  "Return the face the rule beside a message from ROLE is drawn in.
 While both sides are shown the rule says which one spoke; with the
 agent's alone there is nothing to tell apart."
   (if (not limen-message-user-messages)
       limen-message-rule-face
-    (if (equal (limen-message--state-role state) "user")
+    (if (equal role "user")
         'limen-message-user-rule
       'limen-message-agent-rule)))
+
+(defun limen-message--shown (state)
+  "Return the number of messages STATE has open at once."
+  (or (limen-message--state-shown state)
+      (car limen-message-message-counts)
+      1))
+
+(defun limen-message--window (state)
+  "Return the messages STATE has open, oldest first.
+A message drawn from what was cached stands alone until the session has
+been read, which is when there is a walk to take a window out of."
+  (if-let* ((messages (limen-message--state-messages state)))
+      (reverse (seq-take (nthcdr (limen-message--state-cursor state) messages)
+                         (limen-message--shown state)))
+    (when-let* ((text (limen-message--state-latest state)))
+      (list (cons (limen-message--state-role state) text)))))
 
 (defun limen-message--show-context (state)
   "Draw STATE's context pane: its recap line, then the message under it.
@@ -302,19 +324,23 @@ The recap keeps its line while it is still being written, so the pane
 does not jump as it arrives.  With neither line the pane is empty, and
 so drawn nowhere."
   (let ((recap (limen-message--state-recap state))
-        (rule (limen-message--rule-face state))
-        (text (limen-message--rendered (limen-message--state-latest state))))
+        (window (limen-message--window state)))
     (limen-message--update
      state 'limen-context
-     (if (not (or recap text))
+     (if (not (or recap window))
          ""
        (limen-message--headroom
         (string-join
-         (list (limen-message--callout (or recap "") limen-message-recap-face t)
-               (limen-message--callout
-                (if (limen-message--state-expanded state)
-                    (or text "") (limen-message--preview (or text "")))
-                limen-message-text-face nil rule))
+         (cons (limen-message--callout (or recap "") limen-message-recap-face t)
+               (mapcar
+                (lambda (message)
+                  (let ((text (or (limen-message--rendered (cdr message)) "")))
+                    (limen-message--callout
+                     (if (limen-message--state-expanded state)
+                         text (limen-message--preview text))
+                     limen-message-text-face nil
+                     (limen-message--rule-face (car message)))))
+                window))
          "\n"))))))
 
 (defun limen-message-transcript ()
@@ -453,6 +479,18 @@ takes in both sides from where it stands."
   (message (if limen-message-user-messages
                "Showing both sides"
              "Showing what the agent said")))
+
+(defun limen-message-cycle-messages ()
+  "Show the next of `limen-message-message-counts' messages in the pane."
+  (interactive)
+  (when-let* ((state (limen-message--state-here))
+              ((limen-message--current-p state))
+              (counts limen-message-message-counts)
+              (next (or (cadr (member (limen-message--shown state) counts))
+                        (car counts))))
+    (setf (limen-message--state-shown state) next)
+    (limen-message--show-context state)
+    (message "Showing %d message%s" next (if (= next 1) "" "s"))))
 
 (defun limen-message-toggle ()
   "Show the whole message in the active composer, or only its preview."
@@ -955,6 +993,7 @@ a field close it again."
                               `(menu-item "" ,(cdr binding)
                                           :filter limen-message--without-completion)))
                 (define-key map (kbd "C-c C-u") #'limen-message-toggle-user)
+                (define-key map (kbd "C-c C-n") #'limen-message-cycle-messages)
                 (define-key map (kbd "M-p") #'limen-message-older)
                 (define-key map (kbd "M-n") #'limen-message-newer)
                 (define-key map (kbd "C-c C-v")
