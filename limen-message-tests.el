@@ -272,6 +272,9 @@
   (declare (indent 0) (debug t))
   `(limen-message-tests--state
      (let ((limen-message--summaries (make-hash-table :test #'equal))
+           ;; One backend, so that what is asserted here is the transport
+           ;; rather than the stepping between them.
+           (limen-message-backends '(claude))
            argv stdin sentinel filter timeout (status 'run) (exit-code 0) killed eof cwd)
        (cl-letf (((symbol-function 'make-process)
                   (lambda (&rest keys)
@@ -344,9 +347,14 @@
   (limen-message-tests--process
     (limen-message--generate state 'key "conversation")
     (funcall filter 'fake-process (make-string 5000 ?x))
-    (should killed)
-    (should-not (gethash 'key limen-message--summaries))
-    (should (equal (cdar updates) ""))))
+    (funcall filter 'fake-process (make-string 5000 ?y))
+    (setq status 'exit)
+    (funcall sentinel 'fake-process "finished")
+    ;; What was kept is cut to the limit, and the recap taken from it to
+    ;; the line a recap is allowed to be.
+    (should (<= (length (gethash 'key limen-message--summaries))
+                limen-message--recap-max-chars))
+    (should-not (string-match-p "y" (gethash 'key limen-message--summaries)))))
 
 (ert-deftest limen-message-process-launch-error-is-nonfatal ()
   (limen-message-tests--state
@@ -647,7 +655,7 @@
         (should-not (string-match-p "[*`#_~]" plain))))))
 
 (ert-deftest limen-message-recap-prompt-asks-for-one-plain-short-line ()
-  (let ((prompt (car (last limen-message--command))))
+  (let ((prompt limen-message--instruction))
     (should (string-match-p "one plain-text line" prompt))
     (should (string-match-p (number-to-string limen-message--recap-max-chars) prompt))
     (should (string-match-p "No Markdown" prompt))))
@@ -992,6 +1000,77 @@
       (limen-message-older)
       (should (equal (limen-message-tests--bare (cdar updates))
                      "\nfirst\nsecond")))))
+
+(ert-deftest limen-message-codex-is-asked-in-its-own-directory-and-read-from-a-file ()
+  (limen-message-tests--process
+    (let ((limen-message-backends '(codex))
+          (limen-message-codex-model "gpt-5.6-luna")
+          (limen-message-codex-effort "low"))
+      (limen-message--generate state 'key "private transcript; $(bad)")
+      (should (equal (car argv) "codex"))
+      (should (equal (cadr argv) "exec"))
+      (should (equal (cadr (member "--model" argv)) "gpt-5.6-luna"))
+      (should (equal (cadr (member "-c" argv)) "model_reasoning_effort=\"low\""))
+      (should (equal (cadr (member "--sandbox" argv)) "read-only"))
+      (should (member "--ephemeral" argv))
+      (should (member "--skip-git-repo-check" argv))
+      (should (member "--ignore-user-config" argv))
+      ;; The transcript is never an argument, and the instruction leads it.
+      (should-not (seq-some (lambda (arg) (string-match-p "private transcript" arg)) argv))
+      (should (string-prefix-p limen-message--instruction stdin))
+      (should (string-suffix-p "private transcript; $(bad)" stdin))
+      ;; Codex reports as it works, so its answer is taken from the file it
+      ;; was told to leave it in rather than from what it said.
+      (let ((file (cadr (member "-o" argv))))
+        (should (equal (file-name-directory file) cwd))
+        (write-region "Rescanning the stale index." nil file nil 'quiet))
+      (funcall filter 'fake-process "thinking out loud")
+      (setq status 'exit)
+      (funcall sentinel 'fake-process "finished")
+      (should (equal (gethash 'key limen-message--summaries)
+                     "Rescanning the stale index.")))))
+
+(ert-deftest limen-message-a-backend-that-fails-hands-on-to-the-next ()
+  (limen-message-tests--state
+    (let ((limen-message--summaries (make-hash-table :test #'equal))
+          (limen-message-backends '(codex claude))
+          commands sentinels (status 'run) (exit-code 1))
+      (cl-letf (((symbol-function 'make-process)
+                 (lambda (&rest keys)
+                   (push (car (plist-get keys :command)) commands)
+                   (push (plist-get keys :sentinel) sentinels)
+                   'fake-process))
+                ((symbol-function 'process-send-string) #'ignore)
+                ((symbol-function 'process-send-eof) #'ignore)
+                ((symbol-function 'process-status) (lambda (_) status))
+                ((symbol-function 'process-exit-status) (lambda (_) exit-code))
+                ((symbol-function 'process-live-p) (lambda (_) (eq status 'run)))
+                ((symbol-function 'delete-process) #'ignore)
+                ((symbol-function 'run-at-time)
+                 (lambda (&rest _) (timer-create)))
+                ((symbol-function 'cancel-timer) #'ignore))
+        (limen-message--generate state 'key "conversation")
+        (should (equal commands '("codex")))
+        ;; Codex ends badly, so claude is asked the same question.
+        (setq status 'exit)
+        (funcall (car sentinels) 'fake-process "failed")
+        (should (equal (reverse commands) '("codex" "claude")))
+        (setq exit-code 0)
+        (cl-letf (((symbol-function 'limen-message--answered)
+                   (lambda (&rest _) "What claude said")))
+          (funcall (car sentinels) 'fake-process "finished"))
+        (should (equal (gethash 'key limen-message--summaries) "What claude said"))))))
+
+(ert-deftest limen-message-nothing-left-to-ask-keeps-the-recap-already-held ()
+  (limen-message-tests--state
+    (let ((limen-message--recaps (make-hash-table :test #'equal)))
+      (setf (limen-message--state-scope state) '("claude" "id" "/one"))
+      (puthash '("claude" "id" "/one") "earlier recap" limen-message--recaps)
+      (cl-letf (((symbol-function 'make-process)
+                 (lambda (&rest _) (ert-fail "Unexpected command"))))
+        (let ((limen-message-backends '()))
+          (limen-message--generate state 'key "conversation"))
+        (should (equal (limen-message--state-recap state) "earlier recap"))))))
 
 (provide 'limen-message-tests)
 ;;; limen-message-tests.el ends here
