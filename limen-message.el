@@ -246,7 +246,7 @@ put in another buffer than the one the composer was opened in."
 
 (defun limen-message--recap-text (text)
   "Normalize recap TEXT to one plain line of at most 50 characters."
-  (let* ((plain (replace-regexp-in-string "^```[^\n]*$\|^~~~[^\n]*$" "" text))
+  (let* ((plain (replace-regexp-in-string "^```[^\n]*$\\|^~~~[^\n]*$" "" text))
          (plain (replace-regexp-in-string "\\[\\([^]\n]+\\)\\]([^ )\n]*)" "\\1" plain))
          (plain (replace-regexp-in-string "</?[[:alpha:]][^>\n]*>" "" plain))
          (plain (replace-regexp-in-string "^[[:blank:]]*[-+>•][[:blank:]]+" "" plain))
