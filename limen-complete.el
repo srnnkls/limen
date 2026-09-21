@@ -215,8 +215,9 @@ offering once the word it opened is finished."
 (defun limen-complete-in-field (bounds table)
   "Complete in the Cera field spanning BOUNDS, behind a source's character.
 Each source answers for the text behind its own character, up to the
-end of the word it sits in.  Text that opens none completes on TABLE, which is what the field was given -- for a
-Herdr message, the messages sent before it."
+end of the word it sits in.  Text that opens none completes on TABLE,
+which is what the field was given -- for a Herdr message, the messages
+sent before it."
   (or (when-let* ((trigger (limen-complete--trigger (car bounds) (point)))
                   (source (alist-get (car trigger) limen-complete-sources)))
         (funcall source (cdr trigger)
