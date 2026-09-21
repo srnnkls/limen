@@ -3181,7 +3181,8 @@
                          (set retargeted-variable destination)
                          (setq hook-state
                                (list buffer-file-name
-                                     buffer-file-truename)))
+                                     (expand-file-name
+                                      buffer-file-truename))))
                        nil t))
                     (let* ((ownership-before
                             (ownership-state owner buffer))
@@ -3210,7 +3211,7 @@
                            (buffer-state
                             (with-current-buffer buffer
                               (list buffer-file-name
-                                    buffer-file-truename
+                                    (expand-file-name buffer-file-truename)
                                     (buffer-modified-p)
                                     (buffer-string))))
                            (released (limen-release-owner owner)))
