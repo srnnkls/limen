@@ -1235,7 +1235,6 @@ START-TEXT and END-TEXT refine the selection bounds."
                      (limen--file-identifier-current-p
                       identity visited-identifier))
           (signal 'limen-conflict '("File changed on disk")))
-        (add-hook 'before-save-hook write-guard 100 t)
         (unwind-protect
             (progn
               (cl-letf (((symbol-function 'ask-user-about-supersession-threat)
@@ -1257,7 +1256,6 @@ START-TEXT and END-TEXT refine the selection bounds."
               (limen--buffer-record buffer))
           (when (buffer-live-p buffer)
             (with-current-buffer buffer
-              (remove-hook 'before-save-hook write-guard t)
               (unless (limen--buffer-save-destination-p
                        buffer identity root)
                 (setq buffer-file-name original-name
