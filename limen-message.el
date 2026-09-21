@@ -179,7 +179,7 @@ installed, fails or says nothing steps aside for the next."
   "The model claude is asked for a recap with."
   :type 'string :group 'limen-message)
 
-(defcustom limen-message-message-gap 3
+(defcustom limen-message-message-gap 6
   "Pixels of blank space kept between the messages the pane shows."
   :type 'natnum :group 'limen-message)
 
@@ -213,7 +213,7 @@ one before it stands until the new one arrives.")
   buffer token target context summary live timers process stderr directory decorated started close-hook
   scope records requests (retrieving t) (scanned 0) (chars 0)
   recap latest role messages (cursor 0) history (recalled nil) draft
-  expanded shown dismissed recap-timer)
+  expanded dismissed recap-timer)
 
 (defun limen-message--state-here ()
   "Return the composer state of the buffer the field here was opened for.
@@ -340,11 +340,14 @@ agent's alone there is nothing to tell apart."
         'limen-message-user-rule
       'limen-message-agent-rule)))
 
-(defun limen-message--shown (state)
-  "Return the number of messages STATE has open at once."
-  (or (limen-message--state-shown state)
-      (car limen-message-message-counts)
-      1))
+(defvar limen-message--shown nil
+  "How many messages the pane shows, or nil for the first step.
+The number outlives the field it was chosen in, the way the sides shown
+do, so that a composer opens showing what the last one was left on.")
+
+(defun limen-message--messages-shown ()
+  "Return the number of messages the pane has open at once."
+  (or limen-message--shown (car limen-message-message-counts) 1))
 
 (defun limen-message--window (state)
   "Return the messages STATE has open, oldest first.
@@ -352,7 +355,7 @@ A message drawn from what was cached stands alone until the session has
 been read, which is when there is a walk to take a window out of."
   (if-let* ((messages (limen-message--state-messages state)))
       (reverse (seq-take (nthcdr (limen-message--state-cursor state) messages)
-                         (limen-message--shown state)))
+                         (limen-message--messages-shown)))
     (when-let* ((text (limen-message--state-latest state)))
       (list (cons (limen-message--state-role state) text)))))
 
@@ -526,9 +529,9 @@ takes in both sides from where it stands."
   (when-let* ((state (limen-message--state-here))
               ((limen-message--current-p state))
               (counts limen-message-message-counts)
-              (next (or (cadr (member (limen-message--shown state) counts))
+              (next (or (cadr (member (limen-message--messages-shown) counts))
                         (car counts))))
-    (setf (limen-message--state-shown state) next)
+    (setq limen-message--shown next)
     (limen-message--show-context state)
     (message "Showing %d message%s" next (if (= next 1) "" "s"))))
 

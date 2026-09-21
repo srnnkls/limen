@@ -974,6 +974,7 @@
 (ert-deftest limen-message-cycling-shows-more-messages-oldest-first ()
   (limen-message-tests--state
     (let ((limen-message-message-counts '(1 2 3))
+          (limen-message--shown nil)
           (limen-message-markdown nil))
       (setf (limen-message--state-records state)
             (list (limen-message-tests--record 3 "assistant" "third")
@@ -985,7 +986,7 @@
                      '("third" "second" "first")))
       (should (equal (limen-message-tests--bare (cdar updates)) "\nthird"))
       (limen-message-cycle-messages)
-      (should (= (limen-message--state-shown state) 2))
+      (should (= limen-message--shown 2))
       (should (equal (limen-message-tests--bare (cdar updates))
                      "\nsecond\nthird"))
       (limen-message-cycle-messages)
@@ -993,7 +994,7 @@
                      "\nfirst\nsecond\nthird"))
       ;; The steps wrap round to the first.
       (limen-message-cycle-messages)
-      (should (= (limen-message--state-shown state) 1))
+      (should (= limen-message--shown 1))
       (should (equal (limen-message-tests--bare (cdar updates)) "\nthird"))
       ;; The window follows the walk, and stops where what was read does.
       (limen-message-cycle-messages)
@@ -1075,6 +1076,7 @@
 (ert-deftest limen-message-messages-are-held-apart-by-a-gap ()
   (limen-message-tests--state
     (let ((limen-message-message-counts '(2))
+          (limen-message--shown nil)
           (limen-message-message-gap 3)
           (limen-message-markdown nil))
       (setf (limen-message--state-records state)
@@ -1092,6 +1094,29 @@
         ;; The one gap sits on the newline between the two messages.
         (should (equal gaps (list ?\n)))
         (should (equal (limen-message-tests--bare pane) "\nfirst\nsecond"))))))
+
+(ert-deftest limen-message-the-count-chosen-outlives-the-field ()
+  "A number of messages chosen in one field is what the next opens on."
+  (let ((limen-message-message-counts '(1 2 3))
+        (limen-message--shown nil)
+        (limen-message-markdown nil))
+    (limen-message-tests--state
+      (setf (limen-message--state-records state)
+            (list (limen-message-tests--record 2 "assistant" "second")
+                  (limen-message-tests--record 1 "assistant" "first"))
+            (limen-message--state-scope state) '("claude" "id" "/opaque"))
+      (limen-message--finish state)
+      (limen-message-cycle-messages)
+      (should (= limen-message--shown 2)))
+    ;; A field of its own, opened after the one that chose the number.
+    (limen-message-tests--state
+      (setf (limen-message--state-records state)
+            (list (limen-message-tests--record 2 "assistant" "second")
+                  (limen-message-tests--record 1 "assistant" "first"))
+            (limen-message--state-scope state) '("claude" "id" "/opaque"))
+      (limen-message--finish state)
+      (should (equal (limen-message-tests--bare (cdar updates))
+                     "\nfirst\nsecond")))))
 
 (provide 'limen-message-tests)
 ;;; limen-message-tests.el ends here
