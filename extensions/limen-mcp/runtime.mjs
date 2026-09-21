@@ -1,6 +1,7 @@
 const SELECTION_URI = "emacs://context/selection";
 const PUSH_URI = "emacs://context/push";
 const PROTOCOL_VERSION = "2026-07-28";
+const LOADED = Symbol.for("limen.mcp.loaded");
 
 function parseSseFrame(frame) {
   const data = [];
@@ -126,7 +127,7 @@ class McpClient {
     const { result } = await this.request("initialize", {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: "limen-pi", version: "0.1.0" },
+      clientInfo: { name: "limen-mcp", version: "0.1.0" },
     });
     this.protocolVersion = result.protocolVersion;
     await this.notify("notifications/initialized");
@@ -245,6 +246,8 @@ export function createLimenExtension(Type, options = {}) {
     const token = env.LIMEN_MCP_TOKEN;
     const session = env.LIMEN_MCP_SESSION;
     if (!url || !token || !session || !fetch) return;
+    if (pi[LOADED]) return;
+    pi[LOADED] = true;
 
     const ownedTools = new Set();
     const subscriptions = [SELECTION_URI, PUSH_URI];
