@@ -53,3 +53,8 @@
 (add-hook 'eask-before-compile-hook
           (lambda ()
             (setq byte-compile-error-on-warn t)))
+
+;; Checkdoc's experimental verb check reads every verb in a docstring, not
+;; the first word the convention is about, and asks for "whose agent run at
+;; LOCATION".  The first-word check stays on.
+(setq checkdoc-verb-check-experimental-flag nil)
