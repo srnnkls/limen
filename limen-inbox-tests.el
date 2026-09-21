@@ -134,7 +134,7 @@
 (ert-deftest limen-inbox-reads-codex-questions-from-the-transcript-on-stop ()
   (limen-inbox-tests--with-inbox
     (let ((transcript (make-temp-file "limen-inbox-rollout" nil ".jsonl"))
-          (limen-inbox-transcript-tail-bytes 4096))
+          (limen-transcript-tail-bytes 4096))
       (unwind-protect
           (progn
             (with-temp-file transcript

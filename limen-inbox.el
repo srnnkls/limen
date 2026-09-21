@@ -21,6 +21,7 @@
 (require 'subr-x)
 (require 'magit-section)
 (require 'limen-hooks)
+(require 'limen-transcript)
 
 (declare-function herdr-status-agent-row "ext:herdr-status" (entry widths workspaces))
 (declare-function herdr-status-request-refresh "ext:herdr-status" ())
@@ -38,11 +39,6 @@
 (defvar herdr-status--refreshing)
 (defvar herdr-status-sections-functions)
 (defvar herdr-status-preview-rule)
-
-(defcustom limen-inbox-transcript-tail-bytes 262144
-  "How many bytes from the end of a Codex transcript are scanned for questions."
-  :type '(integer 1024)
-  :group 'limen-hooks)
 
 (defcustom limen-inbox-settle-seconds 10
   "Seconds a transcript-sourced question is kept before its agent must be blocked.
@@ -223,18 +219,6 @@ The qid is \"ID#INDEX\", so an answer can recover its entry id from it."
        (limen-inbox--remove-if
         (lambda (entry) (equal (alist-get 'agent_session entry) agent)))))
 
-(defun limen-inbox--transcript-lines (path)
-  "Return the complete lines in the tail of the transcript PATH."
-  (when (and (stringp path) (file-readable-p path))
-    (let* ((size (file-attribute-size (file-attributes path)))
-           (start (max 0 (- size limen-inbox-transcript-tail-bytes))))
-      (with-temp-buffer
-        (insert-file-contents path nil start size)
-        (goto-char (point-min))
-        (when (> start 0)
-          (forward-line 1))
-        (split-string (buffer-substring (point) (point-max)) "\n" t)))))
-
 (defun limen-inbox--transcript-call (line turn)
   "Return (CALL-ID . QUESTIONS) when LINE records a question call in TURN."
   (when (string-match-p "request_user_input" line)
@@ -267,7 +251,7 @@ the call only shows in the transcript; return non-nil when any was added."
   (let ((agent (alist-get 'session_id payload))
         (turn (alist-get 'turn_id payload))
         added)
-    (dolist (line (limen-inbox--transcript-lines
+    (dolist (line (limen-transcript-lines
                    (alist-get 'transcript_path payload)))
       (when-let* ((call (limen-inbox--transcript-call line turn)))
         (let ((id (or (car call) (format "%s:%s" agent (float-time)))))
