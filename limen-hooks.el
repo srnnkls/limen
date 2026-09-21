@@ -95,6 +95,16 @@ attach its terminal to review it.  Nil reviews every agent with a session."
   :type 'boolean
   :group 'limen-hooks)
 
+(defcustom limen-hooks-context-attached-only nil
+  "Whether only an agent whose terminal Emacs shows has its prompts carry context.
+An agent adopted quietly has a session, so what Emacs is looking at
+reaches a pane the user is not looking at.  Non-nil keeps the context
+for the agents whose terminal is on screen; the herd notices queued for
+an agent reach it either way, and so does the session start, which
+fires before any terminal can be attached."
+  :type 'boolean
+  :group 'limen-hooks)
+
 (defcustom limen-hooks-review-function #'limen-hooks-review-with-magit
   "Function shown the absolute path of a project file an agent edited."
   :type 'function
@@ -774,6 +784,11 @@ waits on it."
       (run-at-time 0 nil limen-hooks-review-function (expand-file-name file))
       nil)))
 
+(defun limen-hooks--context-wanted-p (session)
+  "Return non-nil when SESSION's prompts are to carry Emacs context."
+  (or (not limen-hooks-context-attached-only)
+      (and session (limen-herdr-attached-p session))))
+
 (defun limen-hooks-output (request context)
   "Return the hook output for the CLI REQUEST in CONTEXT, or an empty string."
   (let ((provider (alist-get 'provider request)))
@@ -809,7 +824,10 @@ waits on it."
                      ("SessionStart" (limen-skill context))
                      ("UserPromptSubmit"
                       (string-join
-                       (cons (limen-hooks--prompt-context session root) extra)
+                       (delq nil
+                             (cons (and (limen-hooks--context-wanted-p session)
+                                        (limen-hooks--prompt-context session root))
+                                   extra))
                        "\n\n"))
                      (_ nil)))))
       (if (and text (not (string-empty-p text)))

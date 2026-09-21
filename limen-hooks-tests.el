@@ -760,3 +760,32 @@ nothing to snapshot."
   (should (limen-hooks-installed-p 'pi))
   (should-error (limen-hooks-settings-file 'pi)
                 :type 'limen-invalid-arguments))
+
+(ert-deftest limen-hooks-can-keep-context-to-the-agents-emacs-shows ()
+  (let* ((root (file-name-as-directory (make-temp-file "limen-hooks-gate" t)))
+         (session (limen-open-session :provider 'claude :project-root root))
+         (limen-hooks-mode t)
+         (limen-hooks--pending (make-hash-table :test #'eq))
+         (limen-hooks--last (make-hash-table :test #'eq))
+         (limen-hooks--shortened (make-hash-table :test #'eq))
+         (limen-hooks-event-functions nil)
+         (prompt (limen-hooks-tests--hook-request
+                  "claude" "UserPromptSubmit" (limen-session-id session) root))
+         (start (limen-hooks-tests--hook-request
+                 "claude" "SessionStart" (limen-session-id session) root)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'limen-herdr-attached-p) (lambda (_) nil)))
+          (let ((limen-hooks-context-attached-only nil))
+            (should (consp (limen-hooks-tests--context prompt root))))
+          (let ((limen-hooks-context-attached-only t))
+            (should (equal (limen-hooks-tests--context prompt root) ""))
+            (should (consp (limen-hooks-tests--context start root)))
+            (let ((limen-hooks-event-functions
+                   (list (lambda (&rest _) "herd: peira asked for the plan"))))
+              (should (equal (cdr (limen-hooks-tests--context prompt root))
+                             "herd: peira asked for the plan"))))
+          (cl-letf (((symbol-function 'limen-herdr-attached-p) (lambda (_) t)))
+            (let ((limen-hooks-context-attached-only t))
+              (should (consp (limen-hooks-tests--context prompt root))))))
+      (limen-close-session session)
+      (delete-directory root t))))
