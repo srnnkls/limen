@@ -4,6 +4,8 @@
 (require 'ert)
 (require 'limen-model)
 
+(defvar herdr-socket-path)
+
 (defun limen-model-tests--payload (event key value)
   "Return a hook payload for EVENT carrying VALUE under KEY."
   `((hook_event_name . ,event)
