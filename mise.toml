@@ -1,0 +1,21 @@
+[tools]
+node = "latest"
+
+[tasks.install-extensions]
+description = "Link the harness extensions into Pi's and Oh My Pi's extension directories"
+run = """
+set -euo pipefail
+source="$(cd "$(dirname "${MISE_PROJECT_ROOT:-.}")" && cd "$(basename "${MISE_PROJECT_ROOT:-.}")" && pwd)/extensions"
+for home in "${PI_HOME:-$HOME/.pi}" "${OMP_HOME:-$HOME/.omp}"; do
+  target="$home/agent/extensions"
+  mkdir -p "$target"
+  for extension in limen-hooks limen-mcp; do
+    ln -sfn "$source/$extension" "$target/$extension"
+    printf '%s -> %s\\n' "$target/$extension" "$source/$extension"
+  done
+done
+"""
+
+[tasks.test]
+description = "Run the ERT suites and the extension tests"
+run = ["eask test ert $(ls limen*-tests.el)", "eask run script test-extensions"]

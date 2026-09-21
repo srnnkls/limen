@@ -18,17 +18,17 @@ Limen operations/events ├─ Codex MCP Streamable HTTP
 | Operations | CLI | registry-derived MCP tools | registry-derived Pi tools |
 | Passive selection | `focus:` line with the selected range on the next prompt | subscribed MCP resource update | latest update injected once before the next turn |
 | Explicit context push | queued for the next prompt hook | queued for the next prompt hook | model-visible extension message |
-| Prompt hooks | `UserPromptSubmit` and `SessionStart` in user settings | `UserPromptSubmit` and `SessionStart` in `hooks.json` | none |
-| Question inbox | `AskUserQuestion` through `PreToolUse`/`PostToolUse` | `request_user_input_async` read from the transcript on `Stop` | none |
+| Prompt hooks | `UserPromptSubmit` and `SessionStart` in user settings | `UserPromptSubmit` and `SessionStart` in `hooks.json` | every event, translated by the `limen-hooks` extension |
+| Question inbox | `AskUserQuestion` through `PreToolUse`/`PostToolUse` | `request_user_input_async` read from the transcript on `Stop` | once it names a question tool |
 | Herd notices | herdr agent states, refined by `SessionStart`, `UserPromptSubmit`, `Stop`, `SessionEnd` and the session name from `sessions/*.json` | herdr agent states, refined by the same events, unnamed | herdr agent states |
-| Edit review | `PostToolUse` on `Edit`, `Write`, `MultiEdit` opens the file's Magit diff | none until its edit tool is named in `limen-provider.el` | none |
+| Edit review | `PostToolUse` on `Edit`, `Write`, `MultiEdit` opens the file's Magit diff | none until its edit tool is named in `limen-provider.el` | `tool_result` on `edit`, `write` opens the file's Magit diff |
 | Interactive diffs | none | registry-derived MCP tools while `limen-editor-enable-diffs` is set | registry-derived Pi tools while `limen-editor-enable-diffs` is set |
-| Launch wiring | `LIMEN_SESSION` in the pane environment | per-launch MCP URL and bearer token | per-launch packaged extension and MCP environment |
-| Adopted external process | prompt hooks | prompt hooks | CLI only |
+| Launch wiring | `LIMEN_SESSION` in the pane environment | per-launch MCP URL and bearer token | discovered extensions, plus per-launch MCP environment |
+| Adopted external process | prompt hooks | prompt hooks | prompt hooks, without the MCP route |
 
 A Codex resource notification reports changed Emacs context to its MCP client. It does not prove that Codex inserted that resource into model context. Use the explicit context command when the model must receive the current selection.
 
-Pi's startup wiring cannot be retrofitted into an externally started process, so its adopted sessions report `cli-only` rather than claiming tool or context integration. Claude Code and Codex read their hooks from user settings, so an adopted process of either is integrated as fully as a launched one. `limen-herdr-claude-auto-adopt-mode` takes up Claude agents on the herdr sessions Emacs is attached to, `herdr-known-sessions`, working in known projects — those running when it starts and those detected later; a herdr session driven from its own terminal is left alone, so its agents get neither context nor reviews.
+Pi's MCP route cannot be retrofitted into an externally started process, so an adopted pane has no tools and no live selection; its hooks answer regardless, because `mise run install-extensions` links the `limen-hooks` extension where Pi and Oh My Pi discover it themselves. Claude Code and Codex read their hooks from user settings, so an adopted process of either is integrated as fully as a launched one. `limen-herdr-claude-auto-adopt-mode` takes up Claude agents on the herdr sessions Emacs is attached to, `herdr-known-sessions`, working in known projects — those running when it starts and those detected later; a herdr session driven from its own terminal is left alone, so its agents get neither context nor reviews.
 
 ## Shared contract
 
@@ -130,7 +130,7 @@ Herdr starts Codex with per-launch `mcp_servers.limen` configuration. It does no
 
 ### Pi
 
-Herdr starts Pi with `extensions/limen-pi/index.ts`. The packaged extension mirrors live MCP tools into `limen_*` Pi tools, refreshes active tools after registry changes, and handles deferred tool responses over SSE.
+Herdr starts Pi with `extensions/limen-mcp/index.ts`. The packaged extension mirrors live MCP tools into `limen_*` Pi tools, refreshes active tools after registry changes, and handles deferred tool responses over SSE.
 
 Selection updates replace one cached snapshot. `before_agent_start` injects it once when its sequence changes. Explicit pushes use `pi.sendMessage`. Shutdown disables extension-owned tools and closes only that session's event stream.
 

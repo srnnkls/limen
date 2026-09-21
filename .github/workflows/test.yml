@@ -43,8 +43,8 @@ jobs:
       - name: Test
         run: eask run script test
 
-      - name: Test Pi extension
-        run: eask run script test-pi-extension
+      - name: Test extensions
+        run: eask run script test-extensions
 
       - name: Checkdoc
         run: eask lint checkdoc --strict

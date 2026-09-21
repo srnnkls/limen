@@ -24,9 +24,12 @@
 (load-paths ".")
 
 (files "limen*.el" "bin/limen" "license"
-       '("extensions/limen-pi"
-         "extensions/limen-pi/index.ts"
-         "extensions/limen-pi/runtime.mjs")
+       '("extensions/limen-hooks"
+         "extensions/limen-hooks/index.ts"
+         "extensions/limen-hooks/runtime.mjs")
+       '("extensions/limen-mcp"
+         "extensions/limen-mcp/index.ts"
+         "extensions/limen-mcp/runtime.mjs")
        '(:exclude "limen*-tests.el"))
 
 (defconst limen-test-file-spec
@@ -44,8 +47,8 @@
                            (mapcar #'shell-quote-argument files))
                      " ")))
 
-(script "test-pi-extension"
-        "node --test extensions/limen-pi/runtime.test.mjs")
+(script "test-extensions"
+        "node --test extensions/limen-hooks/runtime.test.mjs extensions/limen-mcp/runtime.test.mjs")
 
 (add-hook 'eask-before-compile-hook
           (lambda ()
