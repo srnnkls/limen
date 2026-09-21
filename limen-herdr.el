@@ -546,6 +546,26 @@ other has the rendered context typed into the agent's pane."
          (limen-herdr--context-text context root))))
       t)))
 
+(declare-function herdr-agents "ext:herdr" ())
+(declare-function herdr-all-sessions "ext:herdr" ())
+(declare-function herdr-socket-file "ext:herdr-core" ())
+(defvar herdr-session)
+(defvar herdr-socket-path)
+
+(defun limen-herdr-agents ()
+  "Return every agent Herdr knows, each behind the socket of its session.
+Herdr answers for one session at a time and Emacs may watch several, so
+an agent is worth nothing without the server it was read from."
+  (mapcan
+   (lambda (session)
+     (let* ((herdr-session session)
+            (herdr-socket-path nil)
+            (server (ignore-errors (herdr-socket-file))))
+       (when server
+         (mapcar (lambda (entry) (cons server entry))
+                 (condition-case nil (herdr-agents) (error nil))))))
+   (condition-case nil (herdr-all-sessions) (error nil))))
+
 (defun limen-herdr--adapter (session phase &optional context)
   "Apply Limen adapter PHASE to Herdr SESSION using CONTEXT."
   (let ((provider (limen-herdr--provider session)))

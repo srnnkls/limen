@@ -98,16 +98,17 @@
       (limen-model-mode 1)
       (should (equal requested '("model")))
       (should (equal (alist-get 'claude limen-hooks-provider-events)
-                     '(("PostModelSwitch"))))
+                     '(("Stop") ("PostModelSwitch"))))
       (should-not (alist-get 'codex limen-hooks-provider-events))
       (should (memq #'limen-model--report-event limen-hooks-event-functions))
       (limen-model-mode 1)
       (should (equal (alist-get 'claude limen-hooks-provider-events)
-                     '(("PostModelSwitch"))))
+                     '(("Stop") ("PostModelSwitch"))))
       (limen-model-mode -1)
       (should-not (alist-get 'claude limen-hooks-provider-events))
       (should-not (memq #'limen-model--report-event limen-hooks-event-functions))
-      (should (equal removed '("PostModelSwitch"))))))
+      (should (equal (sort (copy-sequence removed) #'string<)
+                     '("PostModelSwitch" "Stop"))))))
 
 (ert-deftest limen-model-keeps-a-claude-only-event-out-of-the-others ()
   (let ((limen-hooks-mode nil)
@@ -119,3 +120,10 @@
 
 (provide 'limen-model-tests)
 ;;; limen-model-tests.el ends here
+
+(ert-deftest limen-model-passes-over-an-agent-already-named ()
+  (let ((limen-model-token "model"))
+    (should (limen-model--reported-p '((tokens . ((model . "claude-opus-5"))))))
+    (should-not (limen-model--reported-p '((tokens . ((model . ""))))))
+    (should-not (limen-model--reported-p '((tokens . ((context . "1k/200k"))))))
+    (should-not (limen-model--reported-p '((pane_id . "%1"))))))

@@ -20,6 +20,8 @@
 (require 'cl-lib)
 (require 'seq)
 (require 'limen-hooks)
+(require 'limen-transcript)
+(require 'limen-herdr)
 
 (declare-function herdr-api-pane-report-metadata "ext:herdr-api"
                   (pane-id source &rest arguments))
@@ -55,11 +57,14 @@ reported as it stands either way."
                  (const :tag "Identifier" id))
   :group 'limen-model)
 
-(defcustom limen-model-provider-events '((claude ("PostModelSwitch")))
-  "Hook events carrying a model, keyed by the provider that emits them.
-A provider's session start already runs Limen's hook, and says which
-model the agent opened on; these are the further events that say which
-model it moved to."
+(defcustom limen-model-provider-events '((claude ("PostModelSwitch") ("Stop"))
+                                         (pi ("PostModelSwitch") ("Stop"))
+                                         (omp ("PostModelSwitch") ("Stop")))
+  "Hook events a model is read from, keyed by the provider that emits them.
+A provider's session start already runs Limen's hook, and sometimes says
+which model the agent opened on; these are the further events that say
+which model it moved to, and the end of a turn, which says nothing and
+has the transcript read instead."
   :type '(alist :key-type symbol
                 :value-type (repeat (list string)))
   :group 'limen-model)
@@ -102,8 +107,28 @@ worth interrupting a hook over, so the report is dropped instead."
           model)
       (error nil))))
 
-(defun limen-model--report-event (_provider payload _session _context)
-  "Report the model PAYLOAD carries to the pane it came from.
+(defun limen-model-of-transcript (file &optional provider)
+  "Return the model the last answer in FILE was given, or nil.
+Claude names a model on the session start it sometimes leaves out, and
+on nothing else until the model changes; the transcript names it on
+every answer."
+  (when-let* ((model (alist-get 'model (limen-transcript-answer file provider)))
+              ((stringp model))
+              ((not (string-empty-p model))))
+    (limen-model--name model)))
+
+(defun limen-model--report-transcript (server pane transcript provider)
+  "Report the model PROVIDER's TRANSCRIPT last answered with to PANE on SERVER."
+  (when-let* ((model (limen-model-of-transcript transcript provider)))
+    (limen-model-report server pane model)))
+
+(defun limen-model--asked-for-p (provider payload)
+  "Return non-nil when PROVIDER's event in PAYLOAD is one Limen reads on."
+  (when-let* ((event (alist-get 'hook_event_name payload)))
+    (assoc event (alist-get (intern provider) limen-model-provider-events))))
+
+(defun limen-model--report-event (provider payload _session _context)
+  "Report the model PAYLOAD names, or the one its transcript last answered with.
 Runs for every answered hook event and answers nil, adding nothing to
 the context a prompt carries.
 
@@ -111,12 +136,67 @@ A hook is answered inside the Emacs server's process filter, and Herdr's
 request waits on `accept-process-output', which runs that filter again
 and lets the next hook in.  The report is made once the filter has
 returned, where waiting on a socket reaches nothing but itself."
-  (when-let* ((model (limen-model-of payload))
-              (server (alist-get 'server payload))
+  (when-let* ((server (alist-get 'server payload))
               (pane (alist-get 'pane payload)))
-    (run-at-time 0 nil #'limen-model-report server pane model))
+    (if-let* ((model (limen-model-of payload)))
+        (run-at-time 0 nil #'limen-model-report server pane model)
+      (when-let* (((limen-model--asked-for-p provider payload))
+                  (transcript (alist-get 'transcript_path payload)))
+        (run-at-time 0 nil #'limen-model--report-transcript
+                     server pane transcript (intern provider)))))
   nil)
 
+(declare-function limen-herdr-agents "limen-herdr" ())
+(declare-function herdr-entry-directory "ext:herdr" (entry))
+(declare-function herdr--entry-server "ext:herdr" (entry))
+(declare-function herdr-status-cached-agents "ext:herdr-status" ())
+(defvar herdr-status-refresh-hook)
+
+(defun limen-model--agent-answer (entry)
+  "Return the provider, pane and last answer of Herdr agent ENTRY, or nil.
+An agent Herdr names no session for is looked up by the directory it
+runs in, which is all a harness without a Herdr integration leaves."
+  (when-let* ((provider (intern (or (alist-get 'agent entry) "")))
+              (pane (alist-get 'pane_id entry))
+              (file (limen-transcript-file
+                     provider
+                     (alist-get 'value (alist-get 'agent_session entry))
+                     (or (herdr-entry-directory entry) default-directory)))
+              (answer (limen-transcript-answer file provider)))
+    (list provider pane answer)))
+
+(defun limen-model--reported-p (entry)
+  "Return non-nil when ENTRY already carries the model Limen would report."
+  (let ((model (alist-get (intern limen-model-token) (alist-get 'tokens entry))))
+    (and (stringp model) (not (string-empty-p model)))))
+
+;;;###autoload
+(defun limen-model-backfill (&optional agents)
+  "Report the model every agent Herdr knows last answered with.
+AGENTS is a list of (SERVER . ENTRY) pairs, every agent Herdr knows by
+default.  A hook reports a model when a session starts or moves; this
+reports the ones that started before Limen was listening, and passes
+over an agent already carrying one."
+  (interactive)
+  (let ((reported 0))
+    (pcase-dolist (`(,server . ,entry) (or agents (limen-herdr-agents)))
+      (unless (limen-model--reported-p entry)
+        (when-let* ((found (limen-model--agent-answer entry))
+                    (model (limen-model--name (alist-get 'model (nth 2 found)))))
+          (when (limen-model-report server (nth 1 found) model)
+            (cl-incf reported)))))
+    (when (called-interactively-p 'any)
+      (message "Limen reported the model of %d agent%s" reported
+               (if (= reported 1) "" "s")))
+    reported))
+
+(defun limen-model--on-status-refresh ()
+  "Report the model of every agent a drawn dashboard still lacks one for."
+  (when-let* ((wanting (seq-remove #'limen-model--reported-p
+                                   (herdr-status-cached-agents))))
+    (run-at-time 0 nil #'limen-model-backfill
+                 (mapcar (lambda (entry) (cons (herdr--entry-server entry) entry))
+                         wanting))))
 ;;;###autoload
 (define-minor-mode limen-model-mode
   "Report the model each agent answers with to its Herdr pane.
@@ -130,8 +210,10 @@ Enabling asks for the hook events the model arrives on, the way
           (dolist (event events)
             (cl-pushnew event (alist-get provider limen-hooks-provider-events)
                         :test #'equal)))
+        (add-hook 'herdr-status-refresh-hook #'limen-model--on-status-refresh)
         (add-hook 'limen-hooks-event-functions #'limen-model--report-event)
         (limen-hooks-request-install "model"))
+    (remove-hook 'herdr-status-refresh-hook #'limen-model--on-status-refresh)
     (remove-hook 'limen-hooks-event-functions #'limen-model--report-event)
     (pcase-dolist (`(,provider . ,events) limen-model-provider-events)
       (setf (alist-get provider limen-hooks-provider-events)
