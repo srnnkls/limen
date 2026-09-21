@@ -836,11 +836,11 @@ when every question has its current answer committed."
     (limen-inbox--toggle (plist-get value :qid) label (plist-get value :multi))
     (limen-inbox--refresh)))
 
-(defvar-keymap magit-limen-inbox-option-section-map
+(defvar-keymap limen-inbox-option-section-map
   :doc "Keymap on an inbox option line."
   "RET" #'limen-inbox-toggle-at-point)
 
-(defvar-keymap magit-limen-inbox-question-section-map
+(defvar-keymap limen-inbox-question-section-map
   :doc "Keymap on an inbox question tab."
   "RET" #'limen-inbox-attach-at-point
   "C-c C-c" #'limen-inbox-commit-at-point
@@ -856,18 +856,18 @@ when every question has its current answer committed."
   "8" #'limen-inbox-toggle-index
   "9" #'limen-inbox-toggle-index)
 
-(set-keymap-parent magit-limen-inbox-option-section-map
-                   magit-limen-inbox-question-section-map)
+(set-keymap-parent limen-inbox-option-section-map
+                   limen-inbox-question-section-map)
 
 (defvar-keymap limen-inbox--preview-question-map
-  :parent magit-limen-inbox-question-section-map
+  :parent limen-inbox-question-section-map
   "n" #'limen-inbox-notes-at-point)
 
 (defvar-keymap limen-inbox--preview-option-map
   :parent limen-inbox--preview-question-map
   "RET" #'limen-inbox-toggle-at-point)
 
-(dolist (map (list magit-limen-inbox-option-section-map
+(dolist (map (list limen-inbox-option-section-map
                    limen-inbox--preview-option-map))
   (keymap-unset map "SPC"))
 
@@ -902,8 +902,9 @@ MULTI controls toggling and whether notes are supported."
        (magit-insert-section section
          (limen-inbox-option
           (list :qid qid :label label :multi multi :index (1+ index)))
-         (when notes-enabled
-           (oset section keymap 'limen-inbox--preview-option-map))
+         (oset section keymap (if notes-enabled
+                                  'limen-inbox--preview-option-map
+                                'limen-inbox-option-section-map))
          (magit-insert-heading
            (format "      %d. " (1+ index))
            (if (member label chosen) "● " "○ ")
@@ -957,8 +958,9 @@ other case renders the question read-only."
                :previews previews :preview preview :last last
                :header (alist-get 'header question)
                :question (alist-get 'question question)))
-        (when preview
-          (oset section keymap 'limen-inbox--preview-question-map))
+        (oset section keymap (if preview
+                                 'limen-inbox--preview-question-map
+                               'limen-inbox-question-section-map))
 	(magit-insert-heading
 	  "    "
 	  (propertize (limen-inbox--question-heading question)

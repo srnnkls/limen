@@ -877,7 +877,7 @@
 
 (ert-deftest limen-inbox-dismiss-answers-to-both-cancel-keys ()
   (dolist (key '("C-c C-d" "C-c C-k"))
-    (should (eq (keymap-lookup magit-limen-inbox-question-section-map key)
+    (should (eq (keymap-lookup limen-inbox-question-section-map key)
                 #'limen-inbox-dismiss-at-point))
     (should (eq (keymap-lookup limen-inbox--preview-option-map key)
                 #'limen-inbox-dismiss-at-point))))
