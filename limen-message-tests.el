@@ -14,9 +14,17 @@
 (defvar cera-session-keymap nil)
 (defvar cera-session-start-hook nil)
 
-(defun limen-message-tests--bare (text)
-  "Return TEXT without the headroom line and the margin each line carries."
-  (let* ((text (if (string-prefix-p "\n" text) (substring text 1) text))
+(defun limen-message-tests--text (content)
+  "Return CONTENT as the text a pane draws, whether blocks or one string."
+  (if (stringp content)
+      content
+    (string-join (mapcar #'car content) "\n")))
+
+(defun limen-message-tests--bare (content)
+  "Return CONTENT without its spacers and the margin each line carries.
+A pane stacks blocks, which stand where the lines of one text stood."
+  (let* ((text (limen-message-tests--text content))
+         (text (if (string-prefix-p "\n" text) (substring text 1) text))
          (offset (if (string-prefix-p " " (limen-message--margin 'default)) " " ""))
          (rule (concat offset limen-message-rule " "))
          (blank (make-string (string-width (concat limen-message-rule " ")) ?\s)))
@@ -218,9 +226,10 @@
                    "Recap line\nThe reply body"))
     (should (string-match-p
              (concat "Recap line\n" (regexp-quote limen-message-rule) " ")
-             (cdr (assq 'limen-context updates))))
+             (limen-message-tests--text (cdr (assq 'limen-context updates)))))
     (should (eq (get-text-property (+ 1 (string-width limen-message-rule) 1)
-                                   'face (cdr (assq 'limen-context updates)))
+                                   'face (limen-message-tests--text
+                                          (cdr (assq 'limen-context updates))))
                 limen-message-recap-face))
     (setq updates nil)
     (limen-message--set-recap state nil)
@@ -453,7 +462,7 @@
         (limen-message--page state 320)
         (should (= calls 1))
         (should (equal (limen-message--state-latest state) "full reply"))
-        (should (string-match-p "full reply" (cdar updates)))))))
+        (should (string-match-p "full reply" (limen-message-tests--text (cdar updates))))))))
 
 (ert-deftest limen-message-reads-back-the-messages-the-walk-wants ()
   (limen-message-tests--state
@@ -568,7 +577,8 @@
         (limen-message--resolve state)
         (should (equal (reverse order) '(index page)))
         (should (equal (limen-message--state-latest state) "earlier reply"))
-        (should (string-match-p "earlier reply" (cdar updates)))))))
+        (should (string-match-p "earlier reply"
+                                (limen-message-tests--text (cdar updates))))))))
 
 (ert-deftest limen-message-a-session-that-lost-its-records-is-looked-up-again ()
   (limen-message-tests--state
@@ -690,15 +700,6 @@
         (should-not (string-match-p "\n" shown))
         (should (<= (length shown) limen-message--recap-max-chars))
         (should-not (string-match-p "[*`#_~]" shown))))))
-
-(ert-deftest limen-message-headroom-holds-the-context-off-both-edges ()
-  (let ((limen-message-headroom 8))
-    (let ((text (limen-message--headroom "one\ntwo\n")))
-      (should (= (get-text-property 0 'line-spacing text) 8))
-      (should (= (get-text-property 0 'line-height text) 1))
-      (should (= (get-text-property (1- (length text)) 'line-spacing text) 8))
-      (should (equal (substring-no-properties text) "\none\ntwo\n")))
-    (should (equal (limen-message--headroom "") ""))))
 
 (ert-deftest limen-message-keeps-the-last-recap-until-a-new-one-arrives ()
   (let ((limen-message--recaps (make-hash-table :test #'equal))
@@ -844,7 +845,9 @@
                             limen-message--replies)
                    "newest"))
     (should (seq-some (lambda (update)
-                        (string-match-p "middle" (or (cdr update) "")))
+                        (string-match-p
+                         "middle"
+                         (limen-message-tests--text (or (cdr update) ""))))
                       updates))))
 
 (ert-deftest limen-message-record-keeps-what-each-agent-was-sent ()
@@ -913,13 +916,14 @@
                    (cl-incf drawn)
                    (upcase markdown))))
         (limen-message--set-latest state "**bold** reply")
-        (should (string-match-p "BOLD" (cdar updates)))
+        (should (string-match-p "BOLD" (limen-message-tests--text (cdar updates))))
         ;; Redrawing the same message draws it once.
         (limen-message--show-context state)
         (should (= drawn 1))
         (let ((limen-message-markdown nil))
           (limen-message--show-context state)
-          (should (string-match-p "\\*\\*bold\\*\\*" (cdar updates))))))))
+          (should (string-match-p "\\*\\*bold\\*\\*"
+                                  (limen-message-tests--text (cdar updates)))))))))
 
 (ert-deftest limen-message-markdown-that-cannot-be-drawn-is-left-as-it-came ()
   (let ((limen-message--rendered (make-hash-table :test #'equal)))
@@ -964,7 +968,7 @@
       (limen-message-older)
       (should (equal (limen-message--state-latest state) "asked"))
       (should (eq (limen-message--rule-face (limen-message--state-role state)) 'limen-message-user-rule))
-      (let ((pane (cdar updates)))
+      (let ((pane (limen-message-tests--text (cdar updates))))
         (should (text-property-any 0 (length pane) 'face 'limen-message-user-rule pane))
         (should-not (text-property-any 0 (length pane) 'face
                                        'limen-message-agent-rule pane)))
@@ -1078,22 +1082,20 @@
     (let ((limen-message-message-counts '(2))
           (limen-message--shown nil)
           (limen-message-message-gap 3)
+          (limen-message-headroom 8)
           (limen-message-markdown nil))
       (setf (limen-message--state-records state)
             (list (limen-message-tests--record 2 "assistant" "second")
                   (limen-message-tests--record 1 "assistant" "first"))
             (limen-message--state-scope state) '("claude" "id" "/opaque"))
       (limen-message--finish state)
-      (let* ((pane (cdar updates))
-             (gaps (let (found (position 0))
-                     (while (< position (length pane))
-                       (when (eq (get-text-property position 'line-spacing pane) 3)
-                         (push (aref pane position) found))
-                       (setq position (1+ position)))
-                     found)))
-        ;; The one gap sits on the newline between the two messages.
-        (should (equal gaps (list ?\n)))
-        (should (equal (limen-message-tests--bare pane) "\nfirst\nsecond"))))))
+      (let ((blocks (cdar updates)))
+        ;; A spacer opens and closes the stack, the recap sits against the
+        ;; message under it, and the messages are held apart.
+        (should (equal (mapcar #'cdr blocks) '(8 0 3 0 8)))
+        (should (equal (mapcar #'car (list (car blocks) (car (last blocks))))
+                       '("" "")))
+        (should (equal (limen-message-tests--bare blocks) "\nfirst\nsecond"))))))
 
 (ert-deftest limen-message-the-count-chosen-outlives-the-field ()
   "A number of messages chosen in one field is what the next opens on."
