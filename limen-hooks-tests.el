@@ -284,8 +284,15 @@
                              "claude" "PreToolUse" (limen-session-id session) root)
                             root)
                            ""))
+            (should (stringp
+                     (limen-hooks-output
+                      (limen-hooks-tests--hook-request "pi" "UserPromptSubmit"
+                                                       nil root)
+                      (limen-hooks-tests--request root))))
             (should-error (limen-hooks-output
-                           (limen-hooks-tests--hook-request "pi" "UserPromptSubmit" nil root)
+                           (limen-hooks-tests--hook-request "cursor"
+                                                            "UserPromptSubmit"
+                                                            nil root)
                            (limen-hooks-tests--request root))
                           :type 'limen-invalid-request)
             (should-error (limen-hooks-output
@@ -729,7 +736,7 @@ nothing to snapshot."
       (should (limen-hooks-installed-p 'claude)))
     (let ((limen-hooks-review-edits t))
       (should (equal (assoc "PostToolUse" (limen-hooks-events))
-                     '("PostToolUse" . "Edit|Write|MultiEdit")))
+                     '("PostToolUse" . "Edit|Write|MultiEdit|edit|write")))
       (should-not (limen-hooks-installed-p 'claude))
       (should (limen-hooks-install 'claude))
       (should (limen-hooks-installed-p 'claude))
@@ -737,7 +744,19 @@ nothing to snapshot."
              (groups (alist-get 'PostToolUse (alist-get 'hooks settings))))
         (should (equal (mapcar (lambda (group) (alist-get 'matcher group))
                                (append groups nil))
-                       '("AskUserQuestion|request_user_input" "Edit|Write|MultiEdit")))
+                       '("AskUserQuestion|request_user_input"
+                         "Edit|Write|MultiEdit|edit|write")))
         (should (equal (limen-hooks-tests--commands settings "PostToolUse")
                        '("limen hook claude" "limen hook claude"))))
       (should-not (limen-hooks-install 'claude)))))
+
+(ert-deftest limen-hooks-answers-an-extension-provider-without-installing-it ()
+  (should (member 'pi (limen-hooks-providers)))
+  (should (member 'omp (limen-hooks-providers)))
+  (should-not (member 'pi (limen-hooks-installing-providers)))
+  (should-not (member 'omp (limen-hooks-installing-providers)))
+  (should (limen-hooks-extension-provider-p 'omp))
+  (should-not (limen-hooks-extension-provider-p 'claude))
+  (should (limen-hooks-installed-p 'pi))
+  (should-error (limen-hooks-settings-file 'pi)
+                :type 'limen-invalid-arguments))

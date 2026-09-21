@@ -111,17 +111,33 @@ agent's own terminal takes the right."
   :group 'limen-hooks)
 
 (defun limen-hooks-providers ()
-  "Return the providers whose prompt hooks Limen can answer."
+  "Return the providers whose prompt hooks Limen can answer.
+A harness whose extension answers the hooks counts as much as one whose
+settings file Limen writes them into: what differs is who installs them,
+not who answers them."
+  (mapcar #'limen-provider-name
+          (limen-providers-with #'limen-provider-hook-transport)))
+
+(defun limen-hooks-installing-providers ()
+  "Return the providers whose own settings file Limen installs hooks into."
   (mapcar #'limen-provider-name
           (limen-providers-with #'limen-provider-hook-settings)))
+
+(defun limen-hooks-extension-provider-p (provider)
+  "Return non-nil when PROVIDER's extension answers its hooks."
+  (when-let* ((entry (limen-provider provider)))
+    (eq (limen-provider-hook-transport entry) 'extension)))
 
 (defconst limen-hooks--base-events '(("UserPromptSubmit") ("SessionStart"))
   "Hook events context injection needs.")
 
 (defun limen-hooks--edit-tools ()
-  "Return every tool name that edits files, across providers."
-  (mapcan (lambda (entry) (copy-sequence (limen-provider-edit-tools entry)))
-          (limen-providers)))
+  "Return every tool name that edits files, across providers.
+Harnesses that share a lineage share tool names, and one name belongs in
+the matcher once."
+  (delete-dups
+   (mapcan (lambda (entry) (copy-sequence (limen-provider-edit-tools entry)))
+           (limen-providers))))
 
 (defun limen-hooks--review-events ()
   "Return the (EVENT . MATCHER) spec reviewing edits needs, if any."
@@ -266,12 +282,16 @@ SPEC is (EVENT . MATCHER); one event can carry a group per matcher."
             (limen-hooks--event-groups settings (car spec))))
 
 (defun limen-hooks-installed-p (provider)
-  "Return non-nil when PROVIDER's settings run Limen's hooks for every spec."
-  (let ((settings (limen-hooks--read-settings
-                   (limen-hooks-settings-file provider))))
-    (seq-every-p (lambda (spec)
-                   (limen-hooks--spec-installed-p settings spec provider))
-                 (limen-hooks-events provider))))
+  "Return non-nil when PROVIDER runs Limen's hooks for every spec.
+An extension answers whatever Limen asks of it as soon as it is loaded,
+so there is nothing to install and nothing to find missing."
+  (if (limen-hooks-extension-provider-p provider)
+      t
+    (let ((settings (limen-hooks--read-settings
+                     (limen-hooks-settings-file provider))))
+      (seq-every-p (lambda (spec)
+                     (limen-hooks--spec-installed-p settings spec provider))
+                   (limen-hooks-events provider)))))
 
 (defun limen-hooks--settings-events (settings)
   "Return the names of every event SETTINGS registers handlers for."
@@ -289,7 +309,8 @@ SPEC is (EVENT . MATCHER); one event can carry a group per matcher."
 (defun limen-hooks--read-provider ()
   "Read a hook provider from the minibuffer."
   (list (intern (completing-read "Provider: "
-                                 (mapcar #'symbol-name (limen-hooks-providers))
+                                 (mapcar #'symbol-name
+                                         (limen-hooks-installing-providers))
                                  nil t))))
 
 ;;;###autoload
@@ -383,7 +404,7 @@ provider whose settings cannot be written is reported and skipped."
                   (error
                    (message "Limen hooks: %s" (error-message-string err))
                    nil)))
-              (limen-hooks-providers)))
+              (limen-hooks-installing-providers)))
 
 (defvar limen-hooks--requests nil
   "Features whose hooks wait for the next coalesced install.")
@@ -416,7 +437,7 @@ An event another consumer still lists in `limen-hooks-events' stays."
   (let* ((needed (mapcar #'car (limen-hooks-events)))
          (events (seq-remove (lambda (event) (member event needed)) events)))
     (when events
-      (dolist (provider (limen-hooks-providers))
+      (dolist (provider (limen-hooks-installing-providers))
         (condition-case err
             (when (limen-hooks-any-installed-p provider)
               (limen-hooks-remove-events provider events))
