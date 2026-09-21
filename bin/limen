@@ -43,7 +43,7 @@ EOF
 
 hook_help() {
     cat <<'EOF'
-Answer a Claude Code or Codex prompt hook with Emacs context.
+Answer an agent prompt hook with Emacs context.
 
 Reads the hook payload from standard input and prints the hook's JSON
 output.  Does nothing unless LIMEN_SESSION or HERDR_ENV=1 is set, gives
@@ -54,7 +54,7 @@ output.
 Usage: limen hook <PROVIDER>
 
 Arguments:
-  <PROVIDER>  claude or codex
+  <PROVIDER>  claude, codex, pi, or omp
 
 Options:
   -h, --help  Print help
@@ -446,7 +446,7 @@ case ${1-} in
     hook)
         case ${2-} in
             -h|--help) [ "$#" -eq 2 ] || usage hook_help; hook_help; exit 0 ;;
-            claude|codex) [ "$#" -eq 2 ] || usage hook_help ;;
+            claude|codex|pi|omp) [ "$#" -eq 2 ] || usage hook_help ;;
             *) usage hook_help ;;
         esac
         if [ -z "${LIMEN_SESSION:-}" ] && [ "${HERDR_ENV:-}" != 1 ]; then

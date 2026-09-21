@@ -1,6 +1,6 @@
 # Provider integrations
 
-Limen gives Claude Code, Codex, and Pi one provider-neutral Emacs contract while preserving each harness's native transport. The CLI remains available to every local harness.
+Limen gives Claude Code, Codex, Pi and Oh My Pi one provider-neutral Emacs contract while preserving each harness's native transport. The CLI remains available to every local harness.
 
 ```text
                         ┌─ Claude Code prompt hooks and CLI

@@ -10,7 +10,7 @@
 
 (ert-deftest limen-provider-looks-up-by-symbol-or-string-in-registration-order ()
   (should (equal (mapcar #'limen-provider-name (limen-providers))
-                 '(claude codex pi)))
+                 '(claude codex pi omp)))
   (should (eq (limen-provider-name (limen-provider 'codex)) 'codex))
   (should (eq (limen-provider 'codex) (limen-provider "codex")))
   (should-not (limen-provider 'cursor))
@@ -21,11 +21,11 @@
     (limen-provider-register
      (limen-provider--make :name 'codex :question-tools '("ask")))
     (should (equal (mapcar #'limen-provider-name (limen-providers))
-                   '(claude pi codex)))
+                   '(claude pi omp codex)))
     (should (equal (limen-provider-question-tools (limen-provider 'codex))
                    '("ask")))
     (limen-provider-register (limen-provider--make :name 'cursor))
-    (should (= (length (limen-providers)) 4))))
+    (should (= (length (limen-providers)) 5))))
 
 (ert-deftest limen-provider-filters-by-field-and-honours-home-overrides ()
   (should (equal (mapcar #'limen-provider-name
@@ -33,7 +33,7 @@
                  '(claude codex)))
   (should (equal (mapcar #'limen-provider-name
                          (limen-providers-with #'limen-provider-route))
-                 '(codex pi)))
+                 '(codex pi omp)))
   (let* ((directory (file-name-as-directory (make-temp-file "limen-provider" t)))
          (process-environment
           (append (list (concat "CLAUDE_CONFIG_DIR=" directory)
@@ -66,10 +66,9 @@
                      "-c" "mcp_servers.limen.bearer_token_env_var=\"LIMEN_MCP_TOKEN\""
                      "resume")))
     (should (equal (funcall codex nil '("resume")) '("resume")))
-    (should (equal (funcall pi nil '("x"))
-                   (list "--extension" (limen-provider-pi-extension-file) "x")))
-    (should (string-suffix-p "extensions/limen-pi/index.ts"
-                             (limen-provider-pi-extension-file)))
+    (should (equal (funcall pi nil '("x")) '("x")))
+    (should (string-suffix-p "extensions"
+                             (limen-provider-extension-directory)))
     (should (equal (funcall claude "http://ignored" '("x")) '("x")))))
 
 (ert-deftest limen-provider-claude-session-name-reads-the-sessions-directory ()

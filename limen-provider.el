@@ -25,9 +25,12 @@
   "What Limen knows about one agent harness.
 NAME is its symbol.  CONFIG-DIRECTORY and HOOK-SETTINGS are functions
 returning the harness configuration directory and the file holding its
-hooks, or nil when it has none.  ROUTE is `mcp' when a launched pane is
-given an MCP route.  ARGUMENTS receives the route endpoint, or nil, and
-the launch arguments and returns the complete argument list.
+hooks, or nil when it has none.  HOOK-TRANSPORT is `settings' for a
+harness whose own settings file Limen writes the hooks into, `extension'
+for one whose extension answers them instead, and nil for one that
+answers none.  ROUTE is `mcp' when a launched pane is given an MCP
+route.  ARGUMENTS receives the route endpoint, or nil, and the launch
+arguments and returns the complete argument list.
 QUESTION-TOOLS name the tools that ask the user a question and
 TRANSCRIPT-QUESTIONS-P says those questions must be read from the
 transcript instead.  EDIT-TOOLS name the tools that change files.
@@ -36,9 +39,9 @@ SKILL-SOURCE receives a project root, or nil, and returns the harness's
 skills as an alist of name and description.  SKILL-REFERENCE maps a
 skill name to what the harness is sent to invoke it.
 CAPABILITIES is the plist `limen-herdr-status' reports."
-  name config-directory hook-settings route arguments question-tools
-  transcript-questions-p edit-tools session-name skill-source
-  skill-reference capabilities)
+  name config-directory hook-settings hook-transport route arguments
+  question-tools transcript-questions-p edit-tools session-name
+  skill-source skill-reference capabilities)
 
 (defvar limen-provider--registry nil
   "Registered providers, oldest first.")
@@ -80,6 +83,14 @@ CAPABILITIES is the plist `limen-herdr-status' reports."
 (defun limen-provider--codex-home ()
   "Return Codex's state directory."
   (limen-provider--home "CODEX_HOME" ".codex"))
+
+(defun limen-provider--pi-home ()
+  "Return Pi's state directory."
+  (limen-provider--home "PI_HOME" ".pi"))
+
+(defun limen-provider--omp-home ()
+  "Return Oh My Pi's state directory."
+  (limen-provider--home "OMP_HOME" ".omp"))
 
 (defun limen-provider--claude-session-name (id)
   "Return the name Claude Code gave session ID, or nil."
@@ -173,10 +184,13 @@ directories it reads them from read instead."
       (funcall reference skill)
     skill))
 
-(defun limen-provider-pi-extension-file ()
-  "Return the absolute packaged Pi extension path."
+(defun limen-provider-extension-directory ()
+  "Return the directory holding the packaged harness extensions.
+`mise run install-extensions' links them into the harness's own
+extension directory, which is where Pi and Oh My Pi discover them, in a
+pane Limen launched and in one it only adopted alike."
   (expand-file-name
-   "extensions/limen-pi/index.ts"
+   "extensions"
    (file-name-directory (or (locate-library "limen-provider") load-file-name))))
 
 (limen-provider-register
@@ -186,6 +200,7 @@ directories it reads them from read instead."
   :hook-settings (lambda ()
                    (expand-file-name
                     "settings.json" (limen-provider--claude-config-directory)))
+  :hook-transport 'settings
   :arguments (lambda (_endpoint arguments) arguments)
   :question-tools '("AskUserQuestion")
   :edit-tools '("Edit" "Write" "MultiEdit")
@@ -203,6 +218,7 @@ directories it reads them from read instead."
   :config-directory #'limen-provider--codex-home
   :hook-settings (lambda ()
                    (expand-file-name "hooks.json" (limen-provider--codex-home)))
+  :hook-transport 'settings
   :route 'mcp
   :arguments (lambda (endpoint arguments)
                (if endpoint
@@ -226,10 +242,30 @@ directories it reads them from read instead."
 (limen-provider-register
  (limen-provider--make
   :name 'pi
+  :config-directory #'limen-provider--pi-home
+  :hook-transport 'extension
   :route 'mcp
-  :arguments (lambda (_endpoint arguments)
-               (append (list "--extension" (limen-provider-pi-extension-file))
-                       arguments))
+  :arguments (lambda (_endpoint arguments) arguments)
+  :edit-tools '("edit" "write")
+  :skill-source (lambda (root)
+                  (limen-provider--directory-skills
+                   (limen-provider--pi-home) root))
+  :skill-reference (lambda (skill) (concat "/skill:" skill))
+  :capabilities '(:transport extension :operations registry
+                  :passive-context next-turn :explicit-context message :diffs t)))
+
+(limen-provider-register
+ (limen-provider--make
+  :name 'omp
+  :config-directory #'limen-provider--omp-home
+  :hook-transport 'extension
+  :route 'mcp
+  :arguments (lambda (_endpoint arguments) arguments)
+  :edit-tools '("edit" "write")
+  :skill-source (lambda (root)
+                  (limen-provider--directory-skills
+                   (limen-provider--omp-home) root))
+  :skill-reference (lambda (skill) (concat "/skill:" skill))
   :capabilities '(:transport extension :operations registry
                   :passive-context next-turn :explicit-context message :diffs t)))
 

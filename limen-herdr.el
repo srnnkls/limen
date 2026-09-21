@@ -127,6 +127,8 @@ opens one."
 (defun limen-herdr--environment (state)
   "Return launch environment for bridge STATE."
   (append
+   (when-let* ((provider (limen-herdr-state-provider state)))
+     `((LIMEN_PROVIDER . ,(symbol-name provider))))
    (when-let* ((route (limen-herdr-state-route state)))
      (limen-herdr--mcp-environment route))
    (when-let* ((session (limen-herdr-state-session state)))
@@ -553,7 +555,7 @@ other has the rendered context typed into the agent's pane."
                              (limen-provider-route (limen-provider provider)) t))
       (:arguments (limen-herdr--arguments session context))
       (:adopted
-       (if (limen-provider-hook-settings (limen-provider provider))
+       (if (limen-provider-hook-transport (limen-provider provider))
            (limen-herdr--prepare session provider nil nil)
          (limen-herdr--adopt-cli-only session provider)))
       (:attached nil)
@@ -567,7 +569,7 @@ other has the rendered context typed into the agent's pane."
         registered)
     (condition-case err
         (progn
-          (dolist (kind '("claude" "codex" "pi"))
+          (dolist (kind '("claude" "codex" "pi" "omp"))
             (let ((existing (herdr-agent-adapter kind)))
               (herdr-agent-register-adapter kind #'limen-herdr--adapter)
               (unless existing
@@ -591,7 +593,7 @@ other has the rendered context typed into the agent's pane."
       (remove-hook 'herdr-send-context-functions #'limen-herdr-send-context))
     (condition-case err
         (progn
-          (dolist (kind '("claude" "codex" "pi"))
+          (dolist (kind '("claude" "codex" "pi" "omp"))
             (when (herdr-agent-unregister-adapter kind #'limen-herdr--adapter)
               (push kind unregistered)))
           t)

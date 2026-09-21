@@ -94,10 +94,8 @@
             (should (limen-herdr--adapter codex :detach)))
           (let ((pi (limen-herdr-tests--session "pi" root)))
             (limen-herdr--adapter pi :prepare)
-            (let ((arguments (limen-herdr--adapter pi :arguments '("--continue"))))
-              (should (equal (car arguments) "--extension"))
-              (should (string-suffix-p "extensions/limen-pi/index.ts"
-                                       (cadr arguments))))
+            (should (equal (limen-herdr--adapter pi :arguments '("--continue"))
+                           '("--continue")))
             (should (limen-herdr--adapter pi :detach))))
       (delete-directory root t))))
 

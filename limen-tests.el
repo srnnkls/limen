@@ -1670,7 +1670,7 @@
                 (should (= status 0))
                 (should (equal text ""))))
             (pcase-let ((`(,status . ,_) (run '("LIMEN_SESSION=limen-1")
-                                              "hook" "pi")))
+                                              "hook" "cursor")))
               (should (= status 2)))
             (pcase-let ((`(,status . ,text) (run nil "hook" "--help")))
               (should (= status 0))
