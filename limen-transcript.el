@@ -177,10 +177,10 @@ found when the model is nowhere in the file."
   "Return the file Claude wrote SESSION under ROOT to, or nil."
   (when-let* ((session)
               (file (expand-file-name
-               (format "%s.jsonl" session)
-               (expand-file-name
-                (replace-regexp-in-string "[/.]" "-" (directory-file-name root))
-                (expand-file-name "~/.claude/projects"))))
+                     (format "%s.jsonl" session)
+                     (expand-file-name
+                      (replace-regexp-in-string "[/.]" "-" (directory-file-name root))
+                      (expand-file-name "~/.claude/projects"))))
               ((file-readable-p file)))
     file))
 
