@@ -49,7 +49,7 @@ the line without Limen knowing the theme."
   :type 'string
   :group 'limen-message)
 
-(defcustom limen-message-headroom 5
+(defcustom limen-message-headroom 3
   "Pixels of blank space kept above and below the context, per edge."
   :type 'natnum
   :group 'limen-message)
