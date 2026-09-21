@@ -49,7 +49,7 @@ the line without Limen knowing the theme."
   :type 'string
   :group 'limen-message)
 
-(defcustom limen-message-headroom 8
+(defcustom limen-message-headroom 3
   "Pixels of blank space kept above and below the context, per edge."
   :type 'natnum
   :group 'limen-message)
@@ -289,20 +289,19 @@ on its own still begins in the column the quoted message does."
 (defun limen-message--blocks (parts)
   "Return PARTS as the blocks the pane stacks, held apart and off its edges.
 A block is its text consed onto the room kept beneath it.  An empty one
-leads and closes the stack for the room the pane keeps at its edges, and
-each message behind the recap keeps `limen-message-message-gap' under
-it.  Cera puts the space in, so the pane says how far apart its parts
-stand rather than drawing it."
+leads the stack, since room above a line is only room under the line
+before it, and the last keeps the same room under itself.  Each message
+behind the recap keeps `limen-message-message-gap\=' under it.  Cera puts
+the space in, so the pane says how far apart its parts stand rather than
+drawing it."
   (let ((last (1- (length parts))))
-    (append
-     (list (cons "" limen-message-headroom))
-     (seq-map-indexed
-      (lambda (part index)
-        (cons part (if (or (zerop index) (= index last))
-                       0
-                     limen-message-message-gap)))
-      parts)
-     (list (cons "" limen-message-headroom)))))
+    (cons (cons "" limen-message-headroom)
+          (seq-map-indexed
+           (lambda (part index)
+             (cons part (cond ((= index last) limen-message-headroom)
+                              ((zerop index) 0)
+                              (t limen-message-message-gap))))
+           parts))))
 
 (defvar limen-message--rendered (make-hash-table :test #'equal)
   "Markdown already drawn, keyed by the text it was drawn from.

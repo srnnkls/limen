@@ -1090,11 +1090,12 @@ A pane stacks blocks, which stand where the lines of one text stood."
             (limen-message--state-scope state) '("claude" "id" "/opaque"))
       (limen-message--finish state)
       (let ((blocks (cdar updates)))
-        ;; A spacer opens and closes the stack, the recap sits against the
-        ;; message under it, and the messages are held apart.
-        (should (equal (mapcar #'cdr blocks) '(8 0 3 0 8)))
-        (should (equal (mapcar #'car (list (car blocks) (car (last blocks))))
-                       '("" "")))
+        ;; A spacer opens the stack, the recap sits against the message under
+        ;; it, the messages are held apart, and the last keeps the room the
+        ;; pane ends on rather than a line of its own.
+        (should (equal (mapcar #'cdr blocks) '(8 0 3 8)))
+        (should (equal (car (car blocks)) ""))
+        (should-not (equal (car (car (last blocks))) ""))
         (should (equal (limen-message-tests--bare blocks) "\nfirst\nsecond"))))))
 
 (ert-deftest limen-message-the-count-chosen-outlives-the-field ()
