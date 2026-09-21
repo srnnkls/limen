@@ -5,6 +5,8 @@
 (require 'ert)
 (require 'limen)
 
+(declare-function compilation-insert-annotation "compile" (&rest args))
+
 (defconst limen-compile-tests--feature-available
   (require 'limen-compile nil t))
 
@@ -246,7 +248,9 @@
                   (split 32000))
               (insert "discarded-prefix\n")
               (insert (substring expected-tail 0 split))
-              (compilation-insert-annotation annotation)
+              (if (fboundp 'compilation-insert-annotation)
+                  (compilation-insert-annotation annotation)
+                (insert (propertize annotation 'compilation-annotation t)))
               (insert (substring expected-tail split))
               (add-text-properties (point-min) (point-max) '(face bold))
               (setq buffer-contents
