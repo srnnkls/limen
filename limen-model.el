@@ -109,6 +109,7 @@ worth interrupting a hook over, so the report is dropped instead."
 
 (defun limen-model-of-transcript (file &optional provider)
   "Return the model the last answer in FILE was given, or nil.
+PROVIDER says whose terms the file is written on.
 Claude names a model on the session start it sometimes leaves out, and
 on nothing else until the model changes; the transcript names it on
 every answer."
@@ -129,8 +130,9 @@ every answer."
 
 (defun limen-model--report-event (provider payload _session _context)
   "Report the model PAYLOAD names, or the one its transcript last answered with.
-Runs for every answered hook event and answers nil, adding nothing to
-the context a prompt carries.
+PROVIDER says which events carry a model and whose terms the transcript
+is written on.  Runs for every answered hook event and answers nil,
+adding nothing to the context a prompt carries.
 
 A hook is answered inside the Emacs server's process filter, and Herdr's
 request waits on `accept-process-output', which runs that filter again

@@ -171,8 +171,9 @@ for are not worth reading a transcript over."
 
 (defun limen-usage--report-event (provider payload _session _context)
   "Report the context window PAYLOAD accounts for, counted or not.
-Runs for every answered hook event and answers nil, adding nothing to
-the context a prompt carries.
+PROVIDER says which events carry a count and whose terms the transcript
+is written on.  Runs for every answered hook event and answers nil,
+adding nothing to the context a prompt carries.
 
 The transcript is written behind the conversation and the report waits
 on a socket, so both are left until the hook's filter has returned, the

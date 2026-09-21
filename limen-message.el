@@ -276,7 +276,8 @@ gap gives back, so the text beside it stands where it stood."
 Markdown comes drawn in faces of its own, so FACE is put beneath them
 rather than over them: a heading or a code span keeps how it was drawn.
 BARE keeps the rule's width as blank space instead, so text that stands
-on its own still begins in the column the quoted message does."
+on its own still begins in the column the quoted message does.
+RULE-FACE draws the rule, `limen-message-rule-face' when nil."
   (let* ((margin (if bare
                      (make-string (string-width (concat limen-message-rule " ")) ?\s)
                    (limen-message--margin (or rule-face limen-message-rule-face)))))
