@@ -40,6 +40,15 @@
 (defvar herdr-status-sections-functions)
 (defvar herdr-status-preview-rule)
 
+(defcustom limen-inbox-attached-only t
+  "Whether only agents Emacs holds a session for reach the inbox.
+A question is answered from Emacs, so one asked by a pane Emacs never
+took up cannot be: its agent waits at its own terminal, which Herdr
+reports as blocked either way.  Nil lists those questions too, for
+seeing a question Emacs cannot answer over missing it."
+  :type 'boolean
+  :group 'limen-hooks)
+
 (defcustom limen-inbox-settle-seconds 10
   "Seconds a transcript-sourced question is kept before its agent must be blocked.
 Herdr detects the question UI on screen a moment after the turn ends."
@@ -272,15 +281,17 @@ the call only shows in the transcript; return non-nil when any was added."
     (server . ,(limen-server-key (alist-get 'server payload)))
     (pane . ,(alist-get 'pane payload))))
 
-(defun limen-inbox--on-event (provider payload _session _request)
-  "Track the question tool call reported by PROVIDER's hook PAYLOAD."
+(defun limen-inbox--on-event (provider payload session _request)
+  "Track the question tool call reported by PROVIDER's hook PAYLOAD.
+SESSION is the Limen session the asking pane holds, or nil."
   (let ((event (alist-get 'hook_event_name payload))
         (tool (alist-get 'tool_name payload))
         (id (alist-get 'tool_use_id payload))
         (agent (alist-get 'session_id payload)))
     (pcase (pcase event
              ("PreToolUse"
-              (when-let* (((member tool (limen-inbox--question-tools)))
+              (when-let* (((or session (not limen-inbox-attached-only)))
+                          ((member tool (limen-inbox--question-tools)))
                           (entry (limen-inbox--entry payload)))
                 (limen-inbox--add entry)
                 'added))
@@ -292,7 +303,8 @@ the call only shows in the transcript; return non-nil when any was added."
                   (limen-inbox--remove-agent agent))))
              ("Stop"
               (let ((removed (limen-inbox--remove-agent agent))
-                    (added (and (when-let* ((entry (limen-provider provider)))
+                    (added (and (or session (not limen-inbox-attached-only))
+                                (when-let* ((entry (limen-provider provider)))
                                   (limen-provider-transcript-questions-p entry))
                                 (limen-inbox--add-transcript-questions payload))))
                 (cond (added 'added) (removed t))))

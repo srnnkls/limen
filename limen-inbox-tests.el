@@ -42,7 +42,7 @@
 
 (defun limen-inbox-tests--event (event &rest fields)
   (limen-inbox--on-event "claude" (apply #'limen-inbox-tests--payload event fields)
-                         nil nil))
+                         'session nil))
 
 (ert-deftest limen-inbox-tracks-questions-from-ask-to-answer ()
   (limen-inbox-tests--with-inbox
@@ -69,7 +69,7 @@
                             "PreToolUse" '(session_id . "agent-2")
                             '(tool_name . "request_user_input") '(tool_use_id . "c1")
                             (cons 'tool_input limen-inbox-tests--codex-input))
-                           nil nil)
+                           'session nil)
     (should (= (length (limen-inbox-questions)) 2))
     (should (equal (alist-get 'other (car (alist-get 'questions
                                                      (cadr (limen-inbox-questions)))))
@@ -145,7 +145,7 @@
                                    (limen-inbox-tests--payload
                                     "Stop" '(session_id . "codex-1") '(turn_id . "turn-2")
                                     (cons 'transcript_path transcript))
-                                   nil nil)
+                                   'session nil)
             (should (= refreshes 1))
             (should (equal (mapcar (lambda (entry)
                                      (list (alist-get 'id entry)
@@ -163,19 +163,19 @@
                                    (limen-inbox-tests--payload
                                     "Stop" '(session_id . "codex-1") '(turn_id . "turn-3")
                                     (cons 'transcript_path transcript))
-                                   nil nil)
+                                   'session nil)
             (should-not (limen-inbox-questions))
             (limen-inbox--on-event "claude"
                                    (limen-inbox-tests--payload
                                     "Stop" '(session_id . "codex-1") '(turn_id . "turn-2")
                                     (cons 'transcript_path transcript))
-                                   nil nil)
+                                   'session nil)
             (should-not (limen-inbox-questions))
             (limen-inbox--on-event "codex"
                                    (limen-inbox-tests--payload
                                     "Stop" '(session_id . "codex-1") '(turn_id . "turn-2")
                                     '(transcript_path . "/nonexistent/rollout.jsonl"))
-                                   nil nil)
+                                   'session nil)
             (should-not (limen-inbox-questions)))
         (delete-file transcript)))))
 
@@ -312,7 +312,7 @@
                                     "Stop" '(session_id . "codex-1")
                                     '(turn_id . "turn-2")
                                     (cons 'transcript_path transcript))
-                                   nil nil)
+                                   'session nil)
             (let ((questions (alist-get 'questions (car (limen-inbox-questions)))))
               (should (equal (alist-get 'qid (car questions)) "call_new#0"))
               (should-not (alist-get 'answerable (car questions)))))
@@ -1112,3 +1112,32 @@
         (limen-inbox--answered "t1#0")
         (should (equal calls '(nil)))
         (should (zerop refreshes))))))
+
+(ert-deftest limen-inbox-keeps-to-the-agents-emacs-took-up ()
+  (limen-inbox-tests--with-inbox
+    (let ((limen-inbox-attached-only t))
+      (limen-inbox--on-event
+       "claude"
+       (limen-inbox-tests--payload "PreToolUse" '(tool_name . "AskUserQuestion")
+                                   '(tool_use_id . "t1")
+                                   (cons 'tool_input limen-inbox-tests--claude-input))
+       nil nil)
+      (should-not (limen-inbox-questions))
+      (limen-inbox--on-event
+       "claude"
+       (limen-inbox-tests--payload "PreToolUse" '(tool_name . "AskUserQuestion")
+                                   '(tool_use_id . "t2")
+                                   (cons 'tool_input limen-inbox-tests--claude-input))
+       'session nil)
+      (should (equal (mapcar (lambda (entry) (alist-get 'id entry))
+                             (limen-inbox-questions))
+                     '("t2"))))
+    (let ((limen-inbox-attached-only nil))
+      (limen-inbox--on-event
+       "claude"
+       (limen-inbox-tests--payload "PreToolUse" '(tool_name . "AskUserQuestion")
+                                   '(tool_use_id . "t3")
+                                   (cons 'tool_input limen-inbox-tests--claude-input))
+       nil nil)
+      (should (member "t3" (mapcar (lambda (entry) (alist-get 'id entry))
+                                   (limen-inbox-questions)))))))
