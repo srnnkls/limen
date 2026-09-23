@@ -231,7 +231,7 @@
       (should (limen-inbox--groups (list idle)))
       (should (limen-inbox-questions)))))
 
-(ert-deftest limen-inbox-mode-keeps-installed-hooks-when-disabled ()
+(ert-deftest limen-inbox-mode-removes-its-own-hooks-when-disabled ()
   (let* ((directory (make-temp-file "limen-inbox-settings" t))
          (process-environment
           (append (list (concat "CLAUDE_CONFIG_DIR=" directory)
@@ -239,7 +239,8 @@
                   process-environment))
          (limen-hooks-command "limen")
          (limen-hooks-mode t)
-         (limen-hooks-extra-events nil)
+         (limen-hooks--subscriptions
+          (list (cons "context" (list :events limen-hooks--context-events))))
          (limen-hooks-event-functions nil)
          (herdr-status-sections-functions nil)
          (limen-inbox--questions nil))
@@ -258,21 +259,7 @@
                         herdr-status-sections-functions))
           (should (limen-hooks-installed-p 'claude))
           (should (limen-hooks-installed-p 'codex))
-          (let ((settings-before
-                 (mapcar (lambda (provider)
-                           (cons provider
-                                 (with-temp-buffer
-                                   (insert-file-contents (limen-hooks-settings-file provider))
-                                   (buffer-string))))
-                         '(claude codex))))
-            (cl-letf (((symbol-function 'limen-hooks--write-settings)
-                       (lambda (&rest _) (ert-fail "Disabling rewrote provider settings"))))
-              (limen-inbox-mode -1))
-            (dolist (entry settings-before)
-              (should (equal (cdr entry)
-                             (with-temp-buffer
-                               (insert-file-contents (limen-hooks-settings-file (car entry)))
-                               (buffer-string))))))
+          (limen-inbox-mode -1)
           (should (equal (mapcar #'car (limen-hooks-events))
                          '("UserPromptSubmit" "SessionStart")))
           (should-not (memq #'limen-inbox--on-event limen-hooks-event-functions))
@@ -280,10 +267,12 @@
           (should (limen-hooks-installed-p 'claude))
           (should (limen-hooks-installed-p 'codex))
           (dolist (provider '(claude codex))
-            (should (limen-hooks--event-installed-p
-                     (limen-hooks--read-settings
-                      (limen-hooks-settings-file provider))
-                     "PreToolUse" provider))
+            (let ((settings (limen-hooks--read-settings
+                             (limen-hooks-settings-file provider))))
+              (dolist (event '("PreToolUse" "PostToolUse" "Stop" "SessionEnd"))
+                (should-not (limen-hooks--event-installed-p settings event provider)))
+              (should (limen-hooks--event-installed-p
+                       settings "UserPromptSubmit" provider)))
             (should (limen-hooks-uninstall provider))
             (should-not (limen-hooks-any-installed-p provider))))
       (limen-inbox-mode -1)

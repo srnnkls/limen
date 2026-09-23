@@ -208,23 +208,11 @@ Enabling asks for the hook events the model arrives on, the way
   :group 'limen-model
   (if limen-model-mode
       (progn
-        (pcase-dolist (`(,provider . ,events) limen-model-provider-events)
-          (dolist (event events)
-            (cl-pushnew event (alist-get provider limen-hooks-provider-events)
-                        :test #'equal)))
         (add-hook 'herdr-status-refresh-hook #'limen-model--on-status-refresh)
-        (add-hook 'limen-hooks-event-functions #'limen-model--report-event)
-        (limen-hooks-request-install "model"))
+        (limen-hooks-subscribe "model" :provider-events limen-model-provider-events
+                               :function #'limen-model--report-event))
     (remove-hook 'herdr-status-refresh-hook #'limen-model--on-status-refresh)
-    (remove-hook 'limen-hooks-event-functions #'limen-model--report-event)
-    (pcase-dolist (`(,provider . ,events) limen-model-provider-events)
-      (setf (alist-get provider limen-hooks-provider-events)
-            (seq-remove (lambda (spec) (member spec events))
-                        (alist-get provider limen-hooks-provider-events))))
-    (limen-hooks-remove-events-everywhere
-     (delete-dups
-      (mapcar #'car (mapcan (lambda (entry) (copy-sequence (cdr entry)))
-                            limen-model-provider-events))))))
+    (limen-hooks-unsubscribe "model")))
 
 (provide 'limen-model)
 ;;; limen-model.el ends here

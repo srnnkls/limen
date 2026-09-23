@@ -263,23 +263,11 @@ Enabling asks for the hook events a fresh count follows, the way
   :group 'limen-usage
   (if limen-usage-mode
       (progn
-        (pcase-dolist (`(,provider . ,events) limen-usage-provider-events)
-          (dolist (event events)
-            (cl-pushnew event (alist-get provider limen-hooks-provider-events)
-                        :test #'equal)))
         (add-hook 'herdr-status-refresh-hook #'limen-usage--on-status-refresh)
-        (add-hook 'limen-hooks-event-functions #'limen-usage--report-event)
-        (limen-hooks-request-install "context window"))
+        (limen-hooks-subscribe "context window" :provider-events limen-usage-provider-events
+                               :function #'limen-usage--report-event))
     (remove-hook 'herdr-status-refresh-hook #'limen-usage--on-status-refresh)
-    (remove-hook 'limen-hooks-event-functions #'limen-usage--report-event)
-    (pcase-dolist (`(,provider . ,events) limen-usage-provider-events)
-      (setf (alist-get provider limen-hooks-provider-events)
-            (seq-remove (lambda (spec) (member spec events))
-                        (alist-get provider limen-hooks-provider-events))))
-    (limen-hooks-remove-events-everywhere
-     (delete-dups
-      (mapcar #'car (mapcan (lambda (entry) (copy-sequence (cdr entry)))
-                            limen-usage-provider-events))))))
+    (limen-hooks-unsubscribe "context window")))
 
 (provide 'limen-usage)
 ;;; limen-usage.el ends here

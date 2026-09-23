@@ -1016,26 +1016,20 @@ other case renders the question read-only."
 ;;;###autoload
 (define-minor-mode limen-inbox-mode
   "List agents' pending questions in the Herdr dashboard.
-Enabling registers the question hook events and requests their install
-for every provider, which asks once per provider where they are missing
-after the current command.  Disabling stops inbox collection and rendering
-without changing provider settings.  Use `limen-hooks-uninstall' to
-explicitly remove installed hooks."
+Enabling subscribes the question hook events, which asks once per
+provider where they are missing after the current command.  Disabling
+stops inbox collection and rendering and removes the events nothing else
+still needs."
   :global t
   :group 'limen-hooks
   (cond
    (limen-inbox-mode
-    (dolist (spec limen-inbox--events)
-      (add-to-list 'limen-hooks-extra-events spec t))
-    (add-hook 'limen-hooks-event-functions #'limen-inbox--on-event)
     (add-hook 'herdr-status-sections-functions #'limen-inbox--insert-section)
-    (limen-hooks-request-install "inbox"))
+    (limen-hooks-subscribe "inbox" :events limen-inbox--events
+                           :function #'limen-inbox--on-event))
    (t
-    (remove-hook 'limen-hooks-event-functions #'limen-inbox--on-event)
     (remove-hook 'herdr-status-sections-functions #'limen-inbox--insert-section)
-    (setq limen-hooks-extra-events
-          (seq-remove (lambda (spec) (member spec limen-inbox--events))
-                      limen-hooks-extra-events))
+    (limen-hooks-unsubscribe "inbox")
     (setq limen-inbox--questions nil)
     (clrhash limen-inbox--selected)
     (clrhash limen-inbox--sent)

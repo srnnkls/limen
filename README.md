@@ -55,6 +55,13 @@ To have every prompt typed into a Claude Code or Codex pane carry Emacs context,
 (limen-herd-mode 1)
 ```
 
+`limen-memex-live-mode` keeps a [memex](https://github.com/srnnkls/memex.el) transcript current while its agent works: each prompt, tool call, and finished turn redraws the views of that conversation Emacs is showing, keeping their filters and place:
+
+```elisp
+(require 'limen-memex)
+(limen-memex-live-mode 1)
+```
+
 `limen-complete-mode` completes inside a [cera](https://github.com/srnnkls/cera) field — the one a Herdr message is written in, and the one an inbox note is edited in. `@` completes a project file, `#` an annotation of the visible scholia sessions as `file:line`, and `/` a skill of the harness the message is going to, with its description beside it. Codex lists its own skills — `codex debug prompt-input` resolves its personal, project and bundled ones — and is asked for them; Claude Code has no such command, so its `~/.claude/skills` and `<project>/.claude/skills` are read instead, a project's skill answering for the name it shares. The answer is kept until `limen-complete-forget`, and asked for once the editor first falls idle so the first skill written in a field does not wait. Codex invokes a skill by `$name`, so a skill completed for Codex rewrites the `/` as it lands. Text that opens none of the three completes on what the field was given, which for a message is the messages sent before it:
 
 ```elisp

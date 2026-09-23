@@ -624,35 +624,29 @@ rename <pane> \"herd:<name> %sfinished,exited\"'. A notice opens with
 ;;;###autoload
 (define-minor-mode limen-herd-mode
   "Tell herd members what the others do, as their hooks report it.
-Enabling registers the turn hook events and requests their install for
-every provider, which asks once per provider where they are missing
-after the current command; a member still receives nothing until it
-subscribes, through the `n' menu of the dashboard.  Disabling removes
-the events again where nothing else needs them."
+Enabling subscribes the turn hook events, which asks once per provider
+where they are missing after the current command; a member still
+receives nothing until it subscribes, through the `n' menu of the
+dashboard.  Disabling removes the events again where nothing else needs
+them."
   :global t
   :group 'limen-herd
   (cond
    (limen-herd-mode
-    (dolist (spec limen-herd--events)
-      (add-to-list 'limen-hooks-extra-events spec t))
-    (add-hook 'limen-hooks-event-functions #'limen-herd--on-event)
     (add-hook 'herdr-herd-protocol-functions #'limen-herd--protocol)
     (add-hook 'herdr-herd-sent-functions #'limen-herd--on-sent)
     (add-hook 'herdr-agent-event-functions #'limen-herd--on-herdr-event)
     (limen-herd--seed)
     (limen-herd--subscribe)
     (limen-herd--attach-when-loaded)
-    (limen-hooks-request-install "herd"))
+    (limen-hooks-subscribe "herd" :events limen-herd--events
+                           :function #'limen-herd--on-event))
    (t
-    (remove-hook 'limen-hooks-event-functions #'limen-herd--on-event)
     (remove-hook 'herdr-herd-protocol-functions #'limen-herd--protocol)
     (remove-hook 'herdr-herd-sent-functions #'limen-herd--on-sent)
     (remove-hook 'herdr-agent-event-functions #'limen-herd--on-herdr-event)
     (limen-herd--detach-menu)
-    (setq limen-hooks-extra-events
-          (seq-remove (lambda (spec) (member spec limen-herd--events))
-                      limen-hooks-extra-events))
-    (limen-hooks-remove-events-everywhere (mapcar #'car limen-herd--events))
+    (limen-hooks-unsubscribe "herd")
     (limen-herd--reset))))
 
 (provide 'limen-herd)

@@ -15,10 +15,14 @@
                    process-environment))
           (limen-hooks-command "limen")
           (limen-hooks-mode t)
-          (limen-hooks-extra-events
-           '(("PreToolUse" . "AskUserQuestion|request_user_input")
-             ("PostToolUse" . "AskUserQuestion|request_user_input")
-             ("Stop") ("SessionEnd"))))
+          (limen-hooks-event-functions nil)
+          (limen-hooks--subscriptions
+           (list (cons "context" (list :events limen-hooks--context-events))
+                 (cons "inbox"
+                       (list :events
+                             '(("PreToolUse" . "AskUserQuestion|request_user_input")
+                               ("PostToolUse" . "AskUserQuestion|request_user_input")
+                               ("Stop") ("SessionEnd")))))))
      (unwind-protect
          (progn ,@body)
        (delete-directory directory t))))
@@ -392,15 +396,62 @@
                        agents)))
       (delete-file socket))))
 
-(ert-deftest limen-hooks-removing-events-keeps-what-others-still-list ()
+(ert-deftest limen-hooks-unsubscribing-keeps-what-others-still-need ()
   (limen-hooks-tests--with-settings
     (limen-hooks-install 'claude)
-    (setq limen-hooks-extra-events '(("Stop")))
-    (limen-hooks-remove-events-everywhere '("Stop" "SessionEnd"))
+    (setq limen-hooks--subscriptions
+          (append limen-hooks--subscriptions
+                  (list (cons "herd" (list :events '(("Stop")))))))
+    (limen-hooks-unsubscribe "inbox")
     (let ((settings (limen-hooks--read-settings (limen-hooks-settings-file 'claude))))
       (should (limen-hooks--event-installed-p settings "Stop" 'claude))
       (should-not (limen-hooks--event-installed-p settings "SessionEnd" 'claude))
-      (should (limen-hooks--event-installed-p settings "UserPromptSubmit" 'claude)))))
+      (should-not (limen-hooks--event-installed-p settings "PreToolUse" 'claude))
+      (should (limen-hooks--event-installed-p settings "UserPromptSubmit" 'claude)))
+    (should-not (assoc "inbox" limen-hooks--subscriptions))
+    (should-not (limen-hooks-unsubscribe "inbox"))))
+
+(ert-deftest limen-hooks-subscribe-rejects-an-unknown-event ()
+  (let ((limen-hooks--subscriptions nil)
+        (limen-hooks-event-functions nil))
+    (cl-letf (((symbol-function 'limen-hooks-request-install) #'ignore))
+      (should-error (limen-hooks-subscribe "typo" :events '(("PostToolUsed")))
+                    :type 'limen-invalid-arguments)
+      (should-error (limen-hooks-subscribe
+                     "typo" :provider-events '((claude ("ModelSwitch"))))
+                    :type 'limen-invalid-arguments)
+      (should-not limen-hooks--subscriptions))))
+
+(ert-deftest limen-hooks-subscribing-again-replaces-the-earlier-subscription ()
+  (let ((limen-hooks--subscriptions nil)
+        (limen-hooks-event-functions nil)
+        requested)
+    (cl-letf (((symbol-function 'limen-hooks-request-install)
+               (lambda (feature) (push feature requested))))
+      (limen-hooks-subscribe "one" :events '(("Stop")) :function #'ignore)
+      (limen-hooks-subscribe "two" :events '(("Stop") ("SessionEnd")))
+      (limen-hooks-subscribe "one" :events '(("PreToolUse" . "Bash"))
+                             :function #'identity)
+      (should (equal requested '("one" "two" "one")))
+      (should (equal (mapcar #'car limen-hooks--subscriptions) '("one" "two")))
+      (should (equal (limen-hooks-events)
+                     '(("PreToolUse" . "Bash") ("Stop") ("SessionEnd"))))
+      (should (equal limen-hooks-event-functions (list #'identity))))))
+
+(ert-deftest limen-hooks-events-joins-provider-specs-without-repeats ()
+  (let ((limen-hooks--subscriptions
+         (list (cons "model" (list :provider-events
+                                   '((claude ("PostModelSwitch") ("Stop"))
+                                     (pi ("PostModelSwitch")))))
+               (cons "usage" (list :provider-events
+                                   '((claude ("Stop") ("PostModelSwitch"))
+                                     (codex ("Stop")))))
+               (cons "herd" (list :events '(("Stop") ("SessionEnd")))))))
+    (should (equal (limen-hooks-events 'claude)
+                   '(("PostModelSwitch") ("Stop") ("SessionEnd"))))
+    (should (equal (limen-hooks-events 'codex) '(("Stop") ("SessionEnd"))))
+    (should (equal (limen-hooks-events)
+                   '(("PostModelSwitch") ("Stop") ("SessionEnd"))))))
 
 (ert-deftest limen-hooks-output-resolves-session-by-id-then-pane ()
   (let* ((root (file-truename (make-temp-file "limen-hooks-resolve" t)))
@@ -590,14 +641,15 @@ nothing to snapshot."
 
 (ert-deftest limen-hooks-mode-installs-and-removes-the-context-events ()
   (limen-hooks-tests--with-settings
-    (let ((limen-hooks-extra-events '(("Stop"))))
+    (let ((limen-hooks--subscriptions (list (cons "herd" (list :events '(("Stop"))))))
+          (limen-hooks-review-edits nil))
       (limen-hooks-mode -1)
       (should (equal (mapcar #'car (limen-hooks-events)) '("Stop")))
       (unwind-protect
           (progn
             (limen-hooks-mode 1)
             (should (equal (mapcar #'car (limen-hooks-events))
-                           '("UserPromptSubmit" "SessionStart" "Stop")))
+                           '("Stop" "UserPromptSubmit" "SessionStart")))
             (dolist (provider '(claude codex))
               (should (limen-hooks-installed-p provider)))
             (limen-hooks-mode -1)
@@ -688,6 +740,7 @@ nothing to snapshot."
          (limen-herdr-context-fields-functions nil)
          (limen-hooks--pending (make-hash-table :test #'eq))
          (limen-hooks--last (make-hash-table :test #'eq))
+         (limen-hooks-event-functions (list #'limen-hooks--review-edit))
          (session (limen-open-session :provider 'claude :project-root root
                                       :location (cons (limen-server-key "/tmp/h.sock") "%7")))
          (reviewed nil)
@@ -738,21 +791,41 @@ nothing to snapshot."
     (let ((limen-hooks-review-edits nil))
       (limen-hooks-install 'claude)
       (should (limen-hooks-installed-p 'claude)))
+    (cl-flet ((matchers ()
+                (let ((settings (limen-hooks-tests--read
+                                 (limen-hooks-settings-file 'claude))))
+                  (mapcar (lambda (group) (alist-get 'matcher group))
+                          (append (alist-get 'PostToolUse (alist-get 'hooks settings))
+                                  nil)))))
+      (let ((limen-hooks-review-edits t))
+        (limen-hooks--subscribe-review)
+        (should (member '("PostToolUse" . "Edit|Write|MultiEdit|edit|write")
+                        (limen-hooks-events)))
+        (should (memq #'limen-hooks--review-edit limen-hooks-event-functions))
+        (should (limen-hooks-installed-p 'claude))
+        (should (equal (matchers) '("AskUserQuestion|request_user_input"
+                                    "Edit|Write|MultiEdit|edit|write")))
+        (should (equal (limen-hooks-tests--commands
+                        (limen-hooks-tests--read (limen-hooks-settings-file 'claude))
+                        "PostToolUse")
+                       '("limen hook claude" "limen hook claude")))
+        (should-not (limen-hooks-install 'claude)))
+      (let ((limen-hooks-review-edits nil))
+        (limen-hooks--subscribe-review)
+        (should-not (memq #'limen-hooks--review-edit limen-hooks-event-functions))
+        (should (equal (matchers) '("AskUserQuestion|request_user_input")))))))
+
+(ert-deftest limen-hooks-unsubscribing-a-matcher-leaves-another-on-the-same-event ()
+  (limen-hooks-tests--with-settings
     (let ((limen-hooks-review-edits t))
-      (should (equal (assoc "PostToolUse" (limen-hooks-events))
-                     '("PostToolUse" . "Edit|Write|MultiEdit|edit|write")))
-      (should-not (limen-hooks-installed-p 'claude))
-      (should (limen-hooks-install 'claude))
-      (should (limen-hooks-installed-p 'claude))
-      (let* ((settings (limen-hooks-tests--read (limen-hooks-settings-file 'claude)))
-             (groups (alist-get 'PostToolUse (alist-get 'hooks settings))))
+      (limen-hooks--subscribe-review)
+      (limen-hooks-unsubscribe "inbox")
+      (let ((settings (limen-hooks-tests--read (limen-hooks-settings-file 'claude))))
         (should (equal (mapcar (lambda (group) (alist-get 'matcher group))
-                               (append groups nil))
-                       '("AskUserQuestion|request_user_input"
-                         "Edit|Write|MultiEdit|edit|write")))
-        (should (equal (limen-hooks-tests--commands settings "PostToolUse")
-                       '("limen hook claude" "limen hook claude"))))
-      (should-not (limen-hooks-install 'claude)))))
+                               (append (alist-get 'PostToolUse (alist-get 'hooks settings))
+                                       nil))
+                       '("Edit|Write|MultiEdit|edit|write")))
+        (should-not (alist-get 'PreToolUse (alist-get 'hooks settings)))))))
 
 (ert-deftest limen-hooks-answers-an-extension-provider-without-installing-it ()
   (should (member 'pi (limen-hooks-providers)))

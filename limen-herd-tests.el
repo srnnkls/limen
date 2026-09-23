@@ -272,7 +272,7 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
     (should-not prompts)))
 
 (ert-deftest limen-herd-mode-registers-and-installs ()
-  (let ((limen-hooks-extra-events nil)
+  (let ((limen-hooks--subscriptions nil)
         (limen-hooks-event-functions nil)
         (herdr-herd-protocol-functions nil)
         (herdr-herd-sent-functions nil)
@@ -283,12 +283,16 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
         (removed nil))
     (cl-letf (((symbol-function 'limen-hooks-request-install)
                (lambda (feature) (push feature installed)))
-              ((symbol-function 'limen-hooks-remove-events-everywhere)
-               (lambda (events) (setq removed events))))
+              ((symbol-function 'limen-hooks-installing-providers)
+               (lambda () '(claude)))
+              ((symbol-function 'limen-hooks--remove-groups)
+               (lambda (_provider predicate)
+                 (setq removed (seq-filter (lambda (event) (funcall predicate event nil))
+                                           '("Stop" "SessionEnd" "UserPromptSubmit"))))))
       (unwind-protect
           (progn
             (limen-herd-mode 1)
-            (should (equal limen-hooks-extra-events '(("Stop") ("SessionEnd"))))
+            (should (equal (limen-hooks-events) '(("Stop") ("SessionEnd"))))
             (should (memq #'limen-herd--on-event limen-hooks-event-functions))
             (should (memq #'limen-herd--protocol herdr-herd-protocol-functions))
             (should (memq #'limen-herd--on-sent herdr-herd-sent-functions))
@@ -297,7 +301,7 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
             (should (string-match-p "notify:finished,exited"
                                     (limen-herd--protocol '("alpha" . "limen"))))
             (limen-herd-mode -1)
-            (should-not limen-hooks-extra-events)
+            (should-not (limen-hooks-events))
             (should-not (memq #'limen-herd--on-event limen-hooks-event-functions))
             (should-not (memq #'limen-herd--protocol herdr-herd-protocol-functions))
             (should-not (memq #'limen-herd--on-herdr-event herdr-agent-event-functions))

@@ -83,8 +83,8 @@ active requests the tool-use hook it needs."
   :type 'boolean
   :set (lambda (symbol value)
          (set-default symbol value)
-         (when (and value (bound-and-true-p limen-hooks-mode))
-           (limen-hooks-request-install "review")))
+         (when (bound-and-true-p limen-hooks-mode)
+           (limen-hooks--subscribe-review)))
   :group 'limen-hooks)
 
 (defcustom limen-hooks-review-attached-only t
@@ -139,7 +139,14 @@ not who answers them."
   (when-let* ((entry (limen-provider provider)))
     (eq (limen-provider-hook-transport entry) 'extension)))
 
-(defconst limen-hooks--base-events '(("UserPromptSubmit") ("SessionStart"))
+(defconst limen-hooks-event-names
+  '("SessionStart" "UserPromptSubmit" "PreToolUse" "PostToolUse" "Stop"
+    "PostModelSwitch" "SessionEnd")
+  "Every hook event Limen answers, by the name its payload carries.
+A harness that names them otherwise is translated into these at its own
+edge, so a subscriber reads one set of names whichever harness it hears.")
+
+(defconst limen-hooks--context-events '(("UserPromptSubmit") ("SessionStart"))
   "Hook events context injection needs.")
 
 (defun limen-hooks--edit-tools ()
@@ -155,28 +162,31 @@ the matcher once."
   (when-let* ((tools (limen-hooks--edit-tools)))
     (list (cons "PostToolUse" (string-join tools "|")))))
 
-(defvar limen-hooks-extra-events nil
-  "Further (EVENT . MATCHER) specs consumers need installed.
-MATCHER is nil or the provider's tool matcher string.")
+(defvar limen-hooks--subscriptions nil
+  "Features subscribed to hook events, as (FEATURE . PLIST), oldest first.
+PLIST holds the `:events' every provider installs, the `:provider-events'
+only some do, and the `:function' the events are handed to.")
 
-(defvar limen-hooks-provider-events nil
-  "Specs only some providers understand, keyed by provider name.
-Each value is a list of (EVENT . MATCHER) specs installed for that
-provider alone, for an event the others have no notion of.")
+(defun limen-hooks--subscription-events (subscription &optional provider)
+  "Return the (EVENT . MATCHER) specs SUBSCRIPTION's plist asks for.
+With PROVIDER, only the provider-specific specs of that provider are
+included; without one, those of every provider are."
+  (let ((by-provider (plist-get subscription :provider-events)))
+    (append (plist-get subscription :events)
+            (if provider
+                (alist-get provider by-provider)
+              (apply #'append (mapcar #'cdr by-provider)))
+            nil)))
 
 (defun limen-hooks-events (&optional provider)
   "Return every (EVENT . MATCHER) spec the installed hooks must cover.
 With PROVIDER, the specs that provider alone understands are included
 and the other providers' left out; without one, every spec is returned,
 which is what asking whether an event is still needed wants."
-  (append (and limen-hooks-mode limen-hooks--base-events)
-          (and limen-hooks-mode limen-hooks-review-edits
-               (limen-hooks--review-events))
-          limen-hooks-extra-events
-          (if provider
-              (copy-sequence (alist-get provider limen-hooks-provider-events))
-            (mapcan (lambda (entry) (copy-sequence (cdr entry)))
-                    limen-hooks-provider-events))))
+  (delete-dups
+   (mapcan (lambda (entry)
+             (limen-hooks--subscription-events (cdr entry) provider))
+           limen-hooks--subscriptions)))
 
 (defconst limen-hooks--timeout 5
   "Seconds a provider waits for the hook before continuing without it.")
@@ -191,10 +201,12 @@ Claude shares 1.5 s among every SessionEnd hook and Codex clamps them to 3 s.")
 
 (defvar limen-hooks-event-functions nil
   "Functions run for every answered hook event.
-Each receives the provider name, the decoded payload extended with the
-`server' and `pane' of the Herdr pane, the resolved Limen session or nil,
-and the request context.  A string one returns for a `UserPromptSubmit'
-event is added to the context the prompt carries.")
+A feature joins through `limen-hooks-subscribe' rather than directly,
+so the events it reads are installed along with it.  Each receives the
+provider name, the decoded payload extended with the `server' and `pane'
+of the Herdr pane, the resolved Limen session or nil, and the request
+context.  A string one returns for a `UserPromptSubmit' event is added
+to the context the prompt carries.")
 
 (defvar limen-hooks--drafts (make-hash-table :test #'eq)
   "Rendered text and context of the latest Herdr context per session.")
@@ -348,29 +360,38 @@ so there is nothing to install and nothing to find missing."
                (if changed "installed" "already present") file))
     changed))
 
-(defun limen-hooks-remove-events (provider events)
-  "Remove Limen's handlers for the EVENTS named from PROVIDER's settings.
+(defun limen-hooks--remove-groups (provider predicate)
+  "Remove Limen's handlers from PROVIDER's handler groups PREDICATE selects.
+PREDICATE is called with a group's event name and tool matcher.  A group
+left without handlers goes, and so does an event left without groups.
 Return non-nil when the settings changed."
   (let* ((file (limen-hooks-settings-file provider))
          (settings (limen-hooks--read-settings file))
          (hooks (alist-get 'hooks settings))
          changed)
-    (dolist (event events)
-      (when (limen-hooks--event-installed-p settings event provider)
-        (let ((groups
-               (seq-remove
-                (lambda (group) (zerop (length (alist-get 'hooks group))))
-                (mapcar (lambda (group)
-                          (let ((kept (seq-remove
-                                       (lambda (handler)
-                                         (limen-hooks--handler-p handler provider))
-                                       (alist-get 'hooks group))))
-                            (mapcar (lambda (entry)
-                                      (if (eq (car entry) 'hooks)
-                                          (cons 'hooks (vconcat kept))
-                                        entry))
-                                    group)))
-                        (limen-hooks--event-groups settings event)))))
+    (dolist (event (limen-hooks--settings-events settings))
+      (let* ((touched nil)
+             (groups
+              (seq-remove
+               (lambda (group) (zerop (length (alist-get 'hooks group))))
+               (mapcar
+                (lambda (group)
+                  (let* ((handlers (alist-get 'hooks group))
+                         (kept (seq-remove (lambda (handler)
+                                             (limen-hooks--handler-p handler provider))
+                                           handlers)))
+                    (if (and (/= (length kept) (length handlers))
+                             (funcall predicate event (limen-hooks--group-matcher group)))
+                        (progn
+                          (setq touched t)
+                          (mapcar (lambda (entry)
+                                    (if (eq (car entry) 'hooks)
+                                        (cons 'hooks (vconcat kept))
+                                      entry))
+                                  group))
+                      group)))
+                (limen-hooks--event-groups settings event)))))
+        (when touched
           (if groups
               (setf (alist-get (intern event) hooks) (vconcat groups))
             (setq hooks (assq-delete-all (intern event) hooks)))
@@ -386,11 +407,7 @@ Return non-nil when the settings changed."
 (defun limen-hooks-uninstall (provider)
   "Remove Limen's prompt hooks from PROVIDER's settings."
   (interactive (limen-hooks--read-provider))
-  (let ((changed (limen-hooks-remove-events
-                  provider
-                  (limen-hooks--settings-events
-                   (limen-hooks--read-settings
-                    (limen-hooks-settings-file provider))))))
+  (let ((changed (limen-hooks--remove-groups provider #'always)))
     (when (called-interactively-p 'any)
       (message "Limen %s hooks %s in %s" provider
                (if changed "removed" "not present")
@@ -442,18 +459,53 @@ per provider; in batch they install at once."
     (setq limen-hooks--request-timer
           (run-with-timer 0 nil #'limen-hooks--run-requests)))))
 
-(defun limen-hooks-remove-events-everywhere (events)
-  "Remove Limen's handlers for the EVENTS named from every provider's settings.
-An event another consumer still lists in `limen-hooks-events' stays."
-  (let* ((needed (mapcar #'car (limen-hooks-events)))
-         (events (seq-remove (lambda (event) (member event needed)) events)))
-    (when events
-      (dolist (provider (limen-hooks-installing-providers))
-        (condition-case err
-            (when (limen-hooks-any-installed-p provider)
-              (limen-hooks-remove-events provider events))
-          (error
-           (message "Limen hooks: %s" (error-message-string err))))))))
+(cl-defun limen-hooks-subscribe (feature &key events provider-events function)
+  "Subscribe FEATURE, a name the install prompt shows, to hook events.
+EVENTS lists the (EVENT . MATCHER) specs every provider installs, and
+PROVIDER-EVENTS maps a provider to the specs it alone installs, for an
+event the others have no notion of.  MATCHER is nil or the provider's
+tool matcher string.  FUNCTION joins `limen-hooks-event-functions'.
+Subscribing again replaces what FEATURE asked for before.  The missing
+hooks are requested as `limen-hooks-request-install' requests them."
+  (dolist (spec (append events (apply #'append (mapcar #'cdr provider-events))))
+    (unless (member (car spec) limen-hooks-event-names)
+      (signal 'limen-invalid-arguments
+              (list (format "Unknown hook event %s" (car spec))))))
+  (let ((subscription (list :events events :provider-events provider-events
+                            :function function))
+        (entry (assoc feature limen-hooks--subscriptions)))
+    (when-let* ((previous (plist-get (cdr entry) :function)))
+      (remove-hook 'limen-hooks-event-functions previous))
+    (if entry
+        (setcdr entry subscription)
+      (setq limen-hooks--subscriptions
+            (append limen-hooks--subscriptions
+                    (list (cons feature subscription))))))
+  (when function
+    (add-hook 'limen-hooks-event-functions function))
+  (limen-hooks-request-install feature))
+
+(defun limen-hooks-unsubscribe (feature)
+  "Drop FEATURE's subscription and the hooks nothing else still needs.
+Each provider loses the specs FEATURE asked of it that no remaining
+subscription asks for; a provider whose settings cannot be written is
+reported and skipped."
+  (when-let* ((entry (assoc feature limen-hooks--subscriptions)))
+    (setq limen-hooks--subscriptions (delq entry limen-hooks--subscriptions))
+    (when-let* ((function (plist-get (cdr entry) :function)))
+      (remove-hook 'limen-hooks-event-functions function))
+    (dolist (provider (limen-hooks-installing-providers))
+      (let* ((needed (limen-hooks-events provider))
+             (dropped (seq-remove
+                       (lambda (spec) (member spec needed))
+                       (limen-hooks--subscription-events (cdr entry) provider))))
+        (when dropped
+          (condition-case err
+              (limen-hooks--remove-groups
+               provider
+               (lambda (event matcher) (member (cons event matcher) dropped)))
+            (error
+             (message "Limen hooks: %s" (error-message-string err)))))))))
 
 ;;; Herdr panes
 
@@ -837,8 +889,14 @@ waits on it."
                                     (additionalContext . ,text)))))
         ""))))
 
+(defun limen-hooks--subscribe-review ()
+  "Subscribe edit review while it is asked for, and drop it once it is not."
+  (if limen-hooks-review-edits
+      (limen-hooks-subscribe "review" :events (limen-hooks--review-events)
+                             :function #'limen-hooks--review-edit)
+    (limen-hooks-unsubscribe "review")))
+
 (add-hook 'limen-session-close-hook #'limen-hooks--forget)
-(add-hook 'limen-hooks-event-functions #'limen-hooks--review-edit)
 (add-hook 'limen-herdr-context-hook #'limen-hooks--draft)
 (add-hook 'limen-herdr-push-functions #'limen-hooks--queue-push)
 (add-hook 'herdr-message-compose-functions #'limen-hooks--compose)
@@ -846,17 +904,20 @@ waits on it."
 ;;;###autoload
 (define-minor-mode limen-hooks-mode
   "Inject Emacs context through agent prompt hooks instead of the message body.
-Enabling requests the context hook events for every provider, which
-asks once per provider whose settings lack them after the current
-command, and Herdr messages to a provider with installed hooks carry
-only their text; disabling removes the context events again."
+Enabling subscribes the context hook events, and the edit review ones
+under `limen-hooks-review-edits', which asks once per provider whose
+settings lack them after the current command; Herdr messages to a
+provider with installed hooks then carry only their text.  Disabling
+unsubscribes them again."
   :global t
   :group 'limen-hooks
-  (if limen-hooks-mode
-      (limen-hooks-request-install "context")
-    (limen-hooks-remove-events-everywhere
-     (mapcar #'car (append limen-hooks--base-events
-                           (limen-hooks--review-events))))))
+  (cond
+   (limen-hooks-mode
+    (limen-hooks-subscribe "context" :events limen-hooks--context-events)
+    (limen-hooks--subscribe-review))
+   (t
+    (limen-hooks-unsubscribe "review")
+    (limen-hooks-unsubscribe "context"))))
 
 (provide 'limen-hooks)
 ;;; limen-hooks.el ends here
