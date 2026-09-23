@@ -59,6 +59,11 @@ A pane stacks blocks, which stand where the lines of one text stood."
   `((turn_id . ,turn) (doc_id . ,turn) (role . ,role)
     (text . ,text) (tool_name . ,tool)))
 
+(defun limen-message-tests--exchange (turn answer)
+  "Return TURN's question and its ANSWER, newest first."
+  (list (limen-message-tests--record (1+ (* 2 turn)) "assistant" answer)
+        (limen-message-tests--record (* 2 turn) "user" (format "question %d" turn))))
+
 (ert-deftest limen-message-off-delegates-without-loads-or-keymaps ()
   (let ((limen-message-context nil) (limen-message-summary t))
     (cl-letf (((symbol-function 'require) (lambda (&rest _) (ert-fail "Load")))
@@ -180,9 +185,10 @@ A pane stacks blocks, which stand where the lines of one text stood."
                      (push offset offsets)
                      (funcall callback
                               `((records . ,(if (= offset 32)
-                                                (list (limen-message-tests--record 6 "assistant" "tail"))
-                                              (cl-loop for turn from 1 to 6 collect
-                                                       (limen-message-tests--record turn "assistant" "head"))))))))))
+                                                (list (limen-message-tests--record 99 "assistant" "tail"))
+                                              (cl-loop for turn from 1 to 6 append
+                                                       (reverse (limen-message-tests--exchange
+                                                                 turn "head")))))))))))
         (limen-message--page state 64)
         (should (equal offsets '(0 32)))
         (should (equal (limen-message--state-latest state) "head\ntail"))))))
@@ -475,17 +481,17 @@ A pane stacks blocks, which stand where the lines of one text stood."
                    (let ((turn (* calls 10)))
                      (funcall callback
                               `((records . ,(append
-                                             (list (limen-message-tests--record
-                                                    turn "assistant"
-                                                    (format "reply %d" calls)))
                                              (make-list 30 (limen-message-tests--record
-                                                            turn "tool_result" "tool"))))))))))
+                                                            (1- turn) "tool_result" "tool"))
+                                             (reverse (limen-message-tests--exchange
+                                                       turn (format "reply %d" calls)))))))))))
         (limen-message--page state 320)
-        ;; One page carries one message under its tool traffic, so three
-        ;; wanted means paging back until three stand complete.
-        (should (= calls 4))
+        ;; One page carries one turn above the tool traffic of the one
+        ;; before, so three wanted means paging back until three stand
+        ;; complete.
+        (should (= calls 3))
         (should (equal (mapcar #'cdr (limen-message--state-messages state))
-                       '("reply 1" "reply 2" "reply 3" "reply 4")))))))
+                       '("reply 1" "reply 2" "reply 3")))))))
 
 (ert-deftest limen-message-explicit-reasoning-flag-is-not-conversation ()
   (should-not (limen-message--conversation-p
@@ -801,16 +807,48 @@ A pane stacks blocks, which stand where the lines of one text stood."
                     'quit))))
     (should (equal (gethash target limen-message--drafts) "left unsent"))))
 
+(ert-deftest limen-message-transcript-opens-beside-the-field-in-the-host-frame ()
+  "A field in a child frame has that frame selected; the transcript goes to the host."
+  (let* ((host (selected-window))
+         (state (limen-message--make-state :scope '("claude" "id" "/opaque")))
+         opened displayed)
+    (cl-letf (((symbol-function 'limen-message--state-here) (lambda () state))
+              ((symbol-function 'memex-view-session)
+               (lambda (id path _doc display)
+                 (setq opened (list id path))
+                 (funcall display (get-buffer-create " *limen transcript*"))))
+              ((symbol-function 'display-buffer)
+               (lambda (buffer action)
+                 (setq displayed (list buffer (selected-window) action))
+                 nil)))
+      (limen-message-transcript))
+    (should (equal opened '("id" "/opaque")))
+    (should (eq (nth 1 displayed) host))
+    (should (equal (nth 2 displayed) '(nil (inhibit-same-window . t))))
+    (should (eq (selected-window) host))
+    (kill-buffer " *limen transcript*")))
+
 (ert-deftest limen-message-messages-are-what-the-assistant-said-per-turn ()
-  (let ((records (list (limen-message-tests--record 3 "assistant" "newest")
-                       (limen-message-tests--record 2 "user" "question")
-                       (limen-message-tests--record 2 "assistant" "last block")
-                       (limen-message-tests--record 2 "assistant" "first block")
-                       (limen-message-tests--record 1 "assistant" "oldest"))))
+  "A turn opens at a question, whatever the records number themselves.
+Memex gives each record of a Claude session a `turn_id' of its own, so
+a reply written in several blocks is one message only if the grouping
+is read off the questions."
+  (let ((records (list (limen-message-tests--record 7 "assistant" "second, part two")
+                       (limen-message-tests--record 6 "assistant" "second, part one")
+                       (limen-message-tests--record 5 "user" "second question")
+                       (limen-message-tests--record 4 "assistant" "first answer")
+                       (limen-message-tests--record 3 "user" "first question")
+                       (limen-message-tests--record 2 "assistant" "before the page"))))
     (should (equal (limen-message--messages records)
-                   '(("assistant" . "newest")
-                     ("assistant" . "first block\nlast block")
-                     ("assistant" . "oldest"))))
+                   '(("assistant" . "second, part one\nsecond, part two")
+                     ("assistant" . "first answer")
+                     ("assistant" . "before the page"))))
+    (should (equal (limen-message--messages records '("assistant" "user"))
+                   '(("assistant" . "second, part one\nsecond, part two")
+                     ("user" . "second question")
+                     ("assistant" . "first answer")
+                     ("user" . "first question")
+                     ("assistant" . "before the page"))))
     (should-not (limen-message--messages
                  (list (limen-message-tests--record 1 "user" "only asked"))))
     (should (equal (limen-message--messages
@@ -825,10 +863,10 @@ A pane stacks blocks, which stand where the lines of one text stood."
     (cl-letf (((symbol-function 'memex-api-session-page)
                (lambda (_id _path callback &rest _)
                  (funcall callback
-                          `((records . ,(list
-                                         (limen-message-tests--record 1 "assistant" "oldest")
-                                         (limen-message-tests--record 2 "assistant" "middle")
-                                         (limen-message-tests--record 3 "assistant" "newest"))))))))
+                          `((records . ,(append
+                                         (reverse (limen-message-tests--exchange 1 "oldest"))
+                                         (reverse (limen-message-tests--exchange 2 "middle"))
+                                         (reverse (limen-message-tests--exchange 3 "newest")))))))))
       (limen-message--page state 8))
     (should (equal (limen-message--state-latest state) "newest"))
     (should (= (limen-message--state-cursor state) 0))
@@ -981,9 +1019,9 @@ A pane stacks blocks, which stand where the lines of one text stood."
           (limen-message--shown nil)
           (limen-message-markdown nil))
       (setf (limen-message--state-records state)
-            (list (limen-message-tests--record 3 "assistant" "third")
-                  (limen-message-tests--record 2 "assistant" "second")
-                  (limen-message-tests--record 1 "assistant" "first"))
+            (append (limen-message-tests--exchange 3 "third")
+                    (limen-message-tests--exchange 2 "second")
+                    (limen-message-tests--exchange 1 "first"))
             (limen-message--state-scope state) '("claude" "id" "/opaque"))
       (limen-message--finish state)
       (should (equal (mapcar #'cdr (limen-message--state-messages state))
@@ -1085,8 +1123,8 @@ A pane stacks blocks, which stand where the lines of one text stood."
           (limen-message-headroom 8)
           (limen-message-markdown nil))
       (setf (limen-message--state-records state)
-            (list (limen-message-tests--record 2 "assistant" "second")
-                  (limen-message-tests--record 1 "assistant" "first"))
+            (append (limen-message-tests--exchange 2 "second")
+                    (limen-message-tests--exchange 1 "first"))
             (limen-message--state-scope state) '("claude" "id" "/opaque"))
       (limen-message--finish state)
       (let ((blocks (cdar updates)))

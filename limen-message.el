@@ -96,8 +96,8 @@ uses its existing authentication; failures leave the composer usable."
 (declare-function herdr-agent-session-kind "ext:herdr-agent" (session) t)
 (declare-function memex-cancel-rpc "ext:memex-core" (process))
 (declare-function lectio-render "ext:lectio" (markdown &optional code))
-(declare-function memex-herdr-open-session "ext:memex-herdr"
-                  (session-id source-path &optional doc-id))
+(declare-function memex-view-session "ext:memex-view"
+                  (session-id source-path &optional doc-id display))
 (declare-function memex-api-sessions "ext:memex-api" (callback &rest keys))
 (declare-function memex-api-index "ext:memex-api" (callback &rest keys))
 (declare-function memex-api-session-page "ext:memex-api" (id path callback &rest keys))
@@ -373,6 +373,17 @@ so drawn nowhere."
                     (limen-message--rule-face (car message)))))
                window)))))))
 
+(defun limen-message--beside (window)
+  "Return a function showing a buffer beside WINDOW, selecting nothing.
+The buffer goes up in WINDOW's frame, never in WINDOW itself.  A field
+read in a child frame has that frame selected, and a buffer displayed
+from there would split the field's own frame and go down with it."
+  (lambda (buffer)
+    (if (window-live-p window)
+        (with-selected-window window
+          (display-buffer buffer '(nil (inhibit-same-window . t))))
+      (display-buffer buffer))))
+
 (defun limen-message-transcript ()
   "Show the memex transcript of the agent the active composer writes to.
 The session is the one the composer already found for the agent, so the
@@ -384,10 +395,13 @@ transcript opens without looking it up again."
                     (and target (gethash target limen-message--scopes)))))
     (unless scope
       (user-error "Memex knows no session for this agent"))
-    (unless (or (fboundp 'memex-herdr-open-session)
-                (require 'memex-herdr nil t))
-      (user-error "Reading a transcript requires memex-herdr"))
-    (memex-herdr-open-session (nth 1 scope) (nth 2 scope))))
+    (unless (or (fboundp 'memex-view-session)
+                (require 'memex-view nil t))
+      (user-error "Reading a transcript requires memex-view"))
+    (memex-view-session (nth 1 scope) (nth 2 scope) nil
+                        (limen-message--beside
+                         (frame-selected-window
+                          (or (frame-parent) (selected-frame)))))))
 
 (defun limen-message--step (step)
   "Show the message STEP turns away from the one the composer shows.
@@ -665,31 +679,49 @@ Own the returned request and bound each RPC to ten seconds."
        (stringp (alist-get 'text record))
        (not (string-blank-p (alist-get 'text record)))))
 
-(defun limen-message--turn (record)
-  "Return RECORD's conversational group identity."
-  (or (alist-get 'turn_id record) (alist-get 'doc_id record)))
+(defun limen-message--turn-table (records)
+  "Return a table from each of newest-first RECORDS to the turn it is in.
+A turn opens with what was asked and runs through what was answered, so
+it is named by the `doc_id' of the record that asked.  Memex numbers
+each record of a Claude session on its own, which names no turn, so the
+grouping is read off the conversation instead.  Records older than the
+first question read are one turn, `:earlier', begun before the page
+that holds them."
+  (let ((table (make-hash-table :test #'eq))
+        (turn :earlier))
+    (dolist (record (reverse records))
+      (when (equal (alist-get 'role record) "user")
+        (setq turn (alist-get 'doc_id record)))
+      (puthash record turn table))
+    table))
 
-(defun limen-message--turns (records)
-  "Return distinct turn identities in newest-first RECORDS."
-  (delete-dups (mapcar #'limen-message--turn records)))
+(defun limen-message--turns (records &optional table)
+  "Return distinct turns of newest-first RECORDS, newest first.
+TABLE is a `limen-message--turn-table' holding RECORDS, made from them
+when not given."
+  (let ((table (or table (limen-message--turn-table records))))
+    (delete-dups (mapcar (lambda (record) (gethash record table)) records))))
 
-(defun limen-message--turn-text (records turn &optional role)
-  "Return what ROLE said in TURN of newest-first RECORDS.
+(defun limen-message--turn-text (records turn table &optional role)
+  "Return what ROLE said in TURN of newest-first RECORDS, turned by TABLE.
 ROLE defaults to the assistant."
   (let ((role (or role "assistant")))
     (mapconcat (lambda (record) (alist-get 'text record))
                (reverse (cl-remove-if-not
                          (lambda (record)
                            (and (equal (alist-get 'role record) role)
-                                (equal (limen-message--turn record) turn)))
+                                (equal (gethash record table) turn)))
                          records))
                "\n")))
 
 (defun limen-message--messages (records &optional roles)
   "Return what ROLES said in each turn of RECORDS, newest first.
 Each message is a cons of the role it came from and its text.  ROLES
-defaults to the assistant alone."
+defaults to the assistant alone.  Turns are found among every record,
+whatever ROLES shows, since a question opens one even where it is not
+shown."
   (let* ((roles (or roles '("assistant")))
+         (table (limen-message--turn-table records))
          (said (cl-remove-if-not
                 (lambda (record) (member (alist-get 'role record) roles))
                 records)))
@@ -698,10 +730,10 @@ defaults to the assistant alone."
            (lambda (turn)
              (delq nil
                    (mapcar (lambda (role)
-                             (let ((text (limen-message--turn-text said turn role)))
+                             (let ((text (limen-message--turn-text said turn table role)))
                                (unless (string-blank-p text) (cons role text))))
                            roles)))
-           (limen-message--turns said)))))
+           (limen-message--turns said table)))))
 
 (defun limen-message--roles ()
   "Return the roles the composer shows."
@@ -718,14 +750,15 @@ defaults to the assistant alone."
     (when (limen-message--state-context state)
       (limen-message--set-latest state (cdr-safe (car messages))))
     (when (limen-message--state-summary state)
-      (let* ((turns (seq-take (limen-message--turns records) 5))
+      (let* ((table (limen-message--turn-table records))
+             (turns (seq-take (limen-message--turns records table) 5))
              (selected (reverse (cl-remove-if-not
-                                 (lambda (r) (member (limen-message--turn r) turns))
+                                 (lambda (r) (member (gethash r table) turns))
                                  records)))
              (text (mapconcat (lambda (r) (format "%s: %s" (alist-get 'role r)
                                                   (alist-get 'text r))) selected "\n\n"))
              (key (list (limen-message--state-scope state)
-                        (mapcar (lambda (r) (list (limen-message--turn r)
+                        (mapcar (lambda (r) (list (gethash r table)
                                                   (alist-get 'doc_id r))) selected)
                         (secure-hash 'sha256 text))))
         (if (or (null selected) (> (length text) limen-message--summary-limit))
@@ -737,17 +770,18 @@ defaults to the assistant alone."
 
 (defun limen-message--read-enough-p (state)
   "Return non-nil when STATE holds the messages the field reads back.
-The oldest turn read may have begun before the page that carries it, so
-it does not count towards what was asked for: one turn older than the
-message wanted stands for the whole of it."
+What was said before the first question read belongs to a turn begun
+before the page that carries it, so it does not count towards what was
+asked for: a question older than the message wanted is what shows the
+whole of it was read."
   (let* ((records (limen-message--state-records state))
-         (oldest (limen-message--turn (car (last records))))
-         (complete (cl-remove-if
-                    (lambda (turn) (equal turn oldest))
-                    (limen-message--turns
-                     (cl-remove-if-not
-                      (lambda (record) (equal (alist-get 'role record) "assistant"))
-                      records)))))
+         (table (limen-message--turn-table records))
+         (complete (remq :earlier
+                         (limen-message--turns
+                          (cl-remove-if-not
+                           (lambda (record) (equal (alist-get 'role record) "assistant"))
+                           records)
+                          table))))
     (>= (length complete) (max 1 limen-message-messages))))
 
 (defun limen-message--page (state end)
