@@ -84,6 +84,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
               ((symbol-function 'herdr-agent-session-agent-session)
                (lambda (_) '((kind . "id") (value . "id"))))
               ((symbol-function 'herdr-agent-session-kind) (lambda (_) "claude"))
+              ((symbol-function 'herdr-agent-session-project) #'ignore)
               ((symbol-function 'require) (lambda (&rest _) nil)))
       (limen-message--resolve state)
       (should (equal (cdar updates) "")))))
@@ -97,6 +98,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
                 ((symbol-function 'herdr-agent-session-agent-session)
                  (lambda (_) '((kind . "id") (value . "id"))))
                 ((symbol-function 'herdr-agent-session-kind) (lambda (_) "claude"))
+                ((symbol-function 'herdr-agent-session-project) #'ignore)
                 ((symbol-function 'memex-api-index)
                  (lambda (callback &rest _) (funcall callback '())))
                 ((symbol-function 'memex-api-sessions)
@@ -127,6 +129,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
                 ((symbol-function 'herdr-agent-session-agent-session)
                  (lambda (_) '((kind . "path") (value . "/opaque"))))
                 ((symbol-function 'herdr-agent-session-kind) (lambda (_) "pi"))
+                ((symbol-function 'herdr-agent-session-project) #'ignore)
                 ((symbol-function 'memex-api-index)
                  (lambda (callback &rest _) (funcall callback '())))
                 ((symbol-function 'memex-api-sessions)
@@ -193,20 +196,39 @@ A pane stacks blocks, which stand where the lines of one text stood."
         (should (equal offsets '(0 32)))
         (should (equal (limen-message--state-latest state) "head\ntail"))))))
 
-(ert-deftest limen-message-scan-cap-and-char-cap ()
-  (dolist (limit '(records chars))
-    (limen-message-tests--state
-      (setf (limen-message--state-scope state) '("claude" "id" "/opaque"))
-      (let ((limen-message-page-size 32)
-            (limen-message--scan-limit 1)
-            (limen-message--char-limit (if (eq limit 'chars) 1 100)))
-        (cl-letf (((symbol-function 'memex-api-session-page)
-                   (lambda (_id _path callback &rest _)
-                     (funcall callback
-                              `((records . ,(list (limen-message-tests--record 1 "assistant" "long"))))))))
-          (limen-message--page state 100)
-          (should-not (limen-message--state-latest state))
-          (should (equal (cdar updates) "")))))))
+(defun limen-message-tests--capped (records char-limit)
+  "Read RECORDS under a scan cap of one page and CHAR-LIMIT, returning STATE."
+  (limen-message-tests--state
+    (setf (limen-message--state-scope state) '("claude" "id" "/opaque"))
+    (let ((limen-message-page-size 32)
+          (limen-message--scan-limit 1)
+          (limen-message--char-limit char-limit))
+      (cl-letf (((symbol-function 'memex-api-session-page)
+                 (lambda (_id _path callback &rest _)
+                   (funcall callback `((records . ,records))))))
+        (limen-message--page state 100)
+        (cons (limen-message--state-latest state) (cdar updates))))))
+
+(ert-deftest limen-message-char-cap-gives-up ()
+  "Text past the cap was cut off mid-read, so there is nothing whole to show."
+  (let ((read (limen-message-tests--capped
+               (list (limen-message-tests--record 1 "assistant" "long")) 1)))
+    (should-not (car read))
+    (should (equal (cdr read) ""))))
+
+(ert-deftest limen-message-scan-cap-shows-what-it-read ()
+  "A spent scan budget answers with fewer messages rather than with none."
+  (let ((read (limen-message-tests--capped
+               (list (limen-message-tests--record 1 "assistant" "long")) 100)))
+    (should (equal (car read) "long"))
+    (should (string-match-p "long" (limen-message-tests--text (cdr read))))))
+
+(ert-deftest limen-message-scan-cap-with-nothing-read-gives-up ()
+  "A budget spent without one message is a session that could not be read."
+  (let ((read (limen-message-tests--capped
+               (list (limen-message-tests--record 1 "tool_result" "tool")) 100)))
+    (should-not (car read))
+    (should (equal (cdr read) ""))))
 
 (ert-deftest limen-message-late-callback-and-replaced-composer-ignored ()
   (limen-message-tests--state
@@ -390,7 +412,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
     (limen-message-disable)))
 
 (ert-deftest limen-message-wrapper-starts-after-field-and-scopes-hooks ()
-  (let ((limen-message-context t) (limen-message-summary t)
+  (let ((limen-message-context t) (limen-message-summary t) (limen-message-status t)
         (cera-read-context-function nil) (cera-session-keymap nil)
         (cera-session-start-hook nil) started scheduled owned)
     (with-temp-buffer
@@ -417,7 +439,9 @@ A pane stacks blocks, which stand where the lines of one text stood."
                   (should-not (plist-get (nth 0 panes) :bracket))
                   (should-not (plist-get (nth 0 panes) :prefix))
                   (should (equal (plist-get (nth 0 panes) :text) ""))
-                  (should (equal (nthcdr 1 panes) '(source input))))
+                  (should (equal (seq-subseq panes 1 3) '(source input)))
+                  (should (eq (plist-get (nth 3 panes) :id) 'limen-status))
+                  (should-not (plist-get (nth 3 panes) :bracket)))
                 (setq started t)
                 (run-hook-with-args 'cera-session-start-hook 'session)
                 (setq owned limen-message--active)
@@ -511,6 +535,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
                     ((symbol-function 'herdr-agent-session-agent-session)
                      (lambda (_) '((kind . "id") (value . "id"))))
                     ((symbol-function 'herdr-agent-session-kind) (lambda (_) "claude"))
+                    ((symbol-function 'herdr-agent-session-project) #'ignore)
                     ((symbol-function 'memex-api-index)
                      (lambda (callback &rest _)
                        (setq index-callback callback) index-handle))
@@ -551,6 +576,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
                 ((symbol-function 'herdr-agent-session-agent-session)
                  (lambda (_) '((kind . "id") (value . "id"))))
                 ((symbol-function 'herdr-agent-session-kind) (lambda (_) "claude"))
+                ((symbol-function 'herdr-agent-session-project) #'ignore)
                 ((symbol-function 'memex-api-index)
                  (lambda (callback &rest _)
                    (push 'index order) (funcall callback '())))
@@ -573,6 +599,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
                 ((symbol-function 'herdr-agent-session-agent-session)
                  (lambda (_) '((kind . "id") (value . "id"))))
                 ((symbol-function 'herdr-agent-session-kind) (lambda (_) "claude"))
+                ((symbol-function 'herdr-agent-session-project) #'ignore)
                 ((symbol-function 'memex-api-index)
                  (lambda (callback &rest _)
                    (push 'index order) (funcall callback '())))
@@ -596,6 +623,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
                 ((symbol-function 'herdr-agent-session-agent-session)
                  (lambda (_) '((kind . "id") (value . "id"))))
                 ((symbol-function 'herdr-agent-session-kind) (lambda (_) "claude"))
+                ((symbol-function 'herdr-agent-session-project) #'ignore)
                 ((symbol-function 'memex-api-index)
                  (lambda (callback &rest _) (push 'index order) (funcall callback '())))
                 ((symbol-function 'memex-api-sessions)
@@ -677,7 +705,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
     (should (string-match-p "No Markdown" prompt))))
 
 (ert-deftest limen-message-context-pane-carries-no-styling ()
-  (let ((limen-message-context t) (limen-message-summary t)
+  (let ((limen-message-context t) (limen-message-summary t) (limen-message-status t)
         (cera-read-context-function nil) (cera-session-keymap nil)
         (cera-session-start-hook nil) panes context)
     (with-temp-buffer
@@ -691,7 +719,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
          (lambda (&rest _) (setq context cera-read-context-function))
          'target "source")
         (funcall context '(input))))
-    (should (= (length panes) 1))
+    (should (= (length panes) 2))
     (dolist (pane panes)
       (should-not (plist-get pane :face)))))
 
@@ -1121,6 +1149,7 @@ is read off the questions."
           (limen-message--shown nil)
           (limen-message-message-gap 3)
           (limen-message-headroom 8)
+          (limen-message-headroom-above 1)
           (limen-message-markdown nil))
       (setf (limen-message--state-records state)
             (append (limen-message-tests--exchange 2 "second")
@@ -1128,10 +1157,7 @@ is read off the questions."
             (limen-message--state-scope state) '("claude" "id" "/opaque"))
       (limen-message--finish state)
       (let ((blocks (cdar updates)))
-        ;; A spacer opens the stack, the recap sits against the message under
-        ;; it, the messages are held apart, and the last keeps the room the
-        ;; pane ends on rather than a line of its own.
-        (should (equal (mapcar #'cdr blocks) '(8 0 3 8)))
+        (should (equal (mapcar #'cdr blocks) '(1 0 3 8)))
         (should (equal (car (car blocks)) ""))
         (should-not (equal (car (car (last blocks))) ""))
         (should (equal (limen-message-tests--bare blocks) "\nfirst\nsecond"))))))
@@ -1158,6 +1184,225 @@ is read off the questions."
       (limen-message--finish state)
       (should (equal (limen-message-tests--bare (cdar updates))
                      "\nfirst\nsecond")))))
+
+;; The picker offers the provider's models with their windows beside them,
+;; and moves the agent with the command the provider takes.
+(ert-deftest limen-message-picks-a-model-for-the-agent ()
+  (require 'limen-usage)
+  (let ((limen-message-status nil)
+        (limen-message-models '((claude :command "/model %s"
+                                        :models ("claude-opus-5-5"
+                                                 "claude-opus-5-5[1m]"))))
+        sent annotations)
+    (limen-message-tests--state
+      (cl-letf (((symbol-function 'herdr-agent-find) (lambda (&rest _) 'agent))
+                ((symbol-function 'herdr-agent-session-agent-session) #'ignore)
+                ((symbol-function 'herdr-agent-session-kind) (lambda (_) "claude"))
+                ((symbol-function 'herdr-agent-session-project) #'ignore)
+                ((symbol-function 'herdr-agent-prompt)
+                 (lambda (target text) (setq sent (cons target text))))
+                ((symbol-function 'completing-read)
+                 (lambda (_prompt table &rest _)
+                   (let ((annotate (alist-get 'annotation-function
+                                              (cdr (funcall table "" nil 'metadata)))))
+                     (setq annotations
+                           (mapcar (lambda (model)
+                                     (string-trim (funcall annotate model)))
+                                   (all-completions "" table))))
+                   "claude-opus-5-5[1m]")))
+        (limen-message-pick-model)
+        (should (equal sent '(("server" . "terminal") . "/model claude-opus-5-5[1m]")))
+        (should (equal annotations '("200k" "1M")))
+        (should (equal (limen-message--state-model state) "claude-opus-5-5[1m]"))))))
+
+(defconst limen-message-tests--codex-screens
+  '((composer . "› Ask Codex to do anything\n")
+    (models . "  Select Model and Effort
+› 1. gpt-6-astra (current)  Frontier intelligence for the most demanding work.
+  2. gpt-5.6-sol
+Older coding model for complex work.
+  3. gpt-6-sol
+Workhorse model for coding and everyday work.
+Press enter to confirm or esc to go back\n")
+    (levels . "  Select Reasoning Level for gpt-6-sol
+  1. Low
+Fast responses with lighter reasoning
+› 2. Medium (default)  Balances speed and reasoning depth for everyday tasks
+  3. High
+Greater reasoning depth for complex problems
+  5. More reasoning…   Max consumes usage limits faster
+Press enter to confirm or esc to go back\n")
+    (advanced . "  Advanced Reasoning
+⚠ Consumes usage limits faster
+› 1. Max  For difficult problems when quality matters more than speed
+Press enter to confirm or esc to go back\n"))
+  "The screens Codex 0.155 draws for /model, keyed by where it is.")
+
+(defmacro limen-message-tests--with-codex (choose &rest body)
+  "Run BODY against a Codex walking its /model menus as the real one does.
+CHOOSE answers each reasoning prompt, called with the offered levels and
+the default.  BODY sees the keys sent in SENT, the offers in OFFERED and
+where Codex ended up in PLACE."
+  (declare (indent 1))
+  `(let ((place 'composer) sent offered)
+     (cl-letf (((symbol-function 'herdr-agent-paste)
+                (lambda (_target text) (push text sent)))
+               ((symbol-function 'herdr-agent-type-keys)
+                (lambda (_target keys)
+                  (dolist (key keys)
+                    (push key sent)
+                    (setq place
+                          (pcase (cons place key)
+                            ('(composer . "enter") 'models)
+                            ('(models . "3") 'levels)
+                            ('(levels . "5") 'advanced)
+                            (`(levels . ,(or "1" "2" "3")) 'composer)
+                            ('(advanced . "1") 'composer)
+                            ('(advanced . "esc") 'levels)
+                            ('(levels . "esc") 'models)
+                            ('(models . "esc") 'composer)
+                            (_ place))))))
+               ((symbol-function 'herdr-agent-read)
+                (lambda (_target)
+                  (alist-get place limen-message-tests--codex-screens)))
+               ((symbol-function 'completing-read)
+                (lambda (_prompt levels &rest args)
+                  (push (cons levels (nth 4 args)) offered)
+                  (funcall ,choose levels (nth 4 args))))
+               ((symbol-function 'sleep-for) #'ignore))
+       ,@body)))
+
+(ert-deftest limen-message-moves-codex-onto-a-model-and-reasoning-level ()
+  (limen-message-tests--with-codex (lambda (_levels _default) "High")
+    (limen-message-codex-model '("server" . "terminal") "gpt-6-sol")
+    (should (equal (reverse sent) '("/model" "enter" "3" "3")))
+    (should (equal offered '((("Low" "Medium" "High" "More reasoning…") . "Medium"))))
+    (should (eq place 'composer))))
+
+(ert-deftest limen-message-follows-codex-into-its-advanced-reasoning ()
+  (limen-message-tests--with-codex
+      (lambda (levels _default) (if (member "Max" levels) "Max" "More reasoning…"))
+    (limen-message-codex-model '("server" . "terminal") "gpt-6-sol")
+    (should (equal (reverse sent) '("/model" "enter" "3" "5" "1")))
+    (should (equal (car offered) '(("Max") . "Max")))
+    (should (eq place 'composer))))
+
+(ert-deftest limen-message-closes-codex-s-menu-for-a-model-it-lacks ()
+  (limen-message-tests--with-codex #'ignore
+    (should-error (limen-message-codex-model '("server" . "terminal") "gpt-9")
+                  :type 'user-error)
+    (should (equal (reverse sent) '("/model" "enter" "esc")))
+    (should (eq place 'composer))))
+
+(ert-deftest limen-message-closes-codex-s-menu-when-the-level-is-not-given ()
+  (limen-message-tests--with-codex (lambda (&rest _) (signal 'quit nil))
+    (should (eq (condition-case nil
+                    (limen-message-codex-model '("server" . "terminal") "gpt-6-sol")
+                  (quit 'quit))
+                'quit))
+    (should (equal (reverse sent) '("/model" "enter" "3" "esc" "esc")))
+    (should (eq place 'composer))))
+
+(defmacro limen-message-tests--with-agent-in (workspace &rest body)
+  "Run BODY with STATE's agent named \"agent\" working in WORKSPACE's project."
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'herdr-agent-find) #'ignore)
+             ((symbol-function 'herdr--entry-for-target)
+              (lambda (_target) '((name . "agent") (cwd . "/p/shiftlet/"))))
+             ((symbol-function 'herdr-entry-directory)
+              (lambda (entry) (alist-get 'cwd entry)))
+             ((symbol-function 'herdr--entry-label)
+              (lambda (entry) (alist-get 'name entry)))
+             ((symbol-function 'herdr-workspace-label)
+              (lambda (_directory) ,workspace)))
+     ,@body))
+
+(ert-deftest limen-message-status-names-an-agent-of-another-workspace ()
+  (skip-unless (require 'herdr-status nil t))
+  (let ((herdr-status-field-glyphs '((workspace "W") (pane "P"))))
+    (limen-message-tests--state
+      (setf (limen-message--state-workspace state) "main")
+      (limen-message-tests--with-agent-in "shiftlet"
+        (should (equal (substring-no-properties (limen-message--status state))
+                       "W shiftlet  P agent"))))))
+
+(ert-deftest limen-message-reads-an-agent-attached-nowhere-from-herdr ()
+  (limen-message-tests--state
+    (cl-letf (((symbol-function 'herdr-agent-find) #'ignore)
+              ((symbol-function 'herdr--entry-for-target)
+               (lambda (_target)
+                 '((agent . "codex")
+                   (agent_session (kind . "id") (value . "01a0")))))
+              ((symbol-function 'herdr-agent--entry-project)
+               (lambda (_entry) "/p/shiftlet/")))
+      (should (equal (limen-message--agent state)
+                     '(codex ((kind . "id") (value . "01a0")) "/p/shiftlet/"))))))
+
+(ert-deftest limen-message-status-leaves-out-an-agent-of-its-own-workspace ()
+  (limen-message-tests--state
+    (setf (limen-message--state-workspace state) "shiftlet")
+    (limen-message-tests--with-agent-in "shiftlet"
+      (should-not (limen-message--status state)))))
+
+(ert-deftest limen-message-sets-the-agent-s-effort ()
+  (let ((limen-message-models '((claude :effort "/effort %s"
+                                        :efforts ("low" "high"))))
+        sent offered)
+    (limen-message-tests--state
+      (cl-letf (((symbol-function 'herdr-agent-find) (lambda (&rest _) 'agent))
+                ((symbol-function 'herdr-agent-session-agent-session) #'ignore)
+                ((symbol-function 'herdr-agent-session-kind) (lambda (_) "claude"))
+                ((symbol-function 'herdr-agent-session-project) #'ignore)
+                ((symbol-function 'herdr-agent-prompt)
+                 (lambda (target text) (setq sent (cons target text))))
+                ((symbol-function 'completing-read)
+                 (lambda (_prompt efforts &rest _) (setq offered efforts) "high")))
+        (limen-message-pick-effort)
+        (should (equal offered '("low" "high")))
+        (should (equal sent '(("server" . "terminal") . "/effort high")))
+        (should-not (limen-message--state-model state))))))
+
+(ert-deftest limen-message-knows-no-models-for-an-unlisted-agent ()
+  (let ((limen-message-models nil))
+    (limen-message-tests--state
+      (cl-letf (((symbol-function 'herdr-agent-find) (lambda (&rest _) 'agent))
+                ((symbol-function 'herdr-agent-session-agent-session) #'ignore)
+                ((symbol-function 'herdr-agent-session-kind) (lambda (_) "codex"))
+                ((symbol-function 'herdr-agent-session-project) #'ignore)
+                ((symbol-function 'herdr-agent-prompt)
+                 (lambda (&rest _) (ert-fail "Prompted"))))
+        (should-error (limen-message-pick-model) :type 'user-error)))))
+
+(ert-deftest limen-message-status-shows-the-effort-behind-the-model ()
+  (limen-message-tests--state
+    (setf (limen-message--state-model state) "Opus 5.5"
+          (limen-message--state-effort state) "xhigh")
+    (cl-letf (((symbol-function 'limen-message--agent) #'ignore)
+              ((symbol-function 'limen-message--elsewhere) #'ignore))
+      (should (string-suffix-p "Opus 5.5/xhigh"
+                               (substring-no-properties (limen-message--status state)))))))
+
+(ert-deftest limen-message-pick-effort-reports-it-with-the-model ()
+  "The effort picked goes to the agent, the status line and the dashboard."
+  (require 'limen-model)
+  (limen-message-tests--state
+    (setf (limen-message--state-model state) "Opus 5.5")
+    (let ((limen-message-models '((claude :efforts ("high" "xhigh") :effort "/effort %s")))
+          (limen-message-status nil)
+          sent reported)
+      (cl-letf (((symbol-function 'limen-message--state-here) (lambda () state))
+                ((symbol-function 'limen-message--agent) (lambda (_) '(claude nil nil)))
+                ((symbol-function 'completing-read) (lambda (&rest _) "xhigh"))
+                ((symbol-function 'herdr-agent-prompt)
+                 (lambda (_target text) (push text sent)))
+                ((symbol-function 'herdr--entry-for-target)
+                 (lambda (_target) '((pane_id . "%4"))))
+                ((symbol-function 'limen-model-report)
+                 (lambda (server pane label) (setq reported (list server pane label)))))
+        (limen-message-pick-effort))
+      (should (equal sent '("/effort xhigh")))
+      (should (equal (limen-message--state-effort state) "xhigh"))
+      (should (equal reported '("server" "%4" "Opus 5.5/xhigh"))))))
 
 (provide 'limen-message-tests)
 ;;; limen-message-tests.el ends here

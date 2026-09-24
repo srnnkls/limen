@@ -12,6 +12,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'seq)
+(require 'limen-transcript)
 
 (defface limen-message-recap
   '((t :inherit default))
@@ -50,7 +51,17 @@ the line without Limen knowing the theme."
   :group 'limen-message)
 
 (defcustom limen-message-headroom 10
-  "Pixels of blank space kept above and below the context, per edge."
+  "Pixels of blank space kept under the context, above the input."
+  :type 'natnum
+  :group 'limen-message)
+
+(defcustom limen-message-headroom-above 1
+  "Pixels of blank space kept under the blank line that opens the context.
+Room above a line is only room under the line before it, so the top of
+the pane costs a blank line of its own whatever this is — the display
+gives a line its full height or none at all.  This trims that line,
+never the room the whole line already takes; zero drops the line and
+closes the gap entirely."
   :type 'natnum
   :group 'limen-message)
 
@@ -79,6 +90,35 @@ Tools, reasoning, and the draft being composed are not sent.  The CLI
 uses its existing authentication; failures leave the composer usable."
   :type 'boolean :group 'limen-message)
 
+(defcustom limen-message-status nil
+  "Show the agent's model and context window below the message field.
+An agent of another workspace than the one the field is opened in is
+named there too."
+  :type 'boolean :group 'limen-message)
+
+(defcustom limen-message-models nil
+  "Models `limen-message-pick-model' offers, keyed by the agent's provider.
+:models lists them.  :command moves the agent onto one: a format string
+of the prompt that does, such as \"/model %s\" for Claude Code, or a
+function called with the agent's target and the model, such as
+`limen-message-codex-model' for Codex, which takes no model by name.
+:efforts lists the effort levels `limen-message-pick-effort' offers,
+and :effort sets one the way :command sets a model, such as
+\"/effort %s\" for Claude Code.  The lists are kept by hand;
+`limen-usage-limits' gives each model its context window."
+  :type '(alist :key-type symbol :value-type plist)
+  :group 'limen-message)
+
+(defface limen-message-status
+  '((t :inherit shadow))
+  "Face of the status line below a message field."
+  :group 'limen-message)
+
+(defface limen-message-status-icon
+  '((t :inherit limen-message-status :height 0.75))
+  "Face of the icons on the status line below a message field."
+  :group 'limen-message)
+
 (defvar cera-read-context-function)
 (defvar cera-session-keymap)
 (defvar cera-session-start-hook)
@@ -91,9 +131,28 @@ uses its existing authentication; failures leave the composer usable."
 (declare-function cera-set-pane-text "ext:cera" (pane text))
 (declare-function cera-cancel "ext:cera" ())
 (declare-function cera-origin-buffer "ext:cera" ())
+(declare-function limen-usage-of-answer "limen-usage" (answer))
+(declare-function limen-model-effort "limen-model" (file &optional provider))
+(declare-function limen-model-label "limen-model" (model effort))
+(declare-function limen-model-report "limen-model" (server pane model))
+(declare-function limen-usage-format "limen-usage" (held total))
+(declare-function limen-usage-window "limen-usage" (model))
+(declare-function herdr-agent-prompt "ext:herdr-agent" (target text))
+(declare-function herdr-agent-paste "ext:herdr-agent" (target text))
+(declare-function herdr--entry-for-target "ext:herdr-agent" (target))
+(declare-function herdr-agent--entry-project "ext:herdr-agent" (entry))
+(declare-function herdr--entry-label "ext:herdr" (entry))
+(declare-function herdr-entry-directory "ext:herdr" (entry))
+(declare-function herdr-workspace-label "ext:herdr" (directory))
+(declare-function herdr-current-workspace-label "ext:herdr" ())
+(declare-function herdr-status-glyph "ext:herdr-status" (glyph))
+(defvar herdr-status-field-glyphs)
+(declare-function herdr-agent-read "ext:herdr-agent" (target))
+(declare-function herdr-agent-type-keys "ext:herdr-agent" (target keys))
+(declare-function herdr-agent-session-kind "ext:herdr-agent" (session) t)
+(declare-function herdr-agent-session-project "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-find "ext:herdr-agent" (server-key terminal-id))
 (declare-function herdr-agent-session-agent-session "ext:herdr-agent" (session) t)
-(declare-function herdr-agent-session-kind "ext:herdr-agent" (session) t)
 (declare-function memex-cancel-rpc "ext:memex-core" (process))
 (declare-function lectio-render "ext:lectio" (markdown &optional code))
 (declare-function memex-view-session "ext:memex-view"
@@ -213,7 +272,7 @@ one before it stands until the new one arrives.")
   buffer token target context summary live timers process stderr directory decorated started close-hook
   scope records requests (retrieving t) (scanned 0) (chars 0)
   recap latest role messages (cursor 0) history (recalled nil) draft
-  expanded dismissed recap-timer)
+  expanded dismissed recap-timer model workspace effort)
 
 (defun limen-message--state-here ()
   "Return the composer state of the buffer the field here was opened for.
@@ -291,12 +350,12 @@ RULE-FACE draws the rule, `limen-message-rule-face' when nil."
   "Return PARTS as the blocks the pane stacks, held apart and off its edges.
 A block is its text consed onto the room kept beneath it.  An empty one
 leads the stack, since room above a line is only room under the line
-before it, and the last keeps the same room under itself.  Each message
-behind the recap keeps `limen-message-message-gap\=' under it.  Cera puts
-the space in, so the pane says how far apart its parts stand rather than
-drawing it."
+before it, and it keeps `limen-message-headroom-above'; the last keeps
+`limen-message-headroom'.  Each message behind the recap keeps
+`limen-message-message-gap\=' under it.  Cera puts the space in, so the
+pane says how far apart its parts stand rather than drawing it."
   (let ((last (1- (length parts))))
-    (cons (cons "" limen-message-headroom)
+    (cons (cons "" limen-message-headroom-above)
           (seq-map-indexed
            (lambda (part index)
              (cons part (cond ((= index last) limen-message-headroom)
@@ -373,6 +432,250 @@ so drawn nowhere."
                     (limen-message--rule-face (car message)))))
                window)))))))
 
+(defun limen-message--agent (state)
+  "Return STATE's agent as its provider, session reference and project, or nil.
+An agent this Emacs holds answers from its session, and any other from
+what Herdr reports of it, so an agent attached nowhere reads the same."
+  (let ((target (limen-message--state-target state)))
+    (if-let* ((agent (herdr-agent-find (car target) (cdr target))))
+        (list (intern (or (herdr-agent-session-kind agent) ""))
+              (herdr-agent-session-agent-session agent)
+              (herdr-agent-session-project agent))
+      (when-let* (((fboundp 'herdr--entry-for-target))
+                  (entry (herdr--entry-for-target target))
+                  (kind (alist-get 'agent entry)))
+        (list (intern kind) (alist-get 'agent_session entry)
+              (herdr-agent--entry-project entry))))))
+
+(defun limen-message--elsewhere (state)
+  "Return STATE's agent's workspace consed onto its name, if not STATE's own.
+The workspace is the one the composer was opened in; an agent of another
+one, as every agent is to a workspace no project is pinned to, is named
+so the line says where the message goes."
+  (when-let* (((fboundp 'herdr--entry-for-target))
+              (entry (herdr--entry-for-target (limen-message--state-target state)))
+              (directory (herdr-entry-directory entry))
+              (workspace (herdr-workspace-label directory))
+              ((not (equal workspace (limen-message--state-workspace state)))))
+    (cons workspace (herdr--entry-label entry))))
+
+(defun limen-message--status-part (field text)
+  "Return TEXT behind the glyph `herdr-status' leads FIELD with.
+The glyphs are the dashboard's, `herdr-status-field-glyphs', so a field
+reads the same in both; TEXT stands alone where there is none."
+  (let ((glyph (if (require 'herdr-status nil t)
+                   (herdr-status-glyph (alist-get field herdr-status-field-glyphs))
+                 "")))
+    (if (string-empty-p glyph)
+        text
+      (concat (propertize glyph 'face 'limen-message-status-icon
+                          'display (limen-message--centring))
+              " " text))))
+
+(defun limen-message--centring ()
+  "Return the raise centring a glyph in `limen-message-status-icon' on its line.
+The face scales the glyph down, leaving the height it gave up above it;
+raising it by half of that, measured in its own height, centres it."
+  (let ((height (face-attribute 'limen-message-status-icon :height nil t)))
+    (when (and (floatp height) (< 0 height 1))
+      `(raise ,(/ (- 1.0 height) (* 2 height))))))
+
+(defun limen-message--answer (state)
+  "Return what STATE's agent last answered with, and the effort it runs at.
+The answer is an alist as `limen-transcript-answer' gives one, with
+`effort' added.  A model or effort picked in the composer stands in for
+the one the transcript names."
+  (let* ((agent (limen-message--agent state))
+         (provider (nth 0 agent))
+         (file (and agent
+                    (limen-transcript-file provider
+                                           (alist-get 'value (nth 1 agent))
+                                           (nth 2 agent))))
+         (answer (and file (limen-transcript-answer file provider)))
+         (effort (or (limen-message--state-effort state)
+                     (and file (require 'limen-model nil t)
+                          (limen-model-effort file provider)))))
+    (when-let* ((picked (limen-message--state-model state)))
+      (setq answer (cons (cons 'model picked) answer)))
+    (cons (cons 'effort effort) answer)))
+
+(defun limen-message--model-label (answer)
+  "Return ANSWER's model with the effort it runs at, or nil without a model."
+  (let ((model (alist-get 'model answer)))
+    (when (and (stringp model) (not (string-empty-p model)))
+      (if (require 'limen-model nil t)
+          (limen-model-label model (alist-get 'effort answer))
+        model))))
+
+(defun limen-message--report-model (state)
+  "Report STATE's agent's model and effort to its Herdr pane.
+The dashboard's model column reads what the status line does, the
+moment a pick changes it."
+  (when-let* (((require 'limen-model nil t))
+              ((fboundp 'herdr--entry-for-target))
+              (target (limen-message--state-target state))
+              (entry (herdr--entry-for-target target))
+              (pane (alist-get 'pane_id entry))
+              (label (limen-message--model-label (limen-message--answer state))))
+    (limen-model-report (car target) pane label)))
+
+(defun limen-message--status (state)
+  "Return the model and context window STATE's agent last answered with, or nil.
+A model or effort picked in the composer stands in for the one answered
+with, and an agent of another workspace is named in front."
+  (let ((answer (limen-message--answer state)))
+    (let* ((model (limen-message--model-label answer))
+           (usage (and answer (require 'limen-usage nil t)
+                       (limen-usage-of-answer answer)))
+           (elsewhere (limen-message--elsewhere state))
+           (parts (delq nil
+                        (list (and elsewhere
+                                   (limen-message--status-part 'workspace (car elsewhere)))
+                              (and elsewhere
+                                   (limen-message--status-part 'pane (cdr elsewhere)))
+                              (and model
+                                   (limen-message--status-part 'model model))
+                              (and usage
+                                   (limen-message--status-part
+                                    'context
+                                    (limen-usage-format (car usage) (cdr usage))))))))
+      (and parts (string-join parts "  ")))))
+
+(defun limen-message--show-status (state)
+  "Draw STATE's status line."
+  (when-let* ((status (condition-case nil (limen-message--status state)
+                        (error nil))))
+    (add-face-text-property 0 (length status) 'limen-message-status t status)
+    (limen-message--update state 'limen-status status)))
+
+(defun limen-message--model-table (models)
+  "Return a completion table of MODELS annotated with their context windows."
+  (let ((width (apply #'max 0 (mapcar #'string-width models))))
+    (lambda (string predicate action)
+      (if (eq action 'metadata)
+          `(metadata
+            (category . limen-model)
+            (annotation-function
+             . ,(lambda (model)
+                  (when-let* (((require 'limen-usage nil t))
+                              (window (limen-usage-window model)))
+                    (concat (make-string (- (+ width 2) (string-width model)) ?\s)
+                            (propertize window 'face 'completions-annotations))))))
+        (complete-with-action action models string predicate)))))
+
+(defun limen-message-pick-model ()
+  "Move the agent the active composer writes to onto a model read here.
+The draft stays in the field; the status line shows the model picked."
+  (interactive)
+  (let* ((state (or (limen-message--state-here)
+                    (user-error "No composer is open")))
+         (spec (alist-get (car (limen-message--agent state)) limen-message-models))
+         (models (or (plist-get spec :models)
+                     (user-error "No models are known for this agent")))
+         (model (completing-read "Model: " (limen-message--model-table models)
+                                 nil t)))
+    (limen-message--send-setting state (plist-get spec :command) model)
+    (setf (limen-message--state-model state) model)
+    (limen-message--report-model state)
+    (when limen-message-status
+      (limen-message--show-status state))))
+
+(defun limen-message-pick-effort ()
+  "Set the effort of the agent the active composer writes to, read here.
+The draft stays in the field; the status line shows the effort picked."
+  (interactive)
+  (let* ((state (or (limen-message--state-here)
+                    (user-error "No composer is open")))
+         (spec (alist-get (car (limen-message--agent state)) limen-message-models))
+         (efforts (or (plist-get spec :efforts)
+                      (user-error "No effort levels are known for this agent")))
+         (effort (completing-read "Effort: " efforts nil t)))
+    (limen-message--send-setting state (plist-get spec :effort) effort)
+    (setf (limen-message--state-effort state) effort)
+    (limen-message--report-model state)
+    (when limen-message-status
+      (limen-message--show-status state))))
+
+(defun limen-message--send-setting (state command value)
+  "Hand VALUE to STATE's agent through COMMAND.
+COMMAND is a format string of the prompt that sets it, or a function
+called with the agent's target and VALUE."
+  (let ((target (limen-message--state-target state)))
+    (if (functionp command)
+        (funcall command target value)
+      (herdr-agent-prompt target (format command value)))))
+
+(defconst limen-message--codex-menu-footer "Press enter to confirm or esc to go back"
+  "Line Codex draws under every menu it holds open.")
+
+(defconst limen-message--codex-reasoning "Select Reasoning Level\\|Advanced Reasoning"
+  "Titles of the menus Codex reads a reasoning level from.")
+
+(defun limen-message--codex-menu (target title)
+  "Return the menu titled by the regexp TITLE on TARGET's screen.
+The screen is read until the menu is drawn, for a second at most, and
+nil comes back if it never is."
+  (cl-loop repeat 20
+           for screen = (herdr-agent-read target)
+           when (and (stringp screen) (string-match title screen))
+           return (substring screen (match-beginning 0))
+           do (sleep-for 0.05)))
+
+(defun limen-message--codex-rows (menu)
+  "Return MENU's rows as label, digit and whether it is highlighted."
+  (let ((start 0) rows)
+    (while (string-match "^\\([ ›]*\\)\\([1-9]\\)\\. \\(.+?\\)\\(?:  \\|$\\)"
+                         menu start)
+      (push (list (replace-regexp-in-string " (\\(?:current\\|default\\))\\'" ""
+                                            (match-string 3 menu))
+                  (match-string 2 menu)
+                  (string-search "›" (match-string 1 menu)))
+            rows)
+      (setq start (match-end 0)))
+    (nreverse rows)))
+
+(defun limen-message--codex-closed-p (target)
+  "Return non-nil once TARGET holds no Codex menu open, within a second."
+  (cl-loop repeat 20
+           for screen = (herdr-agent-read target)
+           when (and (stringp screen)
+                     (not (string-search limen-message--codex-menu-footer screen)))
+           return t
+           do (sleep-for 0.05)))
+
+(defun limen-message-codex-model (target model)
+  "Move TARGET, a Codex agent, onto MODEL through its /model menu.
+Codex takes no model by name, so the menu is opened and MODEL's row
+chosen by its digit.  The reasoning levels Codex offers MODEL are read
+here, with the one it highlights as the default; a level opening a
+further menu has that one read too.  A menu left half-way is closed."
+  (herdr-agent-paste target "/model")
+  (herdr-agent-type-keys target '("enter"))
+  (let (done)
+    (unwind-protect
+        (let ((row (assoc model (limen-message--codex-rows
+                                 (or (limen-message--codex-menu target "Select Model")
+                                     (user-error "Codex's model menu did not open"))))))
+          (unless row
+            (user-error "Codex's model menu offers no %s" model))
+          (herdr-agent-type-keys target (list (nth 1 row)))
+          (while (not done)
+            (let* ((rows (limen-message--codex-rows
+                          (or (limen-message--codex-menu
+                               target limen-message--codex-reasoning)
+                              (user-error "Codex's reasoning menu did not open"))))
+                   (level (completing-read (format "Reasoning for %s: " model)
+                                           (mapcar #'car rows) nil t nil nil
+                                           (car (seq-find #'caddr rows)))))
+              (herdr-agent-type-keys target (list (nth 1 (assoc level rows))))
+              (setq done (limen-message--codex-closed-p target)))))
+      (unless done
+        (cl-loop repeat 3
+                 for screen = (herdr-agent-read target)
+                 while (and (stringp screen)
+                            (string-search limen-message--codex-menu-footer screen))
+                 do (herdr-agent-type-keys target '("esc")))))))
+
 (defun limen-message--beside (window)
   "Return a function showing a buffer beside WINDOW, selecting nothing.
 The buffer goes up in WINDOW's frame, never in WINDOW itself.  A field
@@ -387,7 +690,9 @@ from there would split the field's own frame and go down with it."
 (defun limen-message-transcript ()
   "Show the memex transcript of the agent the active composer writes to.
 The session is the one the composer already found for the agent, so the
-transcript opens without looking it up again."
+transcript opens without looking it up again.  It opens beside the
+buffer the field is written over, which it leaves alone, and the field
+keeps the keyboard."
   (interactive)
   (let* ((state (limen-message--state-here))
          (target (and state (limen-message--state-target state)))
@@ -664,6 +969,16 @@ Own the returned request and bound each RPC to ten seconds."
         (remove-hook 'kill-buffer-hook hook t))
       (when (eq limen-message--active state) (setq limen-message--active nil)))))
 
+(defun limen-message--spent (state)
+  "Show what STATE read before its scan budget ran out.
+A session whose conversation is buried under pages of tool records
+answers with fewer messages than were asked for rather than with none:
+what was read is still what the agent last said.  A budget spent
+without a single message is a session that could not be read at all."
+  (if (limen-message--state-records state)
+      (limen-message--finish state)
+    (limen-message--unavailable state)))
+
 (defun limen-message--unavailable (state)
   "Hide STATE's optional panes when context cannot be obtained."
   (limen-message--cancel-requests state)
@@ -814,7 +1129,7 @@ whole of it was read."
                                 (limen-message--read-enough-p state)))
                        (limen-message--finish state))
                       ((>= (limen-message--state-scanned state) limen-message--scan-limit)
-                       (limen-message--unavailable state))
+                       (limen-message--spent state))
                       (t (limen-message--page state offset))))
                  (error (limen-message--unavailable state)))))
            :offset offset :limit (- end offset))
@@ -887,11 +1202,11 @@ cost in front of every field, where the session is almost always known."
   (when (limen-message--current-p state)
     (condition-case nil
         (let* ((target (limen-message--state-target state))
-               (agent (herdr-agent-find (car target) (cdr target)))
-               (reference (and agent (herdr-agent-session-agent-session agent)))
+               (agent (limen-message--agent state))
+               (reference (nth 1 agent))
                (kind (alist-get 'kind reference))
                (value (alist-get 'value reference))
-               (source (and agent (herdr-agent-session-kind agent))))
+               (source (and agent (symbol-name (nth 0 agent)))))
           (if (not (and (stringp value) (member kind '("id" "path"))
                         (stringp source) (require 'memex-api nil t)))
               (limen-message--unavailable state)
@@ -1120,6 +1435,8 @@ a field close it again."
                      :buffer (current-buffer) :token (make-symbol "composer")
                      :target target :context limen-message-context
                      :summary limen-message-summary :live t
+                     :workspace (and (fboundp 'herdr-current-workspace-label)
+                                     (herdr-current-workspace-label))
                      :history (gethash target limen-message--history)))
              (previous-context cera-read-context-function)
              (cera-read-context-function
@@ -1137,10 +1454,16 @@ a field close it again."
                     (append
                      (list (cera-pane :id 'limen-context :kind 'readonly
                                       :text "" :bracket nil :prefix nil))
-                     defaults)))))
+                     defaults
+                     (and limen-message-status
+                          (list (cera-pane :id 'limen-status :kind 'readonly
+                                           :text "" :bracket nil :prefix nil
+                                           :wrap nil :align 'input))))))))
              (cera-session-keymap
               (let ((map (make-sparse-keymap)))
                 (define-key map (kbd "C-c C-t") #'limen-message-transcript)
+                (define-key map (kbd "C-c RET") #'limen-message-pick-model)
+                (define-key map (kbd "C-c C-e") #'limen-message-pick-effort)
                 (dolist (binding '(("C-p" . limen-message-history-older)
                                    ("<up>" . limen-message-history-older)
                                    ("C-n" . limen-message-history-newer)
@@ -1177,7 +1500,10 @@ a field close it again."
                                 (lambda () (limen-message--close state)))
                           (add-hook 'kill-buffer-hook (limen-message--state-close-hook state) nil t))
                         (push (run-at-time 0 nil #'limen-message--resolve state)
-                              (limen-message--state-timers state))))
+                              (limen-message--state-timers state))
+                        (when limen-message-status
+                          (push (run-at-time 0 nil #'limen-message--show-status state)
+                                (limen-message--state-timers state)))))
                     cera-session-start-hook)))
         (unwind-protect
             (funcall original target context)
