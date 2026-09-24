@@ -29,19 +29,26 @@
                   (pane-id source &rest arguments))
 
 (defvar herdr-socket-path)
+(defvar herdr-status-context-token)
 
 (defgroup limen-usage nil
   "Report how much of its context window an agent holds to Herdr."
   :group 'limen
   :prefix "limen-usage-")
 
-(defcustom limen-usage-token "context"
+(defcustom limen-usage-token nil
   "Metadata token the context window figure is reported under.
-Herdr keeps the token with the pane and hands it back with the agent.
-Whatever reads it - `herdr-status-context-token' is the dashboard's end
-of the same string - has to agree on the name."
-  :type 'string
+Nil takes the name from the dashboard that reads it,
+`herdr-status-context-token', so the two cannot drift apart; a string
+names the token outright, for a reader of Limen's own."
+  :type '(choice (const :tag "Whatever reads it" nil) string)
   :group 'limen-usage)
+
+(defun limen-usage-token ()
+  "Return the metadata token the context window is reported under."
+  (or limen-usage-token
+      (bound-and-true-p herdr-status-context-token)
+      "context"))
 
 (defcustom limen-usage-source "limen"
   "Metadata source the report is made under.
@@ -134,7 +141,7 @@ worth interrupting a hook over, so the report is dropped instead."
         (let ((herdr-socket-path server))
           (herdr-api-pane-report-metadata
            pane limen-usage-source
-           :tokens (list (cons (intern limen-usage-token) usage)))
+           :tokens (list (cons (intern (limen-usage-token)) usage)))
           usage)
       (error nil))))
 
@@ -215,7 +222,7 @@ runs in, which is all a harness without a Herdr integration leaves."
 
 (defun limen-usage--reported-p (entry)
   "Return non-nil when ENTRY already carries what Limen would report."
-  (let ((held (alist-get (intern limen-usage-token) (alist-get 'tokens entry))))
+  (let ((held (alist-get (intern (limen-usage-token)) (alist-get 'tokens entry))))
     (and (stringp held) (not (string-empty-p held)))))
 
 ;;;###autoload

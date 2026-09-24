@@ -27,19 +27,26 @@
                   (pane-id source &rest arguments))
 
 (defvar herdr-socket-path)
+(defvar herdr-status-model-token)
 
 (defgroup limen-model nil
   "Report the model an agent answers with to its Herdr pane."
   :group 'limen
   :prefix "limen-model-")
 
-(defcustom limen-model-token "model"
+(defcustom limen-model-token nil
   "Metadata token the model is reported under.
-Herdr keeps the token with the pane and hands it back with the agent.
-Whatever reads it - `herdr-status-model-token' is the dashboard's end of
-the same string - has to agree on the name."
-  :type 'string
+Nil takes the name from the dashboard that reads it,
+`herdr-status-model-token', so the two cannot drift apart; a string
+names the token outright, for a reader of Limen's own."
+  :type '(choice (const :tag "Whatever reads it" nil) string)
   :group 'limen-model)
+
+(defun limen-model-token ()
+  "Return the metadata token the model is reported under."
+  (or limen-model-token
+      (bound-and-true-p herdr-status-model-token)
+      "model"))
 
 (defcustom limen-model-source "limen"
   "Metadata source the report is made under.
@@ -103,7 +110,7 @@ worth interrupting a hook over, so the report is dropped instead."
         (let ((herdr-socket-path server))
           (herdr-api-pane-report-metadata
            pane limen-model-source
-           :tokens (list (cons (intern limen-model-token) model)))
+           :tokens (list (cons (intern (limen-model-token)) model)))
           model)
       (error nil))))
 

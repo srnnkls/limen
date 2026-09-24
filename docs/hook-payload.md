@@ -62,3 +62,12 @@ and every other event with an empty string. A harness whose extension asked the 
 - `extension` — the harness loads an extension, which translates its events and calls `limen hook <provider>` itself. Pi and Oh My Pi, whose `--hook` takes a JavaScript file rather than a command, so there is no settings file to write into. `extensions/limen-hooks` is that translator; `mise run install-extensions` links it where the harness discovers it, so an adopted pane answers hooks as readily as a launched one. It knows nothing of Limen's MCP route: `extensions/limen-mcp` is a separate extension, loaded or not on its own terms.
 
 Both answer the same payload. `limen-hooks-providers` names every harness that answers; `limen-hooks-installing-providers` names only those whose settings Limen writes.
+
+## The metadata tokens
+
+What Limen reports of an agent, Herdr carries and its dashboard draws, so
+the name of each token is shared between them.  The dashboard owns the
+name - `herdr-status-context-token' and `herdr-status-model-token' - and
+Limen follows it: `limen-usage-token' and `limen-model-token' are nil by
+default, which means "whatever reads it", and a string only where Limen
+reports to a reader of its own.

@@ -4,6 +4,8 @@
 (require 'ert)
 (require 'limen-usage)
 
+(defvar herdr-status-context-token)
+
 (defvar herdr-socket-path)
 
 (defun limen-usage-tests--answer (model held &optional sidechain)
@@ -244,3 +246,12 @@ A SIDECHAIN line is marked as a subagent's."
                  0))
       (should-not read)
       (should-not reported))))
+
+(ert-deftest limen-usage-takes-the-token-name-from-whatever-reads-it ()
+  (let ((limen-usage-token nil))
+    (let ((herdr-status-context-token "window"))
+      (should (equal (limen-usage-token) "window")))
+    (should (equal (limen-usage-token) "context")))
+  (let ((limen-usage-token "held")
+        (herdr-status-context-token "window"))
+    (should (equal (limen-usage-token) "held"))))

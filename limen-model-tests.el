@@ -4,6 +4,8 @@
 (require 'ert)
 (require 'limen-model)
 
+(defvar herdr-status-model-token)
+
 (defvar herdr-socket-path)
 
 (defun limen-model-tests--payload (event key value)
@@ -125,3 +127,12 @@
     (should-not (limen-model--reported-p '((tokens . ((model . ""))))))
     (should-not (limen-model--reported-p '((tokens . ((context . "1k/200k"))))))
     (should-not (limen-model--reported-p '((pane_id . "%1"))))))
+
+(ert-deftest limen-model-takes-the-token-name-from-whatever-reads-it ()
+  (let ((limen-model-token nil))
+    (let ((herdr-status-model-token "harness-model"))
+      (should (equal (limen-model-token) "harness-model")))
+    (should (equal (limen-model-token) "model")))
+  (let ((limen-model-token "engine")
+        (herdr-status-model-token "harness-model"))
+    (should (equal (limen-model-token) "engine"))))
