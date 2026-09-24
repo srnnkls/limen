@@ -71,8 +71,8 @@
                    (limen-model-tests--payload "SessionStart" 'model "Opus 5")
                    nil nil))
       (should (equal scheduled
-                     '((0 nil limen-model-report
-                          ("/tmp/alpha.sock" "%1" "Opus 5")))))
+                     '((0 nil limen-model--report-with-effort
+                          ("/tmp/alpha.sock" "%1" "Opus 5" nil claude)))))
       (setq scheduled nil)
       (limen-model--report-event
        "claude" (limen-model-tests--payload "UserPromptSubmit" 'model "Opus 5")
@@ -117,6 +117,28 @@
       (should-not (limen-hooks-events 'claude))
       (should-not (memq #'limen-model--report-event limen-hooks-event-functions))
       (should (equal removed '((claude "PostModelSwitch" "Stop")))))))
+
+(ert-deftest limen-model-reports-the-effort-behind-the-model ()
+  "A session that set no effort runs at the one its settings start it on."
+  (should (equal (limen-model-label "Opus 5.5" "xhigh") "Opus 5.5/xhigh"))
+  (should (equal (limen-model-label "Opus 5.5" nil) "Opus 5.5"))
+  (let* ((directory (make-temp-file "limen-model-settings" t))
+         (process-environment (cons (concat "CLAUDE_CONFIG_DIR=" directory)
+                                    process-environment))
+         (transcript (make-temp-file "limen-model" nil ".jsonl"
+                                     "{\"type\":\"assistant\"}\n"))
+         reported)
+    (unwind-protect
+        (progn
+          (with-temp-file (expand-file-name "settings.json" directory)
+            (insert "{\"effortLevel\":\"medium\"}"))
+          (should (equal (limen-model-effort transcript 'claude) "medium"))
+          (cl-letf (((symbol-function 'limen-model-report)
+                     (lambda (_server _pane label) (setq reported label))))
+            (limen-model--report-with-effort "/s" "%1" "Opus 5.5" transcript 'claude))
+          (should (equal reported "Opus 5.5/medium")))
+      (delete-file transcript)
+      (delete-directory directory t))))
 
 (provide 'limen-model-tests)
 ;;; limen-model-tests.el ends here

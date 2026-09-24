@@ -125,10 +125,43 @@ every answer."
               ((not (string-empty-p model))))
     (limen-model--name model)))
 
+(defun limen-model--default-effort (provider)
+  "Return the effort level PROVIDER's settings start a session on, or nil."
+  (when-let* ((entry (limen-provider provider))
+              (settings (limen-provider-hook-settings entry))
+              (file (funcall settings))
+              ((file-readable-p file)))
+    (condition-case nil
+        (let ((level (alist-get 'effortLevel
+                                (with-temp-buffer
+                                  (insert-file-contents file)
+                                  (json-parse-buffer :object-type 'alist)))))
+          (and (stringp level) (not (string-empty-p level)) level))
+      (error nil))))
+
+(defun limen-model-effort (file &optional provider)
+  "Return the effort the session PROVIDER writes to FILE runs at, or nil.
+The level last set in the session stands; a session that set none runs
+at the one its provider's settings start a session on."
+  (or (limen-transcript-effort file provider)
+      (limen-model--default-effort (or provider 'claude))))
+
+(defun limen-model-label (model effort)
+  "Return MODEL as it is reported, followed by EFFORT when there is one."
+  (if (and (stringp effort) (not (string-empty-p effort)))
+      (format "%s/%s" model effort)
+    model))
+
+(defun limen-model--report-with-effort (server pane model transcript provider)
+  "Report MODEL with the effort PROVIDER's TRANSCRIPT runs at to PANE on SERVER."
+  (limen-model-report server pane
+                      (limen-model-label
+                       model (and transcript (limen-model-effort transcript provider)))))
+
 (defun limen-model--report-transcript (server pane transcript provider)
   "Report the model PROVIDER's TRANSCRIPT last answered with to PANE on SERVER."
   (when-let* ((model (limen-model-of-transcript transcript provider)))
-    (limen-model-report server pane model)))
+    (limen-model--report-with-effort server pane model transcript provider)))
 
 (defun limen-model--asked-for-p (provider payload)
   "Return non-nil when PROVIDER's event in PAYLOAD is one Limen reads on."
@@ -148,7 +181,8 @@ returned, where waiting on a socket reaches nothing but itself."
   (when-let* ((server (alist-get 'server payload))
               (pane (alist-get 'pane payload)))
     (if-let* ((model (limen-model-of payload)))
-        (run-at-time 0 nil #'limen-model-report server pane model)
+        (run-at-time 0 nil #'limen-model--report-with-effort server pane model
+                     (alist-get 'transcript_path payload) (intern provider))
       (when-let* (((limen-model--asked-for-p provider payload))
                   (transcript (alist-get 'transcript_path payload)))
         (run-at-time 0 nil #'limen-model--report-transcript
@@ -162,7 +196,7 @@ returned, where waiting on a socket reaches nothing but itself."
 (defvar herdr-status-refresh-hook)
 
 (defun limen-model--agent-answer (entry)
-  "Return the provider, pane and last answer of Herdr agent ENTRY, or nil.
+  "Return the provider, pane, last answer and transcript of agent ENTRY, or nil.
 An agent Herdr names no session for is looked up by the directory it
 runs in, which is all a harness without a Herdr integration leaves."
   (when-let* ((provider (intern (or (alist-get 'agent entry) "")))
@@ -172,11 +206,11 @@ runs in, which is all a harness without a Herdr integration leaves."
                      (alist-get 'value (alist-get 'agent_session entry))
                      (or (herdr-entry-directory entry) default-directory)))
               (answer (limen-transcript-answer file provider)))
-    (list provider pane answer)))
+    (list provider pane answer file)))
 
 (defun limen-model--reported-p (entry)
   "Return non-nil when ENTRY already carries the model Limen would report."
-  (let ((model (alist-get (intern limen-model-token) (alist-get 'tokens entry))))
+  (let ((model (alist-get (intern (limen-model-token)) (alist-get 'tokens entry))))
     (and (stringp model) (not (string-empty-p model)))))
 
 ;;;###autoload
@@ -192,7 +226,8 @@ over an agent already carrying one."
       (unless (limen-model--reported-p entry)
         (when-let* ((found (limen-model--agent-answer entry))
                     (model (limen-model--name (alist-get 'model (nth 2 found)))))
-          (when (limen-model-report server (nth 1 found) model)
+          (when (limen-model--report-with-effort server (nth 1 found) model
+                                                 (nth 3 found) (nth 0 found))
             (cl-incf reported)))))
     (when (called-interactively-p 'any)
       (message "Limen reported the model of %d agent%s" reported

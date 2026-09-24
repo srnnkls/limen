@@ -171,6 +171,85 @@ found when the model is nowhere in the file."
                while (and size (< bytes size))
                finally return best))))
 
+;;; The effort
+
+(defun limen-transcript-claude-effort (text)
+  "Return the effort level Claude was last set to in TEXT, or nil.
+Claude writes `/effort' down as the output of a local command, and
+nowhere else in the transcript."
+  (cl-loop for line in (nreverse (split-string text "\n" t))
+           for record = (and (string-search "Set effort level to" line)
+                             (limen-transcript-record line))
+           for content = (and (equal (alist-get 'type record) "user")
+                              (alist-get 'content (alist-get 'message record)))
+           when (and (stringp content)
+                     (string-match "\\`<local-command-stdout>Set effort level to \\([[:alnum:]-]+\\)"
+                                   content))
+           return (match-string 1 content)))
+
+(defun limen-transcript-codex-effort (text)
+  "Return the reasoning effort Codex's last turn in TEXT ran at, or nil."
+  (cl-loop for line in (nreverse (split-string text "\n" t))
+           for record = (and (string-search "turn_context" line)
+                             (limen-transcript-record line))
+           for effort = (and (equal (alist-get 'type record) "turn_context")
+                             (alist-get 'effort (alist-get 'payload record)))
+           when (and (stringp effort) (not (string-empty-p effort)))
+           return effort))
+
+(defun limen-transcript-pi-effort (text)
+  "Return the thinking level Pi was last set to in TEXT, or nil."
+  (cl-loop for line in (nreverse (split-string text "\n" t))
+           for record = (and (string-search "thinking_level_change" line)
+                             (limen-transcript-record line))
+           for level = (and (equal (alist-get 'type record) "thinking_level_change")
+                            (alist-get 'thinkingLevel record))
+           when (and (stringp level) (not (string-empty-p level)))
+           return level))
+
+(defcustom limen-transcript-effort-readers
+  '((claude . limen-transcript-claude-effort)
+    (codex . limen-transcript-codex-effort)
+    (pi . limen-transcript-pi-effort)
+    (omp . limen-transcript-pi-effort))
+  "What reads the effort a session was last set to out of its transcript.
+Each function takes the tail of a transcript and answers with the level,
+or nil when the tail sets none."
+  :type '(alist :key-type symbol :value-type function)
+  :group 'limen-transcript)
+
+(defvar limen-transcript--efforts (make-hash-table :test #'equal)
+  "Each transcript's last effort setting consed onto how far it was read.")
+
+(defun limen-transcript--span (file from to)
+  "Return FILE's text from byte FROM to byte TO, from its first whole line.
+A little before FROM is read again, so a line FROM cut is read whole."
+  (let ((start (max 0 (- from 4096))))
+    (with-temp-buffer
+      (insert-file-contents-literally file nil start to)
+      (when (> start 0)
+        (goto-char (point-min))
+        (when (search-forward "\n" nil t)
+          (delete-region (point-min) (point))))
+      (decode-coding-string (buffer-string) 'utf-8))))
+
+(defun limen-transcript-effort (file &optional provider)
+  "Return the effort the session in FILE was last set to, or nil.
+PROVIDER says which reader the transcript is read with, claude's by
+default.  A setting is made rarely and anywhere in the file, so the whole
+of it is read the first time and only what was written since after that."
+  (when-let* ((reader (alist-get (or provider 'claude) limen-transcript-effort-readers))
+              ((stringp file))
+              ((file-readable-p file))
+              (size (file-attribute-size (file-attributes file))))
+    (let* ((seen (gethash file limen-transcript--efforts))
+           (from (if (and seen (<= (car seen) size)) (car seen) 0))
+           (found (and (> size from)
+                       (funcall reader (limen-transcript--span file from size))))
+           (effort (or found (and (> from 0) (cdr seen)))))
+      (puthash file (cons size effort) limen-transcript--efforts)
+      effort)))
+
 ;;; The file a session was written to
 
 (defun limen-transcript--claude-file (session root)

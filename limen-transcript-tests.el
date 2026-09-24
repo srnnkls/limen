@@ -65,5 +65,38 @@
           (should-not (limen-transcript-answer file 'cursor)))
       (delete-file file))))
 
+(ert-deftest limen-transcript-reads-the-effort-each-harness-last-set ()
+  "A quoted command in tool output is no setting; the last real one stands."
+  (let ((claude (limen-transcript-tests--file
+                 (concat "{\"type\":\"user\",\"message\":{\"content\":\"<local-command-stdout>Set effort level to high (saved as your default for new sessions)</local-command-stdout>\"}}\n"
+                         "{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"content\":\"<local-command-stdout>Set effort level to low\"}]}}\n")))
+        (codex (limen-transcript-tests--file
+                (concat "{\"type\":\"turn_context\",\"payload\":{\"effort\":\"medium\"}}\n"
+                        "{\"type\":\"turn_context\",\"payload\":{\"effort\":\"xhigh\"}}\n")))
+        (pi (limen-transcript-tests--file
+             "{\"type\":\"thinking_level_change\",\"thinkingLevel\":\"off\"}\n")))
+    (unwind-protect
+        (progn
+          (should (equal (limen-transcript-effort claude 'claude) "high"))
+          (should (equal (limen-transcript-effort codex 'codex) "xhigh"))
+          (should (equal (limen-transcript-effort pi 'pi) "off")))
+      (mapc #'delete-file (list claude codex pi)))))
+
+(ert-deftest limen-transcript-follows-an-effort-set-after-it-was-read ()
+  (let ((file (limen-transcript-tests--file
+               "{\"type\":\"thinking_level_change\",\"thinkingLevel\":\"low\"}\n"))
+        (append (lambda (file text)
+                  (with-temp-buffer
+                    (insert text)
+                    (write-region (point-min) (point-max) file t 'silent)))))
+    (unwind-protect
+        (progn
+          (should (equal (limen-transcript-effort file 'pi) "low"))
+          (funcall append file "{\"type\":\"message\"}\n")
+          (should (equal (limen-transcript-effort file 'pi) "low"))
+          (funcall append file "{\"type\":\"thinking_level_change\",\"thinkingLevel\":\"high\"}\n")
+          (should (equal (limen-transcript-effort file 'pi) "high")))
+      (delete-file file))))
+
 (provide 'limen-transcript-tests)
 ;;; limen-transcript-tests.el ends here
