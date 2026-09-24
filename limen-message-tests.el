@@ -13,6 +13,7 @@
 (defvar cera-read-context-function nil)
 (defvar cera-session-keymap nil)
 (defvar cera-session-start-hook nil)
+(defvar herdr-status-field-glyphs)
 
 (defun limen-message-tests--text (content)
   "Return CONTENT as the text a pane draws, whether blocks or one string."
