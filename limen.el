@@ -1769,9 +1769,9 @@ Each function returns a JSON value, or nil to omit the section.")
  :description "List project-confined Emacs buffers."
  :effect 'read
  :parameters '((:name "virtual" :type boolean
-                :description "List virtual buffers instead of file buffers.")
+                      :description "List virtual buffers instead of file buffers.")
                (:name "all" :type boolean
-                :description "List file and virtual buffers."))
+                      :description "List file and virtual buffers."))
  :interfaces '(cli mcp))
 
 (limen-register-operation
@@ -1780,15 +1780,15 @@ Each function returns a JSON value, or nil to omit the section.")
  :description "Read live text from a project-confined Emacs buffer."
  :effect 'read
  :parameters '((:name "path" :type string
-                :description "Project-relative or absolute visited file path.")
+                      :description "Project-relative or absolute visited file path.")
                (:name "name" :type string
-                :description "Live Emacs buffer name.")
+                      :description "Live Emacs buffer name.")
                (:name "line" :type integer :description "One-based start line.")
                (:name "end_line" :type integer :description "One-based end line.")
                (:name "widen" :type boolean
-                :description "Temporarily ignore buffer narrowing.")
+                      :description "Temporarily ignore buffer narrowing.")
                (:name "expected_tick" :type integer
-                :description "Required current character modification tick."))
+                      :description "Required current character modification tick."))
  :interfaces '(cli mcp))
 
 (limen-register-operation
@@ -1797,9 +1797,9 @@ Each function returns a JSON value, or nil to omit the section.")
  :description "Save a visited file when its buffer and disk state are current."
  :effect 'write
  :parameters '((:name "path" :type string :required t
-                :description "Project-relative or absolute visited file path.")
+                      :description "Project-relative or absolute visited file path.")
                (:name "expected_tick" :type integer :required t
-                :description "Required current character modification tick."))
+                      :description "Required current character modification tick."))
  :interfaces '(cli mcp))
 
 (limen-register-operation
@@ -1808,7 +1808,7 @@ Each function returns a JSON value, or nil to omit the section.")
  :description "Open a local file in an Emacs buffer."
  :effect 'write
  :parameters '((:name "path" :type string :required t
-                :description "Project-relative or absolute file path.")
+                      :description "Project-relative or absolute file path.")
                (:name "line" :type integer :description "One-based start line.")
                (:name "column" :type integer :description "Zero-based start column.")
                (:name "end_line" :type integer :description "One-based end line.")
@@ -1840,7 +1840,7 @@ Each function returns a JSON value, or nil to omit the section.")
  :description "Read the current editor context in one call: project, focus, windows, buffers, and any optional sections."
  :effect 'read
  :parameters '((:name "sections" :type array :items (:type string)
-                :description "Section names to include; omit for all."))
+                      :description "Section names to include; omit for all."))
  :interfaces '(cli mcp))
 
 (limen-register-operation
@@ -1885,16 +1885,16 @@ Each function returns a JSON value, or nil to omit the section.")
                (:name "end_column" :type integer)
                (:name "text" :type string)
                (:name "items" :type array
-                :items (:type object
-                        :properties
-                        ((:name "type" :type string :required t
-                          :enum ("file"))
-                         (:name "path" :type string :required t)
-                         (:name "line" :type integer)
-                         (:name "column" :type integer)
-                         (:name "end_line" :type integer)
-                         (:name "end_column" :type integer)
-                         (:name "text" :type string))))))
+                      :items (:type object
+                                    :properties
+                                    ((:name "type" :type string :required t
+                                            :enum ("file"))
+                                     (:name "path" :type string :required t)
+                                     (:name "line" :type integer)
+                                     (:name "column" :type integer)
+                                     (:name "end_line" :type integer)
+                                     (:name "end_column" :type integer)
+                                     (:name "text" :type string))))))
 
 (provide 'limen)
 ;;; limen.el ends here
