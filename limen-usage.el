@@ -103,13 +103,21 @@ Limen."
                     (seq-sort #'< limen-usage-windows))
           (apply #'max named limen-usage-windows)))))
 
+(defun limen-usage-window (model)
+  "Return the context window MODEL answers on, as the figure a column carries."
+  (limen-usage--round (limen-usage--limit model 0)))
+
 (defun limen-usage-of-transcript (file &optional provider)
   "Return the held and total context of FILE's last answer, or nil.
 PROVIDER says whose transcript it is.  A harness that named the window
 it counts against is taken at its word; one that named only the model
 has the window read from that."
-  (when-let* ((answer (limen-transcript-answer file provider))
-              (held (alist-get 'tokens answer))
+  (limen-usage-of-answer (limen-transcript-answer file provider)))
+
+(defun limen-usage-of-answer (answer)
+  "Return the held and total context ANSWER counts, or nil.
+ANSWER is what `limen-transcript-answer' read."
+  (when-let* ((held (alist-get 'tokens answer))
               ((numberp held))
               ((> held 0)))
     (let ((window (alist-get 'window answer)))
@@ -237,18 +245,10 @@ carrying a count, so running it twice costs one request."
     (pcase-dolist (`(,server . ,entry) (or agents (limen-herdr-agents)))
       (unless (limen-usage--reported-p entry)
         (when-let* ((found (limen-usage--agent-answer entry))
-                    (answer (nth 2 found))
-                    (held (alist-get 'tokens answer))
-                    ((numberp held))
-                    ((> held 0)))
-          (let ((window (alist-get 'window answer)))
-            (when (limen-usage-report
-                   server (nth 1 found)
-                   (limen-usage-format
-                    held (if (and (numberp window) (>= window held))
-                             window
-                           (limen-usage--limit (alist-get 'model answer) held))))
-              (cl-incf reported))))))
+                    (usage (limen-usage-of-answer (nth 2 found))))
+          (when (limen-usage-report server (nth 1 found)
+                                    (limen-usage-format (car usage) (cdr usage)))
+            (cl-incf reported)))))
     (when (called-interactively-p 'any)
       (message "Limen reported the context of %d agent%s" reported
                (if (= reported 1) "" "s")))
