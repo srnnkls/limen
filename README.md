@@ -1,6 +1,10 @@
 # limen
 
-An Emacs interface for agents.
+*līmen • a threshold*
+
+> From Latin *līmen* ("threshold, doorway"), the sill a house is entered over
+>
+> Pronunciation: /ˈliː.men/
 
 ## About
 
@@ -23,30 +27,36 @@ from the disk, or when you run several agents under Herdr and want to steer them
 
 ## Installation
 
-Limen needs Emacs 29.1 or newer. Clone the repository and put it on `load-path`:
-
-```sh
-git clone https://github.com/srnnkls/limen ~/src/limen
-```
+Limen needs Emacs 29.1 or newer. On Emacs 30 or newer, install it with `use-package`:
 
 ```elisp
-(add-to-list 'load-path "~/src/limen")
+(use-package limen
+  :vc (:url "https://github.com/srnnkls/limen" :rev :newest))
 ```
 
-Put `bin/limen` on `PATH`, where agents look for it:
+On Emacs 29, run `M-x package-vc-install RET https://github.com/srnnkls/limen RET`. On Doom Emacs,
+add this to `packages.el`; `bin` and `extensions` carry the command and the Pi extensions:
+
+```elisp
+(package! limen :recipe (:host github :repo "srnnkls/limen" :files (:defaults "bin" "extensions")))
+```
+
+Agents run the `limen` command from the package's `bin/` directory, so put it on `PATH`. The
+package directory is `limen` under `package-user-dir` for `package-vc`, and `straight/repos/limen`
+in Doom's local directory:
 
 ```sh
-ln -s ~/src/limen/bin/limen ~/.local/bin/limen
+ln -s ~/.emacs.d/elpa/limen/bin/limen ~/.local/bin/limen
 ```
 
 The command reaches Emacs through `emacsclient`, so Emacs must run a server: `M-x server-start`,
 or `(server-start)` in your init file.
 
 Pi and Oh My Pi load Limen through the two extensions in `extensions/`. Link them where those
-harnesses discover extensions:
+harnesses discover extensions, from the package directory:
 
 ```sh
-cd ~/src/limen && mise run install-extensions
+cd ~/.emacs.d/elpa/limen && mise run install-extensions
 ```
 
 The integrations load only when you ask for them: herdr.el for agent panes,
