@@ -23,9 +23,7 @@ from the disk, or when you run several agents under Herdr and want to steer them
 
 ## Installation
 
-Limen needs Emacs 29.1 or newer. It declares `transient` and `magit-section`, so a package manager
-installs them with it; from a clone, install both from a package archive yourself. Clone the
-repository and put it on `load-path`:
+Limen needs Emacs 29.1 or newer. Clone the repository and put it on `load-path`:
 
 ```sh
 git clone https://github.com/srnnkls/limen ~/src/limen
