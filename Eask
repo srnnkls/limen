@@ -17,9 +17,7 @@
 
 (depends-on "emacs" "29.1")
 (depends-on "transient" "0.9.0")
-
-(development
- (depends-on "magit-section" "4.0.0"))
+(depends-on "magit-section" "4.0.0")
 
 (load-paths ".")
 

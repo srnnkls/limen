@@ -4,7 +4,7 @@
 
 ;; Author: Sören Nikolaus <soeren@code17.io>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (transient "0.9.0"))
+;; Package-Requires: ((emacs "29.1") (transient "0.9.0") (magit-section "4.0.0"))
 ;; Keywords: tools, processes
 ;; URL: https://github.com/srnnkls/limen
 ;; SPDX-License-Identifier: GPL-3.0-or-later
