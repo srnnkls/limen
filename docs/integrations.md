@@ -5,12 +5,12 @@ through the channels that harness supports. This page lists what each harness ge
 [GUIDE.md](../GUIDE.md) explains the features; [REFERENCE.md](../REFERENCE.md) lists the options.
 
 ```text
-                        ┌─ Claude Code: prompt hooks and the CLI
-Limen operations/events ├─ Codex: prompt hooks, MCP Streamable HTTP and the CLI
-                        └─ Pi, Oh My Pi: the limen-hooks and limen-mcp extensions and the CLI
-                                      ▲
-                                      │
-                             limen-herdr-mode (optional)
+                 ┌─ Claude Code: prompt hooks and the CLI
+Limen operations ├─ Codex: prompt hooks, the CLI and, opt-in, MCP diff tools
+                 └─ Pi, Oh My Pi: the limen-hooks extension, the CLI and, opt-in, MCP diff tools
+                               ▲
+                               │
+                      limen-herdr-mode (optional)
 ```
 
 The CLI works for every harness, launched by Herdr or not.
@@ -19,24 +19,20 @@ The CLI works for every harness, launched by Herdr or not.
 
 | Capability | Claude Code | Codex | Pi and Oh My Pi |
 | --- | --- | --- | --- |
-| Operations | CLI | CLI and MCP tools | CLI and `limen_*` tools |
-| Passive selection | `focus:` line on the next prompt | `focus:` line on the next prompt; MCP resource update | `focus:` line on the next prompt; latest selection injected before the next turn |
-| Explicit context push | on the next prompt; without hooks, typed into the terminal | on the next prompt; without hooks, a `context.push` resource update | on the next prompt; without hooks, a message |
+| Operations | CLI | CLI; the diff operations as MCP tools under `limen-herdr-mcp` | CLI; the diff operations as `limen_diff_*` tools under `limen-herdr-mcp` |
+| Passive selection | `focus:` line on the next prompt | `focus:` line on the next prompt | `focus:` line on the next prompt |
+| Explicit context push | on the next prompt; without hooks, typed into the terminal | on the next prompt; without hooks, typed into the terminal | on the next prompt; without hooks, typed into the terminal |
 | Prompt hooks | `SessionStart`, `UserPromptSubmit` and the subscribed events, in `settings.json` | the same, in `hooks.json` | every event, translated by the `limen-hooks` extension |
 | Question inbox | `AskUserQuestion`, through `PreToolUse` and `PostToolUse` | `request_user_input_async`, read from the transcript on `Stop` | none: no question tool is named |
 | Herd notices | Herdr agent states, refined by hooks, with Claude's session name | Herdr agent states, refined by hooks | Herdr agent states, refined by hooks |
 | Model and context columns | `SessionStart`, `PostModelSwitch`, `Stop` | `SessionStart`, `Stop` | `SessionStart`, `PostModelSwitch`, `Stop` |
 | Edit review | `Edit`, `Write`, `MultiEdit` | none: no edit tool is named | `edit`, `write` |
-| Interactive diffs | none | while `limen-editor-enable-diffs` is set | while `limen-editor-enable-diffs` is set |
-| Launch wiring | `LIMEN_SESSION` | `LIMEN_SESSION` and a per-launch MCP route | `LIMEN_SESSION` and a per-launch MCP route |
+| Interactive diffs | none | with an MCP route, while `limen-editor-enable-diffs` is set | with an MCP route, while `limen-editor-enable-diffs` is set |
+| Launch wiring | `LIMEN_SESSION` | `LIMEN_SESSION`; a per-launch MCP route under `limen-herdr-mcp` | `LIMEN_SESSION`; a per-launch MCP route under `limen-herdr-mcp` |
 | Adopted agent | everything above | everything but the MCP route | everything but the MCP route |
 
 Rows that name hooks assume `limen-hooks-mode` and the feature's own mode are on. What a harness
 can do is recorded once, in `limen-provider.el`, and the other modules read it from there.
-
-A Codex resource notification tells its MCP client that the selection changed. It does not prove
-that Codex put the resource into the model's context. Rely on the prompt hook, or send context
-explicitly, when the model must see the current selection.
 
 ## Transports
 
@@ -50,17 +46,17 @@ integrated as fully as a launched one.
 
 ### Codex
 
-Herdr starts Codex with a per-launch MCP server:
+With `limen-herdr-mcp` set, Herdr starts Codex with a per-launch MCP server:
 
 ```text
 codex -c mcp_servers.limen.url="http://127.0.0.1:PORT/mcp/ROUTE" \
       -c mcp_servers.limen.bearer_token_env_var="LIMEN_MCP_TOKEN" ...
 ```
 
-Your Codex configuration stays as it is. The endpoint serves the registry's MCP tools and the
-`emacs://context/selection` and `emacs://context/push` resources. Codex reads its hooks from
-`hooks.json`, so an adopted Codex agent answers them; it has no MCP route, since a route can only
-be handed to a process at launch.
+Your Codex configuration stays as it is. The endpoint serves only the diff tools, `diff_open`,
+`diff_close` and `diff_close-all`, while `limen-editor-enable-diffs` is set. Codex reads its
+hooks from `hooks.json`, so an adopted Codex agent answers them; it has no MCP route, since a
+route can only be handed to a process at launch.
 
 ### Pi and Oh My Pi
 
@@ -81,11 +77,12 @@ harness finds them in any pane, launched or adopted.
 | `model_select` | `PostModelSwitch` |
 | `session_shutdown` | `SessionEnd` |
 
-`extensions/limen-mcp` connects to the route in `LIMEN_MCP_URL` with `LIMEN_MCP_TOKEN`. It
-mirrors every MCP tool as a `limen_<tool>` Pi tool, refreshes them when the registry changes, and
-handles deferred results over SSE. A selection update replaces one cached snapshot, which is
-injected once before the next turn when it changed. An explicit push arrives as a message.
-Shutdown withdraws the extension's tools and closes the session's event stream.
+`extensions/limen-mcp` does nothing unless `LIMEN_MCP_URL`, `LIMEN_MCP_TOKEN` and
+`LIMEN_MCP_SESSION` are set, which `limen-herdr-mcp` arranges for a launched pane. It then mirrors
+the route's MCP tools, the diff tools, as `limen_diff_open`, `limen_diff_close` and
+`limen_diff_close-all`, refreshes them when the registry changes, and handles deferred results over
+SSE. Shutdown withdraws the extension's tools. The selection reaches Pi and Oh My Pi through the
+`limen-hooks` extension's `UserPromptSubmit` answer.
 
 ## Launch and adoption
 
@@ -102,7 +99,8 @@ kinds. Herdr calls it through an agent's life:
 ```
 
 `:prepare` opens a Limen session rooted at the agent's project and bound to its Herdr server and
-pane, registers an MCP route for harnesses that take one, and returns the pane environment.
+pane, registers an MCP route for harnesses that take one when `limen-herdr-mcp` is set, and
+returns the pane environment.
 `:arguments` rewrites the complete start, continue or resume command line, which is where Codex
 gets its MCP flags. `:adopted` opens a session without a route for a harness with hooks, and
 records a CLI-only state for one without. `:status` answers `limen-herdr-status`. `:detach`

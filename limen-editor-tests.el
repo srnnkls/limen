@@ -1,4 +1,4 @@
-;;; limen-editor-tests.el --- Emacs context and diff tests -*- lexical-binding: t; -*-
+;;; limen-editor-tests.el --- Emacs diff tests -*- lexical-binding: t; -*-
 
 (require 'cl-lib)
 (require 'ert)
@@ -9,14 +9,8 @@
   `(let ((limen--buffers (make-hash-table :test #'eq))
          (limen--sessions (make-hash-table :test #'eq))
          (limen-editor-enable-diffs t)
-         (limen-editor--diffs (make-hash-table :test #'eq))
-         (limen-editor--selection-timers (make-hash-table :test #'eq))
-         (limen-editor--selection-contexts (make-hash-table :test #'eq))
-         (post-command-hook nil))
+         (limen-editor--diffs (make-hash-table :test #'eq)))
      ,@body))
-
-(defun limen-editor-tests--fire (timer)
-  (apply (car timer) (cadr timer)))
 
 (ert-deftest limen-editor-diffs-resolve-canonical-outcomes-through-registry ()
   (limen-editor-tests--with-state
@@ -114,15 +108,8 @@
   (limen-editor-tests--with-state
     (let* ((first (make-symbol "first-owner"))
            (second (make-symbol "second-owner"))
-           (first-timer (list 'first))
-           (second-timer (list 'second))
            (first-cancellations 0)
-           (second-cancellations 0)
-           cancelled)
-      (puthash first (cons 'first-token first-timer)
-               limen-editor--selection-timers)
-      (puthash second (cons 'second-token second-timer)
-               limen-editor--selection-timers)
+           (second-cancellations 0))
       (puthash
        first
        (list (make-limen-editor--diff
@@ -143,17 +130,13 @@
               :proposed-released-p t :old-released-p t
               :control-released-p t))
        limen-editor--diffs)
-      (cl-letf (((symbol-function 'cancel-timer)
-                 (lambda (timer) (push timer cancelled))))
-        (should (limen-editor-cancel first))
-        (should (equal cancelled (list first-timer)))
-        (should (= first-cancellations 1))
-        (should (= second-cancellations 0))
-        (should-not (gethash first limen-editor--diffs))
-        (should (gethash second limen-editor--diffs))
-        (should (gethash second limen-editor--selection-timers))
-        (should (limen-editor-cancel second))
-        (should (= second-cancellations 1)))
+      (should (limen-editor-cancel first))
+      (should (= first-cancellations 1))
+      (should (= second-cancellations 0))
+      (should-not (gethash first limen-editor--diffs))
+      (should (gethash second limen-editor--diffs))
+      (should (limen-editor-cancel second))
+      (should (= second-cancellations 1))
       (let* ((third (make-symbol "third-owner"))
              (proposed (generate-new-buffer " *limen-cancel-veto*"))
              (veto (lambda () nil))
@@ -187,7 +170,7 @@
             (with-temp-file old-file (insert "old\n"))
             (limen-call
              "buffer.open" `((path . ,old-file))
-             (limen-make-request :interface 'mcp :session session))
+             (limen-make-request :interface 'cli :session session))
             (cl-letf (((symbol-function 'limen-editor--start-ediff)
                        (lambda (&rest _) nil)))
               (should
@@ -232,99 +215,6 @@
         (when-let* ((buffer (get-file-buffer old-file)))
           (kill-buffer buffer))
         (delete-directory root t)))))
-
-(ert-deftest limen-editor-selection-debounces-and-deduplicates-snapshots ()
-  (limen-editor-tests--with-state
-    (let* ((root (make-temp-file "limen-selection" t))
-           (file (expand-file-name "selection.el" root))
-           (owner (make-symbol "owner"))
-           buffer timers cancelled callbacks)
-      (unwind-protect
-          (progn
-            (with-temp-file file (insert "first\nsecond\n"))
-            (setq buffer (find-file-noselect file))
-            (with-current-buffer buffer
-              (goto-char (point-min))
-              (set-mark (line-end-position))
-              (setq mark-active t))
-            (cl-letf (((symbol-function 'run-at-time)
-                       (lambda (_delay _repeat callback &rest arguments)
-                         (let ((timer (list callback arguments)))
-                           (push timer timers)
-                           timer)))
-                      ((symbol-function 'cancel-timer)
-                       (lambda (timer) (push timer cancelled))))
-              (limen-editor-schedule-selection
-               owner buffer root (lambda () t)
-               (lambda (snapshot) (push snapshot callbacks)))
-              (let ((superseded (car timers)))
-                (limen-editor-schedule-selection
-                 owner buffer root (lambda () t)
-                 (lambda (snapshot) (push snapshot callbacks)))
-                (should (equal cancelled (list superseded)))
-                (limen-editor-tests--fire superseded)
-                (should-not callbacks))
-              (limen-editor-tests--fire (car timers))
-              (should (= (length callbacks) 1))
-              (should (equal (alist-get 'path (car callbacks)) file))
-              (limen-editor-schedule-selection
-               owner buffer root (lambda () t)
-               (lambda (snapshot) (push snapshot callbacks)))
-              (limen-editor-tests--fire (car timers))
-              (should (= (length callbacks) 1))))
-        (when (buffer-live-p buffer) (kill-buffer buffer))
-        (delete-directory root t)))))
-
-(ert-deftest limen-editor-selection-hook-follows-project-sessions ()
-  (limen-editor-tests--with-state
-    (let* ((first-root (make-temp-file "limen-selection-first" t))
-           (second-root (make-temp-file "limen-selection-second" t))
-           (file (expand-file-name "selection.el" first-root))
-           first-session second-session first-events second-events buffer)
-      (unwind-protect
-          (progn
-            (with-temp-file file (insert "selection\n"))
-            (should-not (memq #'limen-editor-selection-context-changed
-                              post-command-hook))
-            (setq first-session
-                  (limen-open-session :provider 'first :project-root first-root))
-            (should (memq #'limen-editor-selection-context-changed
-                          post-command-hook))
-            (setq second-session
-                  (limen-open-session :provider 'second :project-root second-root))
-            (should (= (cl-count #'limen-editor-selection-context-changed
-                                 post-command-hook :test #'eq)
-                       1))
-            (limen-session-subscribe
-             first-session
-             (lambda (_session name payload)
-               (push (cons name payload) first-events)))
-            (limen-session-subscribe
-             second-session
-             (lambda (_session name payload)
-               (push (cons name payload) second-events)))
-            (setq buffer (find-file-noselect file))
-            (cl-letf (((symbol-function 'limen-editor-schedule-selection)
-                       (lambda (_owner _buffer _root _current-p deliver)
-                         (funcall deliver
-                                  `((path . ,file) (line . 1) (column . 0))))))
-              (with-current-buffer buffer
-                (run-hooks 'post-command-hook)))
-            (should (equal (caar first-events) "context.selection"))
-            (should-not second-events)
-            (should (limen-close-session first-session))
-            (should (memq #'limen-editor-selection-context-changed
-                          post-command-hook))
-            (should (limen-close-session second-session))
-            (should-not (memq #'limen-editor-selection-context-changed
-                              post-command-hook)))
-        (when (and first-session (not (limen-session-closed-p first-session)))
-          (limen-close-session first-session))
-        (when (and second-session (not (limen-session-closed-p second-session)))
-          (limen-close-session second-session))
-        (when (buffer-live-p buffer) (kill-buffer buffer))
-        (delete-directory first-root t)
-        (delete-directory second-root t)))))
 
 (provide 'limen-editor-tests)
 ;;; limen-editor-tests.el ends here

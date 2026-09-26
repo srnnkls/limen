@@ -1,5 +1,3 @@
-const SELECTION_URI = "emacs://context/selection";
-const PUSH_URI = "emacs://context/push";
 const PROTOCOL_VERSION = "2026-07-28";
 const LOADED = Symbol.for("limen.mcp.loaded");
 
@@ -205,31 +203,6 @@ class McpClient {
   }
 }
 
-function contextKey(context) {
-  return context?.sequence ?? JSON.stringify(context);
-}
-
-function contextItemText(item) {
-  const coordinates = Number.isInteger(item.line) && Number.isInteger(item.column)
-    ? `:${item.line}:${item.column}`
-    : "";
-  const location = `${item.path}${coordinates}`;
-  return item.text ? `${location}\n\n${item.text}` : location;
-}
-
-function contextText(context) {
-  const items = Array.isArray(context.items) && context.items.length > 0
-    ? context.items
-    : [context];
-  return items.map(contextItemText).join("\n\n");
-}
-
-function resourceValue(result) {
-  const text = result?.contents?.[0]?.text;
-  if (typeof text !== "string") return null;
-  return JSON.parse(text);
-}
-
 function errorText(result) {
   return (result?.content ?? [])
     .filter(({ type }) => type === "text")
@@ -250,21 +223,11 @@ export function createLimenExtension(Type, options = {}) {
     pi[LOADED] = true;
 
     const ownedTools = new Set();
-    const subscriptions = [SELECTION_URI, PUSH_URI];
     let client = null;
     let started = false;
-    let latestSelection = null;
-    let injectedSelection;
-    let deliveredPush;
 
     const disableTools = () => {
       pi.setActiveTools(pi.getActiveTools().filter((name) => !ownedTools.has(name)));
-    };
-
-    const readResource = async (uri) => {
-      if (!client) return null;
-      const { result } = await client.request("resources/read", { uri });
-      return resourceValue(result);
     };
 
     const refreshTools = async () => {
@@ -299,25 +262,6 @@ export function createLimenExtension(Type, options = {}) {
     const receive = async (message) => {
       if (message?.method === "notifications/tools/list_changed") {
         await refreshTools();
-        return;
-      }
-      if (message?.method !== "notifications/resources/updated") return;
-      const uri = message.params?.uri;
-      const context = await readResource(uri);
-      if (!context) return;
-      if (uri === SELECTION_URI) {
-        latestSelection = context;
-      } else if (uri === PUSH_URI && contextKey(context) !== deliveredPush) {
-        deliveredPush = contextKey(context);
-        pi.sendMessage(
-          {
-            customType: "limen-push",
-            content: contextText(context),
-            display: true,
-            details: context,
-          },
-          { deliverAs: "steer", triggerTurn: false },
-        );
       }
     };
 
@@ -334,10 +278,6 @@ export function createLimenExtension(Type, options = {}) {
         client = nextClient;
         started = true;
         await client.openNotifications(receive, disconnected);
-        for (const uri of subscriptions) {
-          await client.request("resources/subscribe", { uri });
-        }
-        latestSelection = await readResource(SELECTION_URI);
         await refreshTools();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -353,30 +293,13 @@ export function createLimenExtension(Type, options = {}) {
       const current = client;
       client = null;
       started = false;
-      injectedSelection = undefined;
       disableTools();
       if (!current) return;
-      for (const uri of subscriptions) {
-        await current.request("resources/unsubscribe", { uri }).catch(() => {});
-      }
       await current.closeNotifications();
       if (reason === "quit") await current.closeRoute().catch(() => {});
     };
 
     pi.on("session_start", start);
-    pi.on("before_agent_start", () => {
-      const key = contextKey(latestSelection);
-      if (!latestSelection || key === injectedSelection) return undefined;
-      injectedSelection = key;
-      return {
-        message: {
-          customType: "limen-context",
-          content: contextText(latestSelection),
-          display: true,
-          details: latestSelection,
-        },
-      };
-    });
     pi.on("session_shutdown", (event) => stop(event.reason));
   };
 }

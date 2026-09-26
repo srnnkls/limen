@@ -38,15 +38,12 @@ Limen sits between Emacs and the agents that work beside it. A few terms carry t
 
 - An *operation* is one thing an agent can ask of Emacs, named with dots: `buffer.read`,
   `focus.get`, `diff.open`. Each declares its parameters, whether it reads or writes, and the
-  *interfaces* it is offered on: the CLI, MCP, or both. An operation can be disabled, in which
-  case it is hidden and refuses calls.
+  *interfaces* it is offered on: the CLI, or MCP for the diff operations. An operation can be
+  disabled, in which case it is hidden and refuses calls.
 - A *request* is one call of an operation. It carries the *project root* every path is checked
   against, and the window the call is about.
-- A *session* is one agent's standing connection. It owns a project root, the buffers and diffs
-  the agent opened, and the events it subscribed to. Closing it releases all of that.
-- An *event* is something Emacs tells a session without being asked. There are two:
-  `context.selection`, the latest selection in a project file, and `context.push`, context you
-  sent on purpose.
+- A *session* is one agent's standing connection. It owns a project root and the diffs the agent
+  opened. Closing it releases all of that.
 - A *hook* is a harness running `limen hook <provider>` at a point in its turn: session start,
   prompt submission, a tool call, the end of a turn. A *subscription* is a feature's claim on
   some of those hook events, and the union of subscriptions is what Limen installs.
@@ -62,10 +59,10 @@ Every module is a separate `require`. Load the ones whose features you want:
 | Module | Needs | Gives |
 | --- | --- | --- |
 | `limen` | nothing further | the registry, the built-in operations, the CLI |
-| `limen-editor` | nothing further | selection events and interactive diffs |
+| `limen-editor` | nothing further | interactive diffs |
 | `limen-compile` | nothing further | `compile.list`, `compile.read` |
 | `limen-trail` | nothing further | the buffer trail, once `limen-trail-mode` is on |
-| `limen-mcp` | nothing further | the loopback MCP server |
+| `limen-mcp` | nothing further | the loopback MCP server for the diff operations |
 | `limen-scholia` | scholia | `annotation.*` operations |
 | `limen-herdr` | herdr.el | launch wiring for agents under Herdr, context sends |
 | `limen-herdr-claude` | herdr.el | adopting Claude Code agents |
@@ -303,12 +300,13 @@ the agent learns the annotations exist without receiving them.
 
 ## Diffs
 
-An agent on MCP can propose an edit as an Ediff session instead of writing the file. This is off
-by default; turn it on with:
+An agent with an MCP route can propose an edit as an Ediff session instead of writing the file.
+This is off by default; turn it on, and give launched agents a route, with:
 
 ```elisp
 (require 'limen-editor)
-(setq limen-editor-enable-diffs t)
+(setq limen-editor-enable-diffs t
+      limen-herdr-mcp t)
 ```
 
 `diff.open` opens Ediff between the file's buffer and a buffer holding the proposed text, and the
@@ -323,15 +321,14 @@ hidden until you enable them; [edit review](#edit-review) shows edits after they
 `limen-mcp` serves sessions over MCP Streamable HTTP on `127.0.0.1`, on a port the system picks.
 Each session gets its own route, `http://127.0.0.1:PORT/mcp/ROUTE`, and a bearer token.
 
-Tools are the operations offered on MCP, with dots turned into underscores: `buffer_read`,
-`context_get`, `diff_open`. A disabled operation is not listed, and the client is told when the
-list changes. The two events are resources, `emacs://context/selection` and
-`emacs://context/push`, and a subscribed client is notified when either changes. Selection events
-go only to sessions whose project holds the file you are in.
+Tools are the operations offered on MCP, with dots turned into underscores. The built-in ones are
+the [diff operations](#diffs): `diff_open`, `diff_close` and `diff_close-all`; every other
+operation is served by the CLI alone. A disabled operation is not listed, and the client is told
+when the list changes.
 
-Under Herdr, Codex and Pi get their route when they launch; see
-[docs/integrations.md](docs/integrations.md#transports). Any other MCP client can be served from
-Lisp:
+Under Herdr, with `limen-herdr-mcp` set, Codex, Pi and Oh My Pi get their route when they launch;
+see [docs/integrations.md](docs/integrations.md#transports). Any other MCP client can be served
+from Lisp:
 
 ```elisp
 (require 'limen-editor)
@@ -362,10 +359,11 @@ server already.
 ```
 
 When Herdr starts an agent, Limen opens a session rooted at the agent's project and bound to its
-pane, and puts `LIMEN_SESSION` and `LIMEN_PROVIDER` into the pane's environment. Codex, Pi and
-Oh My Pi also get an MCP route: Codex through `-c mcp_servers.limen...` arguments, Pi and Oh My Pi
-through `LIMEN_MCP_URL`, `LIMEN_MCP_TOKEN` and `LIMEN_MCP_SESSION`. Nothing in your global harness
-configuration changes. Detaching or stopping the agent closes the session.
+pane, and puts `LIMEN_SESSION` and `LIMEN_PROVIDER` into the pane's environment. With
+`limen-herdr-mcp` set, Codex, Pi and Oh My Pi also get an MCP route for the diff operations:
+Codex through `-c mcp_servers.limen...` arguments, Pi and Oh My Pi through `LIMEN_MCP_URL`,
+`LIMEN_MCP_TOKEN` and `LIMEN_MCP_SESSION`. Nothing in your global harness configuration changes.
+Detaching or stopping the agent closes the session.
 
 `M-x limen-herdr-transient` is the menu for this:
 
@@ -443,8 +441,9 @@ files, and a directory, symlink, unreadable or out-of-project file among the mar
 whole send. Paths inside the project are relative to the agent's working directory.
 
 Where the context goes depends on the agent. A harness with Limen's hooks installed receives it
-on its next prompt, when `limen-hooks-mode` is on. Otherwise an agent with an MCP route receives
-a `context.push` event, and any other agent has the text typed into its terminal. A plain Herdr
+on its next prompt, when `limen-hooks-mode` is on. Otherwise a function on
+`limen-herdr-push-functions` may carry it, and failing that the text is typed into the agent's
+terminal. A plain Herdr
 message to an agent with hooks carries only your text; the context rides on the hook.
 
 ## Prompt hooks
@@ -688,9 +687,9 @@ move those):
 
 - `limen-hooks` translates the harness's events into Limen's hook events and runs `limen hook`,
   so context, the herd, the dashboard columns and edit review work as they do for Claude Code.
-- `limen-mcp` connects to the MCP route in `LIMEN_MCP_URL`, mirrors every tool as `limen_<tool>`,
-  injects the latest selection once before the next turn, and delivers an explicit push as a
-  message.
+- `limen-mcp` connects to the MCP route in `LIMEN_MCP_URL`, when `limen-herdr-mcp` gave the pane
+  one, and mirrors its diff tools as `limen_diff_open`, `limen_diff_close` and
+  `limen_diff_close-all`.
 
 An adopted Pi pane has hooks but no MCP route, since the route exists only for a pane Limen
 launched. [docs/integrations.md](docs/integrations.md#pi-and-oh-my-pi) has the details.
@@ -713,8 +712,8 @@ An operation is a function of its arguments and the request:
 the tool's input schema. `:enabled-p` hides the operation while it returns nil, and `:deferred`
 marks one that answers later through `limen-request-resolve` or `limen-request-reject`.
 `bin/limen` has subcommands for the built-in CLI operations only, so an operation of your own
-reaches agents through MCP; `:command` names its CLI form in `limen skill` for when a
-subcommand exists.
+reaches agents with an MCP route through MCP; `:command` names its CLI form in `limen skill` for
+when a subcommand exists.
 
 `limen-context-sections` maps section names to functions of the request, and adding an entry
 adds a section to `context.get`. `limen-herdr-context-fields-functions` adds header lines to sent

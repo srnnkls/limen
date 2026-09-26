@@ -238,8 +238,8 @@ pane Limen launched and in one it only adopted alike."
                        (limen-provider--codex-home) root)))
   :skill-reference (lambda (skill) (concat "$" skill))
   :capabilities
-  '(:transport streamable-http :operations registry
-               :passive-context resource :explicit-context terminal :diffs t)))
+  '(:transport hooks :operations cli
+               :passive-context prompt :explicit-context terminal :diffs t)))
 
 (limen-provider-register
  (limen-provider--make
@@ -254,8 +254,8 @@ pane Limen launched and in one it only adopted alike."
                    (limen-provider--pi-home) root))
   :skill-reference (lambda (skill) (concat "/skill:" skill))
   :capabilities
-  '(:transport extension :operations registry
-               :passive-context next-turn :explicit-context message :diffs t)))
+  '(:transport extension :operations cli
+               :passive-context next-turn :explicit-context terminal :diffs t)))
 
 (limen-provider-register
  (limen-provider--make
@@ -270,8 +270,8 @@ pane Limen launched and in one it only adopted alike."
                    (limen-provider--omp-home) root))
   :skill-reference (lambda (skill) (concat "/skill:" skill))
   :capabilities
-  '(:transport extension :operations registry
-               :passive-context next-turn :explicit-context message :diffs t)))
+  '(:transport extension :operations cli
+               :passive-context next-turn :explicit-context terminal :diffs t)))
 
 (provide 'limen-provider)
 ;;; limen-provider.el ends here

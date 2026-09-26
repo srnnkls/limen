@@ -249,7 +249,7 @@
             (delete-other-windows)
             (let ((target (split-window-right))
                   (context (limen-make-request
-                            :interface 'mcp :project-root root
+                            :interface 'cli :project-root root
                             :owner 'visible-owner)))
               (setf (limen-request-window context) target)
               (limen-call "buffer.open" '((path . "visible.el")) context)
@@ -353,30 +353,13 @@
         (should (= status 2))
         (should (string-match-p "invalid_request" payload))))))
 
-(ert-deftest limen-sessions-dispatch-requests-events-and-deferred-results ()
+(ert-deftest limen-sessions-dispatch-requests-and-deferred-results ()
   (limen-tests--with-registry
-    (let ((limen--events (copy-hash-table limen--events))
-          (limen--sessions (make-hash-table :test #'eq))
-          deliveries resolved rejected request)
-      (limen-register-event
-       "sample.changed"
-       :description "Report a changed sample."
-       :parameters '((:name "value" :type string :required t))
-       :replay t)
+    (let ((limen--sessions (make-hash-table :test #'eq))
+          resolved rejected request)
       (let ((session
              (limen-open-session
               :id "sample" :provider 'test :project-root default-directory)))
-        (limen-session-subscribe
-         session
-         (lambda (_session name payload)
-           (push (list name payload) deliveries)))
-        (should (limen-session-publish
-                 session "sample.changed" '((value . "first"))))
-        (should-not (limen-session-publish
-                     session "sample.changed" '((value . "first"))))
-        (should-error
-         (limen-session-publish session "sample.changed" '((value . 1)))
-         :type 'limen-invalid-arguments)
         (setq request
               (limen-make-request
                :interface 'mcp :source 'test :session session
@@ -394,16 +377,8 @@
         (should (limen-request-resolve request '((done . t))))
         (should (equal resolved '((done . t))))
         (should-not rejected)
-        (let (replayed)
-          (limen-session-subscribe
-           session
-           (lambda (_session name payload)
-             (push (list name payload) replayed)))
-          (should (equal (caar replayed) "sample.changed"))
-          (should (= (alist-get 'sequence (cadar replayed)) 1)))
         (should (limen-close-session session))
-        (should-not (limen-request-resolve request "late"))
-        (should (= (length deliveries) 1))))))
+        (should-not (limen-request-resolve request "late"))))))
 
 (ert-deftest limen-request-cancel-stops-and-forgets-deferred-work ()
   (limen-tests--with-registry
@@ -1685,7 +1660,7 @@
            (file-b (expand-file-name "b.el" root))
            (owner (make-symbol "limen-identity-overwrite-owner"))
            (context (limen-make-request
-                     :interface 'mcp :project-root root :owner owner))
+                     :interface 'cli :project-root root :owner owner))
            original replacement open-outcome observations)
       (unwind-protect
           (progn
@@ -1798,7 +1773,7 @@
                (file-b (expand-file-name "b.el" root))
                (owner (make-symbol "limen-same-owner-retarget-owner"))
                (context (limen-make-request
-                         :interface 'mcp :project-root root :owner owner))
+                         :interface 'cli :project-root root :owner owner))
                buffer reopened parking)
           (unwind-protect
               (progn
@@ -1840,8 +1815,8 @@
                           (should (eq (cdr entry) record))))))
                   (should-not (buffer-modified-p buffer))
                   (should-not (get-buffer-window-list buffer nil 0))
-                  (limen-call "buffer.release"
-                              `((path . ,release-path)) context)
+                  (limen-release-buffer
+                   owner (expand-file-name release-path root))
                   (should-not (limen--owner-buffers owner))
                   (should-not (buffer-live-p buffer))))
             (limen-release-owner owner)
@@ -1866,9 +1841,9 @@
            (owner-a (make-symbol "limen-cross-identity-owner-a"))
            (owner-b (make-symbol "limen-cross-identity-owner-b"))
            (context-a (limen-make-request
-                       :interface 'mcp :project-root root :owner owner-a))
+                       :interface 'cli :project-root root :owner owner-a))
            (context-b (limen-make-request
-                       :interface 'mcp :project-root root :owner owner-b))
+                       :interface 'cli :project-root root :owner owner-b))
            buffer opened-as-b observations)
       (unwind-protect
           (progn
@@ -1951,301 +1926,6 @@
             (kill-buffer candidate)))
         (delete-directory root t)))))
 
-(ert-deftest limen-buffer-release-prefers-recorded-alias-after-retarget ()
-  (limen-tests--with-registry
-    (let (observations)
-      (dolist (scenario '(current-b outside denied))
-        (let* ((root (file-truename
-                      (make-temp-file "limen-release-alias-root" t)))
-               (outside-root
-                (file-truename
-                 (make-temp-file "limen-release-alias-outside" t)))
-               (directory-a (expand-file-name "a" root))
-               (directory-b (expand-file-name "b" root))
-               (denied-directory (expand-file-name "denied" root))
-               (outside-directory (expand-file-name "outside" outside-root))
-               (alias (expand-file-name "alias" root))
-               (file-a (expand-file-name "shared.el" directory-a))
-               (file-b (expand-file-name "shared.el" directory-b))
-               (owner (make-symbol "limen-alias-owner"))
-               (context (limen-make-request
-                         :interface 'mcp :project-root root :owner owner))
-               (limen-project-path-deny-regexps
-                (and (eq scenario 'denied) '("\\`denied/")))
-               buffer-a buffer-b)
-          (unwind-protect
-              (progn
-                (dolist (directory
-                         (list directory-a directory-b denied-directory
-                               outside-directory))
-                  (make-directory directory))
-                (with-temp-file file-a (insert "a\n"))
-                (with-temp-file file-b (insert "b\n"))
-                (with-temp-file
-                    (expand-file-name "shared.el" denied-directory)
-                  (insert "denied\n"))
-                (with-temp-file
-                    (expand-file-name "shared.el" outside-directory)
-                  (insert "outside\n"))
-                (make-symbolic-link directory-a alias)
-                (save-window-excursion
-                  (let ((parking
-                         (generate-new-buffer " limen alias parking")))
-                    (unwind-protect
-                        (progn
-                          (delete-other-windows)
-                          (setq buffer-a
-                                (get-buffer
-                                 (alist-get
-                                  'buffer
-                                  (limen-call
-                                   "buffer.open"
-                                   '((path . "alias/shared.el")) context))))
-                          (delete-file alias)
-                          (make-symbolic-link
-                           (pcase scenario
-                             ('current-b directory-b)
-                             ('outside outside-directory)
-                             ('denied denied-directory))
-                           alias)
-                          (setq buffer-b
-                                (get-buffer
-                                 (alist-get
-                                  'buffer
-                                  (limen-call
-                                   "buffer.open"
-                                   '((path . "b/shared.el")) context))))
-                          (set-window-buffer (selected-window) parking)
-                          (cl-labels
-                              ((owner-state ()
-                                 (let ((files
-                                        (limen--owner-buffers owner))
-                                       tracks-a tracks-b)
-                                   (when files
-                                     (maphash
-                                      (lambda (_identity record)
-                                        (let ((tracked
-                                               (limen--owned-buffer-buffer
-                                                record)))
-                                          (when (eq tracked buffer-a)
-                                            (setq tracks-a t))
-                                          (when (eq tracked buffer-b)
-                                            (setq tracks-b t))))
-                                      files))
-                                   (list (if files
-                                             (hash-table-count files)
-                                           0)
-                                         tracks-a tracks-b))))
-                            (let* ((alias-release
-                                    (condition-case nil
-                                        (progn
-                                          (limen-call
-                                           "buffer.release"
-                                           '((path . "alias/shared.el"))
-                                           context)
-                                          'released)
-                                      (limen-operation-failed 'rejected)))
-                                   (a-live (buffer-live-p buffer-a))
-                                   (b-live (buffer-live-p buffer-b))
-                                   (state (owner-state))
-                                   (b-release
-                                    (condition-case nil
-                                        (progn
-                                          (limen-call
-                                           "buffer.release"
-                                           '((path . "b/shared.el"))
-                                           context)
-                                          'released)
-                                      (limen-operation-failed 'rejected))))
-                              (push
-                               (list scenario alias-release a-live b-live state
-                                     b-release
-                                     (null (limen--owner-buffers owner))
-                                     (buffer-live-p buffer-a)
-                                     (buffer-live-p buffer-b))
-                               observations))))
-                      (when (buffer-live-p parking)
-                        (kill-buffer parking))))))
-            (limen-release-owner owner)
-            (dolist (buffer (list buffer-a buffer-b))
-              (when (buffer-live-p buffer)
-                (with-current-buffer buffer (set-buffer-modified-p nil))
-                (kill-buffer buffer)))
-            (delete-directory root t)
-            (delete-directory outside-root t))))
-      (should
-       (equal
-        (nreverse observations)
-        '((current-b released nil t (1 nil t) released t nil nil)
-          (outside released nil t (1 nil t) released t nil nil)
-          (denied released nil t (1 nil t) released t nil nil)))))))
-
-(ert-deftest limen-buffer-release-prefers-exact-recorded-alias-over-current-identity ()
-  (limen-tests--with-registry
-    (let* ((root (file-truename
-                  (make-temp-file "limen-release-exact-alias" t)))
-           (directory-a (expand-file-name "a" root))
-           (directory-b (expand-file-name "b" root))
-           (alias-directory (expand-file-name "alias" root))
-           (file-a (expand-file-name "x.el" directory-a))
-           (file-b (expand-file-name "x.el" directory-b))
-           (alias-file (expand-file-name "x.el" alias-directory))
-           (owner (make-symbol "limen-release-exact-alias-owner"))
-           (context (limen-make-request
-                     :interface 'mcp :project-root root :owner owner))
-           buffer-a buffer-b parking identity-a identity-b record-a record-b)
-      (unwind-protect
-          (progn
-            (make-directory directory-a)
-            (make-directory directory-b)
-            (with-temp-file file-a (insert "a\n"))
-            (with-temp-file file-b (insert "b\n"))
-            (make-symbolic-link directory-a alias-directory)
-            (save-window-excursion
-              (setq parking
-                    (generate-new-buffer " limen release exact alias parking"))
-              (delete-other-windows)
-              (setq buffer-b
-                    (get-buffer
-                     (alist-get
-                      'buffer
-                      (limen-call "buffer.open" '((path . "b/x.el"))
-                                  context))))
-              (setq buffer-a
-                    (get-buffer
-                     (alist-get
-                      'buffer
-                      (limen-call "buffer.open" '((path . "alias/x.el"))
-                                  context))))
-              (set-window-buffer (selected-window) parking)
-              (let ((files (limen--owner-buffers owner)))
-                (setq identity-a (file-truename file-a)
-                      identity-b (file-truename file-b)
-                      record-a (gethash identity-a files)
-                      record-b (gethash identity-b files))
-                (should (= (hash-table-count files) 2))
-                (should-not (eq buffer-a buffer-b))
-                (should (and record-a record-b (not (eq record-a record-b))))
-                (should (eq (limen--owned-buffer-buffer record-a) buffer-a))
-                (should (eq (limen--owned-buffer-buffer record-b) buffer-b))
-                (should (limen--owned-buffer-owned-p record-a))
-                (should (limen--owned-buffer-owned-p record-b))
-                (should (equal (limen--owned-buffer-paths record-a)
-                               (list alias-file)))
-                (should (equal (limen--owned-buffer-paths record-b)
-                               (list file-b)))
-                (dolist (buffer (list buffer-a buffer-b))
-                  (should (buffer-live-p buffer))
-                  (should-not (buffer-modified-p buffer))
-                  (should-not (get-buffer-window-list buffer nil 0)))
-                (delete-file alias-directory)
-                (make-symbolic-link directory-b alias-directory)
-                (should (file-equal-p alias-file file-b))
-                (should (equal (limen-call "buffer.release"
-                                           '((path . "alias/x.el")) context)
-                               "Released buffer"))
-                (let ((remaining (limen--owner-buffers owner)))
-                  (should (eq remaining files))
-                  (should (= (hash-table-count remaining) 1))
-                  (should
-                   (equal
-                    (list (buffer-live-p buffer-a)
-                          (buffer-live-p buffer-b)
-                          (eq (gethash identity-a remaining) record-a)
-                          (eq (gethash identity-b remaining) record-b))
-                    '(nil t nil t))))
-                (should (equal (limen-call "buffer.release"
-                                           '((path . "b/x.el")) context)
-                               "Released buffer"))
-                (should-not (limen--owner-buffers owner))
-                (should-not (buffer-live-p buffer-b)))))
-        (limen-release-owner owner)
-        (dolist (candidate
-                 (delete-dups
-                  (list buffer-a buffer-b parking
-                        (get-file-buffer file-a)
-                        (get-file-buffer file-b))))
-          (when (buffer-live-p candidate)
-            (with-current-buffer candidate
-              (set-buffer-modified-p nil)
-              (setq-local kill-buffer-query-functions nil))
-            (kill-buffer candidate)))
-        (delete-directory root t)))))
-
-(ert-deftest limen-buffer-release-finds-case-variant-alias-after-retarget ()
-  (limen-tests--with-registry
-    (let* ((sandbox (file-truename
-                     (make-temp-file "limen-case-alias-retarget" t)))
-           (root (expand-file-name "CaseRoot" sandbox))
-           (variant-root (expand-file-name "caseroot" sandbox))
-           (inside-directory (expand-file-name "inside" root))
-           (outside-directory (expand-file-name "outside" sandbox))
-           (alias (expand-file-name "alias" root))
-           (inside-file (expand-file-name "shared.el" inside-directory))
-           (outside-file (expand-file-name "shared.el" outside-directory))
-           (variant-alias-file
-            (expand-file-name "alias/shared.el" variant-root))
-           (owner (make-symbol "limen-case-alias-retarget-owner"))
-           (context (limen-make-request
-                     :interface 'mcp :project-root root :owner owner))
-           buffer parking)
-      (unwind-protect
-          (progn
-            (make-directory inside-directory t)
-            (make-directory outside-directory)
-            (unless (and (not (equal root variant-root))
-                         (condition-case nil
-                             (file-equal-p root variant-root)
-                           (file-error nil)))
-              (ert-skip "Filesystem does not equate case-variant roots"))
-            (with-temp-file inside-file (insert "inside\n"))
-            (with-temp-file outside-file (insert "outside\n"))
-            (make-symbolic-link inside-directory alias)
-            (save-window-excursion
-              (setq parking
-                    (generate-new-buffer " limen case alias retarget parking"))
-              (delete-other-windows)
-              (setq buffer
-                    (get-buffer
-                     (alist-get
-                      'buffer
-                      (limen-call "buffer.open"
-                                  `((path . ,variant-alias-file)) context))))
-              (set-window-buffer (selected-window) parking)
-              (let* ((files (limen--owner-buffers owner))
-                     (entry (limen--recorded-buffer-entry
-                             files variant-alias-file))
-                     (record (cdr entry)))
-                (should (and record
-                             (eq (limen--owned-buffer-buffer record) buffer)
-                             (limen--owned-buffer-owned-p record))))
-              (should-not (buffer-modified-p buffer))
-              (should-not (get-buffer-window-list buffer nil 0))
-              (delete-file alias)
-              (make-symbolic-link outside-directory alias)
-              (let ((outcome
-                     (condition-case nil
-                         (progn
-                           (limen-call "buffer.release"
-                                       `((path . ,variant-alias-file)) context)
-                           'released)
-                       (limen-operation-failed 'rejected))))
-                (should
-                 (equal (list outcome
-                              (null (limen--owner-buffers owner))
-                              (not (buffer-live-p buffer)))
-                        '(released t t))))))
-        (limen-release-owner owner)
-        (dolist (candidate (list buffer parking
-                                 (get-file-buffer inside-file)
-                                 (get-file-buffer outside-file)))
-          (when (buffer-live-p candidate)
-            (with-current-buffer candidate
-              (set-buffer-modified-p nil)
-              (setq-local kill-buffer-query-functions nil))
-            (kill-buffer candidate)))
-        (delete-directory sandbox t)))))
-
 (ert-deftest limen-buffer-open-does-not-transfer-stale-ownership ()
   (limen-tests--with-registry
     (let* ((root (file-truename
@@ -2256,9 +1936,9 @@
            (owner (make-symbol "limen-stale-owner"))
            (positive-context
             (limen-make-request
-             :interface 'mcp :project-root root :owner positive-owner))
+             :interface 'cli :project-root root :owner positive-owner))
            (context (limen-make-request
-                     :interface 'mcp :project-root root :owner owner))
+                     :interface 'cli :project-root root :owner owner))
            created reopened owned external replacement
            positive-observations replacement-observations)
       (unwind-protect
@@ -2287,14 +1967,10 @@
                                positive-context))))
                       (set-window-buffer (selected-window) parking)
                       (let ((release
-                             (condition-case nil
-                                 (progn
-                                   (limen-call
-                                    "buffer.release"
-                                    '((path . "positive.el"))
-                                    positive-context)
-                                   'released)
-                               (limen-operation-failed 'rejected))))
+                             (if (limen-release-buffer
+                                  positive-owner positive-file)
+                                 'released
+                               'rejected)))
                         (setq positive-observations
                               (list (eq reopened created)
                                     release
@@ -2333,13 +2009,9 @@
                                (eq replacement external)
                                (list (if files (hash-table-count files) 0)
                                      tracks-replacement)
-                               (condition-case nil
-                                   (progn
-                                     (limen-call
-                                      "buffer.release"
-                                      '((path . "shared.el")) context)
-                                     'released)
-                                 (limen-operation-failed 'rejected))
+                               (if (limen-release-buffer owner file)
+                                   'released
+                                 'rejected)
                                (null (limen--owner-buffers owner))
                                (buffer-live-p external))))
                       (when (buffer-live-p external)
@@ -2565,7 +2237,7 @@
     (root primary alternate)
   (let* ((owner (make-symbol "limen-equivalent-file-owner"))
          (context (limen-make-request
-                   :interface 'mcp :project-root root :owner owner))
+                   :interface 'cli :project-root root :owner owner))
          primary-buffer alternate-buffer)
     (unwind-protect
         (save-window-excursion
@@ -2624,16 +2296,9 @@
                                       primary-buffer)
                                   (limen--owned-buffer-owned-p record)))
                             (release
-                             (condition-case condition
-                                 (progn
-                                   (limen-call
-                                    "buffer.release"
-                                    `((path . ,(file-relative-name
-                                                alternate root)))
-                                    context)
-                                   'succeeded)
-                               (limen-operation-failed
-                                (cons 'rejected (cdr condition))))))
+                             (if (limen-release-buffer owner alternate)
+                                 'succeeded
+                               'rejected)))
                         `((open . ,open)
                           (same_buffer . ,(and same-buffer t))
                           (ownership_count . ,ownership-count)
@@ -2715,7 +2380,7 @@
            (file (expand-file-name "visited.el" root))
            (owner (make-symbol "limen-save-atomic-replacement-owner"))
            (context (limen-make-request
-                     :interface 'mcp :project-root root :owner owner))
+                     :interface 'cli :project-root root :owner owner))
            (initial "original\n")
            (baseline "baseline\n")
            (external "external\n")
@@ -2906,7 +2571,7 @@
            (file (expand-file-name "visited.el" root))
            (owner (make-symbol "limen-save-after-save-replacement-owner"))
            (context (limen-make-request
-                     :interface 'mcp :project-root root :owner owner))
+                     :interface 'cli :project-root root :owner owner))
            (initial "original\n")
            (modified "modified\n")
            (external "external\n")
@@ -3155,7 +2820,7 @@
                                  (format "limen-save-hard-link-%s-owner"
                                          label)))
                          (context (limen-make-request
-                                   :interface 'mcp :project-root root
+                                   :interface 'cli :project-root root
                                    :owner owner))
                          (before (format "before %s\n" label))
                          (after (format "after %s\n" label))
@@ -3310,7 +2975,7 @@
                      (owner (make-symbol
                              (format "limen-open-veto-%s-owner" scenario)))
                      (context (limen-make-request
-                               :interface 'mcp :project-root root
+                               :interface 'cli :project-root root
                                :owner owner))
                      user-buffer opened requested outcome)
                 (push owner owners)
@@ -3401,7 +3066,7 @@
                      (owner (make-symbol
                              (format "limen-open-retarget-%s-owner" scenario)))
                      (context (limen-make-request
-                               :interface 'mcp :project-root root
+                               :interface 'cli :project-root root
                                :owner owner))
                      user-buffer opened requested outcome)
                 (push owner owners)
@@ -3472,7 +3137,7 @@
            (file (expand-file-name "owned.el" root))
            (owner (make-symbol "limen-release-veto-owner"))
            (context (limen-make-request
-                     :interface 'mcp :project-root root :owner owner))
+                     :interface 'cli :project-root root :owner owner))
            buffer parking observations)
       (unwind-protect
           (progn

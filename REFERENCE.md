@@ -9,7 +9,6 @@ supports, read [docs/integrations.md](docs/integrations.md).
 - [Modes](#modes)
 - [Emacs commands, options and faces](#emacs-commands-options-and-faces), by module
 - [Operations and MCP tools](#operations-and-mcp-tools)
-- [Events and MCP resources](#events-and-mcp-resources)
 - [The limen command](#the-limen-command)
 - [Environment](#environment)
 - [Files](#files)
@@ -21,16 +20,16 @@ Every mode is global. Limen binds no global key.
 
 | Mode | Module | Does |
 | --- | --- | --- |
-| `limen-trail-mode` | `limen-trail` | track visited buffers and settled points |
-| `limen-herdr-mode` | `limen-herdr` | wire Herdr agents into Limen; turns on the message-field extension |
-| `limen-herdr-claude-auto-adopt-mode` | `limen-herdr-claude` | adopt Claude Code agents Herdr detects; turns on `limen-herdr-mode` |
-| `limen-hooks-mode` | `limen-hooks` | carry Emacs context on every prompt; subscribes `context`, and `review` under `limen-hooks-review-edits` |
-| `limen-inbox-mode` | `limen-inbox` | list pending questions in `herdr-status`; subscribes `inbox` |
-| `limen-herd-mode` | `limen-herd` | send herd notices; subscribes `herd`, binds `n` in `herdr-status` |
-| `limen-model-mode` | `limen-model` | report each agent's model to Herdr; subscribes `model` |
-| `limen-usage-mode` | `limen-usage` | report each agent's context use to Herdr; subscribes `context window` |
-| `limen-memex-live-mode` | `limen-memex` | redraw memex transcripts as agents work; subscribes `memex` |
-| `limen-complete-mode` | `limen-complete` | `@`, `#` and `/` completion in cera fields |
+| `limen-trail-mode` | - | track visited buffers and settled points |
+| `limen-herdr-mode` | - | wire Herdr agents into Limen; turns on the message-field extension |
+| `limen-herdr-claude-auto-adopt-mode` | - | adopt Claude Code agents Herdr detects; turns on `limen-herdr-mode` |
+| `limen-hooks-mode` | - | carry Emacs context on every prompt; subscribes `context`, and `review` under `limen-hooks-review-edits` |
+| `limen-inbox-mode` | - | list pending questions in `herdr-status`; subscribes `inbox` |
+| `limen-herd-mode` | - | send herd notices; subscribes `herd`, binds `n` in `herdr-status` |
+| `limen-model-mode` | - | report each agent's model to Herdr; subscribes `model` |
+| `limen-usage-mode` | - | report each agent's context use to Herdr; subscribes `context window` |
+| `limen-memex-live-mode` | - | redraw memex transcripts as agents work; subscribes `memex` |
+| `limen-complete-mode` | - | `@`, `#` and `/` completion in cera fields |
 
 A mode that subscribes to hook events asks, once per harness whose settings lack them, whether
 to install them; see [docs/hook-payload.md](docs/hook-payload.md#subscribing).
@@ -60,10 +59,9 @@ Options are listed as name, type, default. `M-x customize-group RET limen` reach
 | `limen-session-open-hook` | the session, after it is registered |
 | `limen-session-close-hook` | the session, before its resources are released |
 
-Lisp interface: `limen-register-operation`, `limen-unregister-operation`, `limen-register-event`,
-`limen-unregister-event`, `limen-operations`, `limen-events`, `limen-call`, `limen-open-session`,
-`limen-close-session`, `limen-find-session`, `limen-find-session-at`, `limen-session-subscribe`,
-`limen-session-unsubscribe`, `limen-session-publish`, `limen-make-request`,
+Lisp interface: `limen-register-operation`, `limen-unregister-operation`, `limen-operations`,
+`limen-call`, `limen-open-session`, `limen-close-session`, `limen-find-session`,
+`limen-find-session-at`, `limen-make-request`,
 `limen-request-resolve`, `limen-request-reject`, `limen-request-cancel`, `limen-project-path`,
 `limen-project-file-p`, `limen-skill`. Their docstrings describe the arguments.
 
@@ -118,6 +116,7 @@ scholia; when that fails, the operations stay disabled until `limen-scholia` is 
 
 | Option | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `limen-herdr-mcp` | boolean | `nil` | give a launched Codex, Pi or Oh My Pi agent an MCP route; it serves only the diff operations, which also need `limen-editor-enable-diffs` |
 | `limen-herdr-context-item-limit` | integer ≥ 1 | `100` | files one Dired send carries at most |
 | `limen-herdr-context-point-marker` | string | `"▏"` | text drawn where point is in a sent excerpt; empty draws nothing |
 | `limen-herdr-context-lines-before` | natural number | `4` | excerpt lines above the sent text |
@@ -389,26 +388,26 @@ No commands or options. It registers the four harnesses `claude`, `codex`, `pi` 
 ## Operations and MCP tools
 
 An MCP tool is its operation's name with `.` replaced by `_`. The CLI column names the `limen`
-subcommand; a dash means the operation is not offered there.
+subcommand. A dash in either column means the operation is not offered there: only the diff
+operations are offered over MCP, on the route `limen-herdr-mcp` gives a launched agent.
 
 | Operation | MCP tool | CLI | Effect | Enabled when | Parameters |
 | --- | --- | --- | --- | --- | --- |
-| `context.get` | `context_get` | `context` | read | always | `sections`: array of strings |
-| `focus.get` | `focus_get` | `focus` | read | always | none |
-| `window.list` | `window_list` | `windows` | read | always | none |
-| `buffer.list` | `buffer_list` | `buffer list` | read | always | `virtual`: boolean, `all`: boolean |
-| `buffer.read` | `buffer_read` | `buffer read` | read | always | `path` or `name`: string; `line`, `end_line`, `expected_tick`: integer; `widen`: boolean |
-| `buffer.save` | `buffer_save` | `buffer save` | write | always | `path`: string, required; `expected_tick`: integer, required |
-| `buffer.open` | `buffer_open` | `buffer open` | write | always | `path`: string, required; `line`, `column`, `end_line`: integer; `start_text`, `end_text`: string |
-| `buffer.release` | `buffer_release` | - | write | always | `path`: string, required |
-| `diagnostic.list` | `diagnostic_list` | `diagnostics` | read | always | `uri`: string |
+| `context.get` | - | `context` | read | always | `sections`: array of strings |
+| `focus.get` | - | `focus` | read | always | none |
+| `window.list` | - | `windows` | read | always | none |
+| `buffer.list` | - | `buffer list` | read | always | `virtual`: boolean, `all`: boolean |
+| `buffer.read` | - | `buffer read` | read | always | `path` or `name`: string; `line`, `end_line`, `expected_tick`: integer; `widen`: boolean |
+| `buffer.save` | - | `buffer save` | write | always | `path`: string, required; `expected_tick`: integer, required |
+| `buffer.open` | - | `buffer open` | write | always | `path`: string, required; `line`, `column`, `end_line`: integer; `start_text`, `end_text`: string |
+| `diagnostic.list` | - | `diagnostics` | read | always | `uri`: string |
 | `project.list` | - | `projects` | read | always | none |
-| `trail.list` | `trail_list` | `trail` | read | `limen-trail-mode` | `limit`: integer |
-| `compile.list` | `compile_list` | `compile list` | read | always | none |
-| `compile.read` | `compile_read` | `compile read` | read | always | `name`: string, required |
-| `annotation.sessions` | `annotation_sessions` | `annotations sessions` | read | scholia loaded | none |
-| `annotation.list` | `annotation_list` | `annotations list` | read | scholia loaded | `session`, `path`: string; `limit`: integer |
-| `annotation.export` | `annotation_export` | `annotations export` | read | scholia loaded | `session`: string, required; `path`: string; `format`: `rustc`, `diff` or `integrate` |
+| `trail.list` | - | `trail` | read | `limen-trail-mode` | `limit`: integer |
+| `compile.list` | - | `compile list` | read | always | none |
+| `compile.read` | - | `compile read` | read | always | `name`: string, required |
+| `annotation.sessions` | - | `annotations sessions` | read | scholia loaded | none |
+| `annotation.list` | - | `annotations list` | read | scholia loaded | `session`, `path`: string; `limit`: integer |
+| `annotation.export` | - | `annotations export` | read | scholia loaded | `session`: string, required; `path`: string; `format`: `rustc`, `diff` or `integrate` |
 | `diff.open` | `diff_open` | - | write, deferred | `limen-editor-enable-diffs` | `old_path`, `new_path`, `contents`, `name`: string, required; `expected_tick`: integer |
 | `diff.close` | `diff_close` | - | write | `limen-editor-enable-diffs` | `name`: string, required |
 | `diff.close-all` | `diff_close-all` | - | write | `limen-editor-enable-diffs` | none |
@@ -416,20 +415,9 @@ subcommand; a dash means the operation is not offered there.
 
 The operations of `limen-trail`, `limen-compile`, `limen-scholia` and `limen-editor` exist once
 their module is loaded; the CLI loads the first three itself. Line numbers are one-based, columns
-zero-based. Read operations carry the MCP hint
-`readOnlyHint: true`. `buffer.release` releases a buffer the requesting session opened with
-`buffer.open`. `diff.open` answers when the Ediff session ends; `diff.close` and `diff.close-all`
-close the requesting session's diffs.
-
-## Events and MCP resources
-
-| Event | MCP resource | Carries |
-| --- | --- | --- |
-| `context.selection` | `emacs://context/selection` | the latest selection in a project file: `path`, `line`, `column`, `end_line`, `end_column`, `text`; replayed to new subscribers |
-| `context.push` | `emacs://context/push` | an explicit send: the same fields, plus `items`, a list of `{type: "file", path, line, column, end_line, end_column, text}` for several files |
-
-A subscribed MCP client receives `notifications/resources/updated` when either changes, and
-`notifications/tools/list_changed` when the operation registry does.
+zero-based. `diff.open` answers when the Ediff session ends; `diff.close` and `diff.close-all`
+close the requesting session's diffs. An MCP client receives `notifications/tools/list_changed`
+when the operation registry changes.
 
 ## The limen command
 
@@ -570,7 +558,7 @@ is non-nil.
 | `LIMEN_SESSION` | `limen hook` | the Limen session of a launched pane; set by `limen-herdr-mode` |
 | `LIMEN_PROVIDER` | the hooks extension | the harness name; set by `limen-herdr-mode` |
 | `LIMEN_COMMAND` | the hooks extension | the command the hooks extension runs; default `limen` |
-| `LIMEN_MCP_URL`, `LIMEN_MCP_TOKEN`, `LIMEN_MCP_SESSION` | Pi, Oh My Pi, Codex | the pane's MCP route; set by `limen-herdr-mode` for harnesses with an MCP route |
+| `LIMEN_MCP_URL`, `LIMEN_MCP_TOKEN`, `LIMEN_MCP_SESSION` | Pi, Oh My Pi, Codex | the pane's MCP route; set by `limen-herdr-mode` under `limen-herdr-mcp` |
 | `HERDR_ENV` | `limen hook` | `1` in a Herdr pane |
 | `HERDR_SOCKET_PATH`, `HERDR_PANE_ID` | `limen hook` | the Herdr server and pane the hook ran in |
 | `CLAUDE_CONFIG_DIR` | Emacs | Claude Code's configuration directory; default `~/.claude` |

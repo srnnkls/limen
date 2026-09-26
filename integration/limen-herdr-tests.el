@@ -65,7 +65,7 @@
                      (limen-close-session (limen-mcp-route-session route)))))
           (let ((claude (limen-herdr-tests--session "claude" root)))
             (let ((environment (limen-herdr--adapter claude :prepare)))
-              (should (equal (mapcar #'car environment) '(LIMEN_SESSION)))
+              (should (equal (mapcar #'car environment) '(LIMEN_PROVIDER LIMEN_SESSION)))
               (should (equal (limen-session-location
                               (limen-herdr-state-session (limen-herdr-state claude)))
                              (cons (limen-server-key "/tmp/herdr.sock") "pane-claude")))
@@ -84,8 +84,15 @@
             (should-not (herdr-agent-session-adapter-state claude)))
           (let ((codex (limen-herdr-tests--session "codex" root)))
             (should (equal (mapcar #'car (limen-herdr--adapter codex :prepare))
-                           '(LIMEN_MCP_URL LIMEN_MCP_TOKEN LIMEN_MCP_SESSION
-                             LIMEN_SESSION)))
+                           '(LIMEN_PROVIDER LIMEN_SESSION)))
+            (should (equal (limen-herdr--adapter codex :arguments '("resume"))
+                           '("resume")))
+            (should (limen-herdr--adapter codex :detach)))
+          (let ((codex (limen-herdr-tests--session "codex" root))
+                (limen-herdr-mcp t))
+            (should (equal (mapcar #'car (limen-herdr--adapter codex :prepare))
+                           '(LIMEN_PROVIDER LIMEN_MCP_URL LIMEN_MCP_TOKEN
+                             LIMEN_MCP_SESSION LIMEN_SESSION)))
             (let ((arguments (limen-herdr--adapter codex :arguments '("resume"))))
               (should (equal (car arguments) "-c"))
               (should (string-match-p "mcp_servers\\.limen\\.url"

@@ -34,10 +34,6 @@ async function waitFor(predicate) {
   assert.fail("condition was not reached");
 }
 
-function occurrences(text, needle) {
-  return text.split(needle).length - 1;
-}
-
 function fakePi() {
   const handlers = new Map();
   const tools = new Map();
@@ -80,14 +76,12 @@ function fakePi() {
   };
 }
 
-test("Pi extension mirrors tools, injects latest context, and shuts down", async () => {
+test("Pi extension mirrors the diff tools and shuts down", async () => {
   let streamController;
-  let selection = null;
-  let pushed = null;
   let descriptors = [
     {
-      name: "buffer_list",
-      description: "List project buffers.",
+      name: "diff_close-all",
+      description: "Close all diffs.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
     },
     {
@@ -129,7 +123,7 @@ test("Pi extension mirrors tools, injects latest context, and shuts down", async
         assert.deepEqual(request.params.capabilities, {});
         return jsonResponse(request.id, {
           protocolVersion: "2026-07-28",
-          capabilities: { tools: { listChanged: true }, resources: { subscribe: true } },
+          capabilities: { tools: { listChanged: true } },
           serverInfo: { name: "limen", version: "0.1.0" },
         });
       case "notifications/initialized":
@@ -146,15 +140,6 @@ test("Pi extension mirrors tools, injects latest context, and shuts down", async
         return request.params.name === "diff_open"
           ? sseResponse({ jsonrpc: "2.0", id: request.id, result }, request.id)
           : jsonResponse(request.id, result);
-      }
-      case "resources/subscribe":
-      case "resources/unsubscribe":
-        return jsonResponse(request.id, {});
-      case "resources/read": {
-        const value = request.params.uri.endsWith("selection") ? selection : pushed;
-        return jsonResponse(request.id, {
-          contents: [{ uri: request.params.uri, mimeType: "application/json", text: JSON.stringify(value) }],
-        });
       }
       default:
         throw new Error(`unexpected MCP method: ${request.method}`);
@@ -177,95 +162,28 @@ test("Pi extension mirrors tools, injects latest context, and shuts down", async
   assert.deepEqual([...pi.tools.keys()], []);
   pi.finishLoading();
   await pi.handlers.get("session_start")({ type: "session_start" }, {});
-  assert.deepEqual([...pi.tools.keys()].sort(), ["limen_buffer_list", "limen_diff_open"]);
-  assert.deepEqual(pi.activeTools().sort(), ["limen_buffer_list", "limen_diff_open", "read"]);
+  assert.deepEqual([...pi.tools.keys()].sort(), ["limen_diff_close-all", "limen_diff_open"]);
+  assert.deepEqual(pi.activeTools().sort(), ["limen_diff_close-all", "limen_diff_open", "read"]);
 
   const diff = await pi.tools.get("limen_diff_open").execute("tool-1", { name: "change" });
   assert.equal(diff.content[0].text, "diff_open complete");
   assert.deepEqual(diff.details, { called: "diff_open" });
 
-  selection = {
-    path: "/project/a.el",
-    line: 4,
-    column: 2,
-    end_line: 4,
-    end_column: 5,
-    text: "value",
-    sequence: 7,
-  };
-  const selectionFrame = `event: message\ndata: ${JSON.stringify({
-    jsonrpc: "2.0",
-    method: "notifications/resources/updated",
-    params: { uri: "emacs://context/selection" },
-  })}\n\n`;
-  streamController.enqueue(encoder.encode(selectionFrame.slice(0, 19)));
-  streamController.enqueue(encoder.encode(selectionFrame.slice(19)));
-  await waitFor(() => calls.filter(({ body }) =>
-    body?.includes('"resources/read"') && body.includes("context/selection")
-  ).length >= 2);
-
-  const beforeStart = pi.handlers.get("before_agent_start");
-  const firstContext = await beforeStart({ type: "before_agent_start" }, {});
-  assert.match(firstContext.message.content, /a\.el:4:2\n\nvalue/);
-  assert.equal(await beforeStart({ type: "before_agent_start" }, {}), undefined);
-
-  pushed = {
-    ...selection,
-    path: "/project/first.el",
-    text: "explicit",
-    sequence: 8,
-    items: [
-      {
-        type: "file",
-        path: "/project/first.el",
-        line: 4,
-        column: 2,
-        end_line: 4,
-        end_column: 5,
-        text: "explicit",
-      },
-      {
-        type: "file",
-        path: "/project/second.el",
-        line: 9,
-        column: 1,
-        end_line: 10,
-        end_column: 3,
-        text: "second excerpt",
-      },
-    ],
-  };
-  streamController.enqueue(
-    encoder.encode(`event: message\ndata: ${JSON.stringify({
-      jsonrpc: "2.0",
-      method: "notifications/resources/updated",
-      params: { uri: "emacs://context/push" },
-    })}\n\n`),
-  );
-  await waitFor(() => pi.messages.length === 1);
-  assert.equal(pi.messages[0].options.deliverAs, "steer");
-  const pushText = pi.messages[0].message.content;
-  assert.equal(occurrences(pushText, "/project/first.el"), 1);
-  assert.equal(occurrences(pushText, "/project/second.el"), 1);
-  assert.equal(occurrences(pushText, "explicit"), 1);
-  assert.equal(occurrences(pushText, "second excerpt"), 1);
-  assert(pushText.includes("/project/first.el:4:2"));
-  assert(pushText.includes("/project/second.el:9:1"));
-  assert(pushText.indexOf("/project/first.el") < pushText.indexOf("/project/second.el"));
-
   descriptors = [...descriptors, {
-    name: "window_list",
-    description: "List windows.",
+    name: "diff_close",
+    description: "Close a diff.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   }];
-  streamController.enqueue(
-    encoder.encode(`event: message\ndata: ${JSON.stringify({
-      jsonrpc: "2.0",
-      method: "notifications/tools/list_changed",
-    })}\n\n`),
-  );
-  await waitFor(() => pi.tools.has("limen_window_list"));
-  assert(pi.activeTools().includes("limen_window_list"));
+  const changedFrame = `event: message\ndata: ${JSON.stringify({
+    jsonrpc: "2.0",
+    method: "notifications/tools/list_changed",
+  })}\n\n`;
+  streamController.enqueue(encoder.encode(changedFrame.slice(0, 19)));
+  streamController.enqueue(encoder.encode(changedFrame.slice(19)));
+  await waitFor(() => pi.tools.has("limen_diff_close"));
+  assert(pi.activeTools().includes("limen_diff_close"));
+  assert(!pi.handlers.has("before_agent_start"));
+  assert(!calls.some(({ body }) => body?.includes('"resources/')));
 
   streamController.close();
   await waitFor(() => pi.activeTools().length === 1);
@@ -275,9 +193,7 @@ test("Pi extension mirrors tools, injects latest context, and shuts down", async
   await shutdown({ type: "session_shutdown", reason: "new" }, {});
   assert(!calls.some(({ method }) => method === "DELETE"));
   await pi.handlers.get("session_start")({ type: "session_start" }, {});
-  assert(pi.activeTools().includes("limen_buffer_list"));
-  const restartedContext = await beforeStart({ type: "before_agent_start" }, {});
-  assert.match(restartedContext.message.content, /a\.el:4:2/);
+  assert(pi.activeTools().includes("limen_diff_close-all"));
 
   await shutdown({ type: "session_shutdown", reason: "quit" }, {});
   assert.deepEqual(pi.activeTools(), ["read"]);

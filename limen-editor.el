@@ -1,8 +1,8 @@
-;;; limen-editor.el --- Emacs context and interactive diffs -*- lexical-binding: t; -*-
+;;; limen-editor.el --- Interactive Emacs diffs -*- lexical-binding: t; -*-
 
 ;;; Commentary:
 
-;; Implements Agent selection events and interactive Emacs diffs.
+;; Implements interactive Emacs diffs for agents.
 
 ;;; Code:
 
@@ -22,10 +22,6 @@ afterwards."
 
 (defvar limen-editor--diffs (make-hash-table :test #'eq)
   "Deferred diffs indexed by opaque protocol owner.")
-(defvar limen-editor--selection-timers (make-hash-table :test #'eq)
-  "Selection debounce timers indexed by opaque protocol owner.")
-(defvar limen-editor--selection-contexts (make-hash-table :test #'eq)
-  "Last selection snapshots indexed by opaque protocol owner.")
 
 (cl-defstruct limen-editor--diff
   "A deferred Emacs diff and its resources."
@@ -36,80 +32,6 @@ afterwards."
 (defun limen-editor-context-snapshot (&optional buffer)
   "Return BUFFER's normalized file and selection context."
   (limen-buffer-context-snapshot buffer))
-
-(defun limen-editor-cancel-selection (owner)
-  "Cancel OWNER's pending selection notification."
-  (when-let* ((entry (gethash owner limen-editor--selection-timers)))
-    (cancel-timer (cdr entry)))
-  (remhash owner limen-editor--selection-timers)
-  (remhash owner limen-editor--selection-contexts))
-
-(defun limen-editor-schedule-selection
-    (owner buffer root current-p callback)
-  "Debounce BUFFER selection for OWNER below ROOT.
-CURRENT-P validates ownership before CALLBACK receives a normalized snapshot."
-  (let ((token (make-symbol "selection")))
-    (when-let* ((previous (gethash owner limen-editor--selection-timers)))
-      (cancel-timer (cdr previous)))
-    (puthash
-     owner
-     (cons token
-           (run-at-time
-            0.1 nil
-            (lambda ()
-              (when-let* ((entry (gethash owner limen-editor--selection-timers))
-                          ((eq token (car entry))))
-                (remhash owner limen-editor--selection-timers)
-                (if (and (funcall current-p) (buffer-live-p buffer))
-                    (with-current-buffer buffer
-                      (if (limen-project-buffer-file buffer root)
-                          (let ((snapshot (limen-editor-context-snapshot buffer)))
-                            (unless (equal snapshot
-                                           (gethash owner
-                                                    limen-editor--selection-contexts))
-                              (puthash owner snapshot
-                                       limen-editor--selection-contexts)
-                              (funcall callback snapshot)))
-                        (remhash owner limen-editor--selection-contexts)))
-                  (remhash owner limen-editor--selection-contexts))))))
-     limen-editor--selection-timers)))
-
-(defun limen-editor--session-current-p (session)
-  "Return non-nil when SESSION remains open and registered."
-  (and (gethash session limen--sessions)
-       (not (limen-session-closed-p session))))
-
-(defun limen-editor-selection-context-changed ()
-  "Publish the current file selection to matching Limen sessions."
-  (when-let* ((buffer (current-buffer)))
-    (maphash
-     (lambda (session _present)
-       (when-let* ((root (limen-session-project-root session))
-                   ((limen-project-buffer-file buffer root)))
-         (limen-editor-schedule-selection
-          (limen-session-owner session) buffer root
-          (lambda () (limen-editor--session-current-p session))
-          (lambda (snapshot)
-            (when (limen-editor--session-current-p session)
-              (limen-session-publish
-               session "context.selection" snapshot))))))
-     limen--sessions)))
-
-(defun limen-editor--session-opened (_session)
-  "Install the shared selection hook for the first Limen session."
-  (unless (memq #'limen-editor-selection-context-changed post-command-hook)
-    (add-hook 'post-command-hook #'limen-editor-selection-context-changed)))
-
-(defun limen-editor--other-session-open-p (closing)
-  "Return non-nil when an open session other than CLOSING remains."
-  (let (open)
-    (maphash
-     (lambda (session _present)
-       (when (and (not (eq session closing))
-                  (not (limen-session-closed-p session)))
-         (setq open t)))
-     limen--sessions)
-    open))
 
 (defun limen-editor--owner-diffs (owner)
   "Return deferred diffs owned by OWNER."
@@ -272,8 +194,7 @@ KILLED records an already killed proposed buffer."
   (limen-editor--finish-diff diff nil nil t))
 
 (defun limen-editor-cancel (owner)
-  "Cancel diffs, selections, and buffers owned by opaque OWNER."
-  (limen-editor-cancel-selection owner)
+  "Cancel diffs and buffers owned by opaque OWNER."
   (let ((diffs-released t))
     (dolist (diff (copy-sequence (limen-editor--owner-diffs owner)))
       (when (and (limen-editor--diff-p diff)
@@ -399,12 +320,8 @@ KILLED records an already killed proposed buffer."
   "Release editor resources owned by SESSION."
   (unless (limen-editor-cancel (limen-session-owner session))
     (signal 'limen-operation-failed '("Editor resources remain open")))
-  (unless (limen-editor--other-session-open-p session)
-    (remove-hook 'post-command-hook
-                 #'limen-editor-selection-context-changed))
   t)
 
-(add-hook 'limen-session-open-hook #'limen-editor--session-opened)
 (add-hook 'limen-session-close-hook #'limen-editor--close-session)
 
 (limen-register-operation

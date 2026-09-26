@@ -8,7 +8,6 @@
 (defmacro limen-mcp-tests--with-state (&rest body)
   (declare (indent 0) (debug t))
   `(let ((limen--operations (copy-hash-table limen--operations))
-         (limen--events (copy-hash-table limen--events))
          (limen--sessions (make-hash-table :test #'eq))
          (limen--buffers (make-hash-table :test #'eq))
          (limen-mcp--routes (make-hash-table :test #'equal))
@@ -90,10 +89,9 @@
              (names (mapcar (lambda (tool) (alist-get 'name tool))
                             (append tools nil))))
         (should (member "sample_read" names))
-        (should (member "buffer_open" names))
+        (should-not (member "buffer_open" names))
         (should-not (member "sample_cli" names))
         (should-not (member "elisp_eval" names))
-        (should (member "buffer_release" names))
         (should (eq (alist-get
                      'readOnlyHint
                      (alist-get 'annotations
@@ -694,27 +692,6 @@
                     (should (memq classification '(delivered aborted))))))
             (when client
               (setf (limen-mcp-client-process client) nil))))))))
-
-(ert-deftest limen-mcp-resources-publish-updates-only-to-subscribers ()
-  (limen-mcp-tests--with-state
-    (let* ((session (limen-open-session
-                     :provider 'test :project-root default-directory))
-           (route (limen-mcp-register-session session))
-           (client (make-limen-mcp-client :route route))
-           sent)
-      (setf (limen-mcp-route-subscriptions route)
-            '("emacs://context/selection"))
-      (push client (limen-mcp-route-clients route))
-      (cl-letf (((symbol-function 'limen-mcp--send-client-message)
-                 (lambda (_client message) (push message sent))))
-        (should
-         (limen-session-publish
-          session "context.selection"
-          '((path . "/tmp/example.el") (line . 1) (column . 0))))
-        (should (= (length sent) 1))
-        (should (equal
-                 (alist-get 'uri (alist-get 'params (car sent)))
-                 "emacs://context/selection"))))))
 
 (ert-deftest limen-mcp-header-whitespace-does-not-consume-values ()
   (let* ((wire (encode-coding-string

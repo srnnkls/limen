@@ -177,7 +177,7 @@
  "compile.list" #'limen-compile--list
  :command "compile list"
  :description "List existing project compilation buffers."
- :effect 'read :parameters nil :interfaces '(cli mcp))
+ :effect 'read :parameters nil)
 
 (limen-register-operation
  "compile.read" #'limen-compile--read
@@ -185,8 +185,7 @@
  :description "Read a bounded tail from an existing project compilation buffer."
  :effect 'read
  :parameters '((:name "name" :type string :required t
-                      :description "Compilation buffer name."))
- :interfaces '(cli mcp))
+                      :description "Compilation buffer name.")))
 
 (defun limen-compile--context-section (context)
   "Return the compilations section of `context.get' for CONTEXT."

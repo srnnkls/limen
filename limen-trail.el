@@ -266,7 +266,6 @@ the one applied to it."
  :effect 'read
  :parameters '((:name "limit" :type integer
                       :description "Maximum number of entries to return."))
- :interfaces '(cli mcp)
  :enabled-p (lambda (_context) limen-trail-mode))
 
 (setf (alist-get "trail" limen-context-sections nil nil #'equal)

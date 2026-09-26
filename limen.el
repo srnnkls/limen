@@ -96,7 +96,6 @@ terminal means the buffer the user came from, not the terminal."
 (define-error 'limen-invalid-arguments "Invalid limen arguments" 'limen-error)
 (define-error 'limen-operation-failed "limen operation failed" 'limen-error)
 (define-error 'limen-conflict "Limen state conflict" 'limen-operation-failed)
-(define-error 'limen-unknown-event "Unknown limen event" 'limen-error)
 (define-error 'limen-session-closed "Closed limen session" 'limen-error)
 
 (defconst limen-deferred 'limen-deferred
@@ -109,12 +108,7 @@ terminal means the buffer the user came from, not the terminal."
 
 (cl-defstruct (limen-session
                (:constructor limen--make-session))
-  id provider project-root owner generation capabilities subscribers latest requests sequence
-  closed-p location)
-
-(cl-defstruct (limen--event
-               (:constructor limen--make-event))
-  name description parameters replay)
+  id provider project-root owner generation capabilities requests closed-p location)
 
 (cl-defstruct (limen--operation
                (:constructor limen--make-operation))
@@ -129,9 +123,6 @@ terminal means the buffer the user came from, not the terminal."
 
 (defvar limen-operation-change-hook nil
   "Hook run with an action and name after the operation registry changes.")
-
-(defvar limen--events (make-hash-table :test #'equal)
-  "Registered events keyed by dotted name.")
 
 (defvar limen--sessions (make-hash-table :test #'eq)
   "Open integration sessions keyed by identity.")
@@ -179,22 +170,6 @@ line that runs it, without the program name, for the agent skill."
     (run-hook-with-args 'limen-operation-change-hook 'unregistered name)
     t))
 
-(cl-defun limen-register-event
-    (name &key description parameters replay)
-  "Register event NAME with DESCRIPTION and PARAMETERS.
-REPLAY makes the latest payload replayable to new subscribers."
-  (unless (limen--valid-name-p name)
-    (signal 'wrong-type-argument (list 'limen-event-name name)))
-  (let ((event (limen--make-event
-                :name name :description (or description "")
-                :parameters parameters :replay replay)))
-    (puthash name event limen--events)
-    event))
-
-(defun limen-unregister-event (name)
-  "Unregister the event named NAME."
-  (remhash name limen--events))
-
 (defun limen-server-key (path)
   "Return the canonical identity of the Herdr socket PATH, or nil."
   (when (and (stringp path) (not (string-empty-p path)))
@@ -224,9 +199,7 @@ Herdr server key and the pane id, so a hook from that pane finds it."
             :owner (or owner (make-symbol "limen-owner"))
             :generation 1
             :capabilities capabilities
-            :location location
-            :latest (make-hash-table :test #'equal)
-            :sequence 0)))
+            :location location)))
       (puthash session t limen--sessions)
       (run-hook-with-args 'limen-session-open-hook session)
       session)))
@@ -312,50 +285,6 @@ locate editor work; RESOLVE, REJECT, and CANCEL manage deferred requests."
       (limen-request-reject request error))
     (and active t)))
 
-(defun limen-session-subscribe (session sink)
-  "Subscribe SINK to SESSION and replay its replayable latest events."
-  (when (limen-session-closed-p session)
-    (signal 'limen-session-closed '("Session is closed")))
-  (unless (functionp sink)
-    (signal 'wrong-type-argument (list 'functionp sink)))
-  (cl-pushnew sink (limen-session-subscribers session) :test #'eq)
-  (maphash
-   (lambda (name payload)
-     (when-let* ((event (gethash name limen--events))
-                 ((limen--event-replay event)))
-       (funcall sink session name payload)))
-   (limen-session-latest session))
-  sink)
-
-(defun limen-session-unsubscribe (session sink)
-  "Remove SINK from SESSION."
-  (setf (limen-session-subscribers session)
-        (delq sink (limen-session-subscribers session)))
-  t)
-
-(defun limen-session-publish (session name payload)
-  "Publish event NAME with PAYLOAD to SESSION.
-Return nil when it is identical to the latest published value."
-  (when (limen-session-closed-p session)
-    (signal 'limen-session-closed '("Session is closed")))
-  (let ((event (gethash name limen--events)))
-    (unless event
-      (signal 'limen-unknown-event (list "Unknown event")))
-    (limen--validate-parameters
-     (limen--event-parameters event) payload 'limen-invalid-arguments)
-    (let* ((previous (gethash name (limen-session-latest session)))
-           (previous-value (and previous
-                                (assq-delete-all 'sequence (copy-tree previous)))))
-      (unless (and (limen--event-replay event)
-                   (equal payload previous-value))
-        (cl-incf (limen-session-sequence session))
-        (let ((value (append (copy-tree payload)
-                             `((sequence . ,(limen-session-sequence session))))))
-          (puthash name value (limen-session-latest session))
-          (dolist (sink (copy-sequence (limen-session-subscribers session)))
-            (funcall sink session name value)))
-        t))))
-
 (defun limen-close-session (session)
   "Close SESSION and release only its owned resources."
   (unless (limen-session-closed-p session)
@@ -365,7 +294,6 @@ Return nil when it is identical to the latest published value."
     (setf (limen-session-closed-p session) t
           (limen-session-generation session)
           (1+ (limen-session-generation session))
-          (limen-session-subscribers session) nil
           (limen-session-requests session) nil)
     (remhash session limen--sessions)
     (limen-release-owner (limen-session-owner session))
@@ -495,24 +423,6 @@ PATH identifies a containing object when validation is recursive."
         `((command . ,command)))
     (input_schema . ,(limen--parameters-schema
                       (limen--operation-parameters operation)))))
-
-(defun limen--event-schema (event)
-  "Return EVENT as a JSON-serializable descriptor."
-  `((name . ,(limen--event-name event))
-    (description . ,(limen--event-description event))
-    (replay . ,(if (limen--event-replay event) t :json-false))
-    (payload_schema . ,(limen--parameters-schema
-                        (limen--event-parameters event)))))
-
-(defun limen-events ()
-  "Return canonical registered event descriptors."
-  (let (events)
-    (maphash (lambda (_name event)
-               (push (limen--event-schema event) events))
-             limen--events)
-    (sort events
-          (lambda (left right)
-            (string< (alist-get 'name left) (alist-get 'name right))))))
 
 (defun limen-operations (&optional request)
   "Return descriptors available for optional REQUEST."
@@ -1137,24 +1047,6 @@ START-TEXT and END-TEXT refine the selection bounds."
       (remhash owner limen--buffers)))
   (null (limen--owner-buffers owner)))
 
-(defun limen--buffer-release (arguments context)
-  "Release the buffer in ARGUMENTS using CONTEXT."
-  (let* ((root (limen-request-project-root context))
-         (owner (limen-request-owner context))
-         (requested (alist-get 'path arguments))
-         (lexical (and root
-                       (limen--lexically-confined-project-path
-                        requested root)))
-         (files (limen--owner-buffers owner))
-         (recorded (and lexical files
-                        (limen--recorded-buffer-entry files lexical)))
-         (file (or (and recorded lexical)
-                   (and root (limen-project-path requested root)))))
-    (unless file
-      (signal 'limen-operation-failed '("Path is outside the project")))
-    (limen-release-buffer owner file)
-    "Released buffer"))
-
 (defun limen--buffer-save-destination-p (buffer identity root)
   "Return non-nil when BUFFER will save to authorized IDENTITY below ROOT."
   (and (buffer-live-p buffer)
@@ -1771,8 +1663,7 @@ Each function returns a JSON value, or nil to omit the section.")
  :parameters '((:name "virtual" :type boolean
                       :description "List virtual buffers instead of file buffers.")
                (:name "all" :type boolean
-                      :description "List file and virtual buffers."))
- :interfaces '(cli mcp))
+                      :description "List file and virtual buffers.")))
 
 (limen-register-operation
  "buffer.read" #'limen--buffer-read
@@ -1788,8 +1679,7 @@ Each function returns a JSON value, or nil to omit the section.")
                (:name "widen" :type boolean
                       :description "Temporarily ignore buffer narrowing.")
                (:name "expected_tick" :type integer
-                      :description "Required current character modification tick."))
- :interfaces '(cli mcp))
+                      :description "Required current character modification tick.")))
 
 (limen-register-operation
  "buffer.save" #'limen--buffer-save
@@ -1799,8 +1689,7 @@ Each function returns a JSON value, or nil to omit the section.")
  :parameters '((:name "path" :type string :required t
                       :description "Project-relative or absolute visited file path.")
                (:name "expected_tick" :type integer :required t
-                      :description "Required current character modification tick."))
- :interfaces '(cli mcp))
+                      :description "Required current character modification tick.")))
 
 (limen-register-operation
  "buffer.open" #'limen--buffer-open
@@ -1813,26 +1702,19 @@ Each function returns a JSON value, or nil to omit the section.")
                (:name "column" :type integer :description "Zero-based start column.")
                (:name "end_line" :type integer :description "One-based end line.")
                (:name "start_text" :type string :description "Text locating the start.")
-               (:name "end_text" :type string :description "Text locating the end."))
- :interfaces '(cli mcp))
-
-(limen-register-operation
- "buffer.release" #'limen--buffer-release
- :description "Release an Emacs buffer the requesting session opened."
- :effect 'write :interfaces '(mcp)
- :parameters '((:name "path" :type string :required t)))
+               (:name "end_text" :type string :description "Text locating the end.")))
 
 (limen-register-operation
  "project.list" #'limen--project-list
  :command "projects"
  :description "List known projects."
- :effect 'read :parameters nil :interfaces '(cli))
+ :effect 'read :parameters nil)
 
 (limen-register-operation
  "focus.get" #'limen--focus-get
  :command "focus"
  :description "Read the focus of the selected window, or of the window used before an agent's terminal."
- :effect 'read :parameters nil :interfaces '(cli mcp))
+ :effect 'read :parameters nil)
 
 (limen-register-operation
  "context.get" #'limen--context-get
@@ -1840,22 +1722,20 @@ Each function returns a JSON value, or nil to omit the section.")
  :description "Read the current editor context in one call: project, focus, windows, buffers, and any optional sections."
  :effect 'read
  :parameters '((:name "sections" :type array :items (:type string)
-                      :description "Section names to include; omit for all."))
- :interfaces '(cli mcp))
+                      :description "Section names to include; omit for all.")))
 
 (limen-register-operation
  "window.list" #'limen--window-list
  :command "windows"
  :description "List windows in the selected Emacs frame."
- :effect 'read :parameters nil :interfaces '(cli mcp))
+ :effect 'read :parameters nil)
 
 (limen-register-operation
  "diagnostic.list" #'limen--diagnostic-list
  :command "diagnostics"
  :description "List computed Flymake and loaded Flycheck diagnostics."
  :effect 'read
- :parameters '((:name "uri" :type string :description "Optional file URI."))
- :interfaces '(cli mcp))
+ :parameters '((:name "uri" :type string :description "Optional file URI.")))
 
 (limen-register-operation
  "elisp.eval" #'limen--eval
@@ -1863,38 +1743,6 @@ Each function returns a JSON value, or nil to omit the section.")
  :description "Evaluate explicitly enabled Emacs Lisp."
  :effect 'write :parameters '((:name "code" :type string :required t))
  :enabled-p (lambda (_context) limen-enable-elisp-eval))
-
-(limen-register-event
- "context.selection"
- :description "Report the latest project file selection."
- :parameters '((:name "path" :type string :required t)
-               (:name "line" :type integer :required t)
-               (:name "column" :type integer :required t)
-               (:name "end_line" :type integer)
-               (:name "end_column" :type integer)
-               (:name "text" :type string))
- :replay t)
-
-(limen-register-event
- "context.push"
- :description "Push explicit project context to an agent."
- :parameters '((:name "path" :type string :required t)
-               (:name "line" :type integer :required t)
-               (:name "column" :type integer :required t)
-               (:name "end_line" :type integer)
-               (:name "end_column" :type integer)
-               (:name "text" :type string)
-               (:name "items" :type array
-                      :items (:type object
-                                    :properties
-                                    ((:name "type" :type string :required t
-                                            :enum ("file"))
-                                     (:name "path" :type string :required t)
-                                     (:name "line" :type integer)
-                                     (:name "column" :type integer)
-                                     (:name "end_line" :type integer)
-                                     (:name "end_column" :type integer)
-                                     (:name "text" :type string))))))
 
 (provide 'limen)
 ;;; limen.el ends here

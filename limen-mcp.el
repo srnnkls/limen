@@ -4,7 +4,8 @@
 
 ;;; Commentary:
 
-;; Exposes limen sessions through standard loopback MCP transports.
+;; Exposes the Emacs diff operations of limen sessions through loopback
+;; MCP routes.
 
 ;;; Code:
 
@@ -28,7 +29,7 @@
   "MCP protocol versions accepted by the bridge, newest first.")
 
 (cl-defstruct limen-mcp-route
-  id token session clients protocol-version sink subscriptions)
+  id token session clients protocol-version (sequence 0))
 
 (cl-defstruct limen-mcp-client
   process route stream-p pending)
@@ -172,15 +173,6 @@
   (limen-mcp--response
    status (and message (limen-mcp--json message)) headers stream))
 
-(defun limen-mcp--event-uri (name)
-  "Return the MCP resource URI for event NAME."
-  (concat "emacs://" (replace-regexp-in-string "\\." "/" name)))
-
-(defun limen-mcp--event-name (uri)
-  "Return the registered event name represented by URI."
-  (when (string-match "\\`emacs://\\(.+\\)\\'" uri)
-    (replace-regexp-in-string "/" "." (match-string 1 uri))))
-
 (defun limen-mcp--tool-name (operation)
   "Return a transport-safe MCP name for OPERATION."
   (string-replace "." "_" operation))
@@ -236,24 +228,6 @@
   (if (member requested limen-mcp-protocol-versions)
       requested
     (car limen-mcp-protocol-versions)))
-
-(defun limen-mcp--resource-descriptors ()
-  "Return session event resources."
-  (mapcar
-   (lambda (event)
-     `((uri . ,(limen-mcp--event-uri (alist-get 'name event)))
-       (name . ,(alist-get 'name event))
-       (description . ,(alist-get 'description event))
-       (mimeType . "application/json")))
-   (limen-events)))
-
-(defun limen-mcp--resource-read (session uri)
-  "Return SESSION resource URI contents, or nil when unknown."
-  (when-let* ((name (limen-mcp--event-name uri))
-              ((gethash name limen--events)))
-    (let ((value (gethash name (limen-session-latest session))))
-      `((contents . [((uri . ,uri) (mimeType . "application/json")
-                      (text . ,(limen-mcp--json value)))]) ))))
 
 (defun limen-mcp--condition-message (condition fallback)
   "Return CONDITION's public message or FALLBACK."
@@ -358,8 +332,6 @@
             id
             `((protocolVersion . ,version)
               (capabilities . ((tools . ((listChanged . t)))
-                               (resources . ((subscribe . t)
-                                             (listChanged . :json-false)))
                                (prompts . ((listChanged . :json-false)))))
               (serverInfo . ((name . "limen")
                              (version . ,(number-to-string
@@ -377,11 +349,7 @@
             (limen-request-cancel
              request '(limen-operation-failed "Request cancelled")))))
       (limen-mcp--response 202 ""))
-     ((and (member method '("tools/call"
-                            "resources/read"
-                            "resources/subscribe"
-                            "resources/unsubscribe"))
-           (not (listp params)))
+     ((and (equal method "tools/call") (not (listp params)))
       (limen-mcp--json-response
        200 (limen-mcp--rpc-error id -32602 "Invalid params")))
      ((equal method "tools/list")
@@ -390,34 +358,6 @@
             id `((tools . ,(vconcat (limen-mcp--tool-descriptors session)))))))
      ((equal method "tools/call")
       (limen-mcp--call-tool route id params deliver client))
-     ((equal method "resources/list")
-      (limen-mcp--json-response
-       200 (limen-mcp--rpc-result
-            id `((resources . ,(vconcat (limen-mcp--resource-descriptors)))))))
-     ((equal method "resources/read")
-      (if-let* ((uri (limen-mcp--value 'uri params))
-                (result (and (stringp uri)
-                             (limen-mcp--resource-read session uri))))
-          (limen-mcp--json-response
-           200 (limen-mcp--rpc-result id result))
-        (limen-mcp--json-response
-         200 (limen-mcp--rpc-error id -32602 "Unknown resource"))))
-     ((equal method "resources/subscribe")
-      (let ((uri (limen-mcp--value 'uri params)))
-        (if (not (and (stringp uri)
-                      (limen-mcp--event-name uri)))
-            (limen-mcp--json-response
-             200 (limen-mcp--rpc-error id -32602 "Invalid resource"))
-          (cl-pushnew uri (limen-mcp-route-subscriptions route)
-                      :test #'equal)
-          (limen-mcp--json-response
-           200 (limen-mcp--rpc-result id nil)))))
-     ((equal method "resources/unsubscribe")
-      (setf (limen-mcp-route-subscriptions route)
-            (delete (limen-mcp--value 'uri params)
-                    (limen-mcp-route-subscriptions route)))
-      (limen-mcp--json-response
-       200 (limen-mcp--rpc-result id nil)))
      ((equal method "prompts/list")
       (limen-mcp--json-response
        200 (limen-mcp--rpc-result id '((prompts . [])))))
@@ -544,25 +484,13 @@ DELIVER receives deferred JSON-RPC messages.  CLIENT carries stream state."
   "Send JSON-RPC MESSAGE to streaming CLIENT."
   (when (and (limen-mcp-client-stream-p client)
              (limen-mcp--client-live-p client))
-    (let* ((route (limen-mcp-client-route client))
-           (session (limen-mcp-route-session route))
-           (sequence (cl-incf (limen-session-sequence session))))
+    (let ((sequence (cl-incf (limen-mcp-route-sequence
+                              (limen-mcp-client-route client)))))
       (process-send-string
        (limen-mcp-client-process client)
        (encode-coding-string
         (limen-mcp--sse-frame sequence message) 'utf-8-unix))
       t)))
-
-(defun limen-mcp--event-published (route _session name _payload)
-  "Notify ROUTE subscribers that event NAME changed."
-  (let ((uri (limen-mcp--event-uri name)))
-    (when (member uri (limen-mcp-route-subscriptions route))
-      (dolist (client (copy-sequence (limen-mcp-route-clients route)))
-        (limen-mcp--send-client-message
-         client
-         `((jsonrpc . "2.0")
-           (method . "notifications/resources/updated")
-           (params . ((uri . ,uri)))))))))
 
 (defun limen-mcp--operations-changed (_action _name)
   "Notify streaming clients that the MCP tool list changed."
@@ -738,23 +666,16 @@ Return a cons of request and remaining bytes, or nil when incomplete."
         (when (limen-session-closed-p session)
           (signal 'limen-session-closed '("Session is closed")))
         (limen-mcp--start-listener)
-        (let* ((route (make-limen-mcp-route
-                       :id (limen-mcp--secret "session")
-                       :token (limen-mcp--secret "token")
-                       :session session))
-               (sink (lambda (actual-session name payload)
-                       (limen-mcp--event-published
-                        route actual-session name payload))))
-          (setf (limen-mcp-route-sink route) sink)
+        (let ((route (make-limen-mcp-route
+                      :id (limen-mcp--secret "session")
+                      :token (limen-mcp--secret "token")
+                      :session session)))
           (puthash (limen-mcp-route-id route) route limen-mcp--routes)
-          (limen-session-subscribe session sink)
           route))))
 
 (defun limen-mcp--remove-route (route)
   "Remove ROUTE and close its network clients."
   (remhash (limen-mcp-route-id route) limen-mcp--routes)
-  (when-let* ((sink (limen-mcp-route-sink route)))
-    (limen-session-unsubscribe (limen-mcp-route-session route) sink))
   (dolist (client (copy-sequence (limen-mcp-route-clients route)))
     (limen-mcp--cancel-client-requests client)
     (when (limen-mcp--client-live-p client)

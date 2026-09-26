@@ -98,8 +98,8 @@ natively injects the context itself; the Pi extension injects it as a message.
 - `extension`: the harness loads an extension that translates its events and runs
   `limen hook <provider>`. Pi and Oh My Pi, whose hooks are JavaScript modules, not commands.
   `extensions/limen-hooks` is that extension; `mise run install-extensions` links it where the
-  harness discovers it, so an adopted pane answers hooks as a launched one does. The MCP route is
-  a separate extension, `extensions/limen-mcp`.
+  harness discovers it, so an adopted pane answers hooks as a launched one does. The MCP diff
+  tools come from a separate extension, `extensions/limen-mcp`.
 
 Both answer the same payload. `limen-hooks-providers` names every harness Limen answers;
 `limen-hooks-installing-providers` names those whose settings Limen writes.

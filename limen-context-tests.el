@@ -4,12 +4,6 @@
 (require 'dired)
 (require 'ert)
 (require 'limen-herdr)
-(require 'seq)
-
-(defun limen-context-tests--event (name)
-  "Return registered event descriptor named NAME."
-  (seq-find (lambda (event) (equal (alist-get 'name event) name))
-            (limen-events)))
 
 (defun limen-context-tests--occurrences (needle text)
   "Count non-overlapping occurrences of NEEDLE in TEXT."
@@ -19,70 +13,6 @@
       (setq start (match-end 0)
             count (1+ count)))
     count))
-
-(defun limen-context-tests--sorted-names (names)
-  "Return NAMES as a sorted list of strings."
-  (sort (mapcar (lambda (name)
-                  (if (symbolp name) (symbol-name name) name))
-                (append names nil))
-        #'string<))
-
-(defun limen-context-tests--object-keys (object)
-  "Return OBJECT's JSON member names in sorted order."
-  (limen-context-tests--sorted-names (mapcar #'car object)))
-
-(ert-deftest limen-context-push-schema-validates-recursive-file-items ()
-  (let* ((descriptor (limen-context-tests--event "context.push"))
-         (schema (alist-get 'payload_schema descriptor))
-         (properties (alist-get 'properties schema))
-         (items-schema (alist-get 'items properties))
-         (item-schema (alist-get 'items items-schema))
-         (item-properties (alist-get 'properties item-schema))
-         (primary '((path . "/project/first.el") (line . 1) (column . 0)))
-         (valid-items
-          [((type . "file") (path . "/project/first.el"))
-           ((type . "file") (path . "/project/second.el")
-            (line . 3) (column . 2) (end_line . 4) (end_column . 1)
-            (text . "selected"))])
-         (session (limen-open-session :provider 'test)))
-    (unwind-protect
-        (progn
-          (should (equal (alist-get 'type items-schema) "array"))
-          (should (equal (alist-get 'type item-schema) "object"))
-          (should (eq (alist-get 'additionalProperties item-schema)
-                      :json-false))
-          (should (equal (limen-context-tests--sorted-names
-                          (alist-get 'required item-schema))
-                         '("path" "type")))
-          (should (equal (limen-context-tests--object-keys item-properties)
-                         '("column" "end_column" "end_line" "line"
-                           "path" "text" "type")))
-          (should (equal (alist-get 'enum (alist-get 'type item-properties))
-                         ["file"]))
-          (dolist (field '((path . "string") (line . "integer")
-                           (column . "integer") (end_line . "integer")
-                           (end_column . "integer") (text . "string")))
-            (should (equal (alist-get 'type
-                                      (alist-get (car field) item-properties))
-                           (cdr field))))
-          (should (equal (limen-context-tests--sorted-names
-                          (alist-get 'required schema))
-                         '("column" "line" "path")))
-          (should (limen-session-publish
-                   session "context.push"
-                   (append primary `((items . ,valid-items)))))
-          (dolist (invalid
-                   '([((type . "directory") (path . "/project/first.el"))]
-                     [((type . "file") (path . 7))]
-                     [((type . "file") (path . "/project/first.el")
-                       (unexpected . t))]))
-            (ert-info ((format "invalid nested items=%S" invalid))
-              (should-error
-               (limen-session-publish
-                session "context.push" (append primary `((items . ,invalid))))
-               :type 'limen-invalid-arguments))))
-      (unless (limen-session-closed-p session)
-        (limen-close-session session)))))
 
 (ert-deftest limen-herdr-excerpt-draws-the-sent-lines-and-marks-the-point ()
   (with-temp-buffer
@@ -236,7 +166,6 @@
           (list (lambda (_session context _root) (push context published) nil)))
          (dired-payload nil)
          (prompts nil)
-         (events nil)
          (dired-buffer nil)
          (original-readable-p (symbol-function 'file-readable-p))
          (original-dired-get-marked-files
@@ -277,11 +206,7 @@
                             (funcall original-readable-p file))))
                     ((symbol-function 'herdr-agent-prompt)
                      (lambda (target text)
-                       (push (list target text) prompts)))
-                    ((symbol-function 'limen-session-publish)
-                     (lambda (session event payload)
-                       (should (eq session integration))
-                       (push (list event payload) events))))
+                       (push (list target text) prompts))))
             (with-current-buffer dired-buffer
               (setq selected (list first second))
               (should (limen-herdr-push-context agent))
@@ -330,12 +255,10 @@
                     selected (list first second))
               (should (limen-herdr-push-context agent))
               (should (= (length published) 1))
-              (should-not prompts)
-              (should (equal (caar events) "context.push"))
-              (should (equal (alist-get 'path (cadar events)) first))
+              (should (= (length prompts) 1))
               (setf (limen-herdr-state-route state) nil)
 
-              (setq prompts nil published nil events nil)
+              (setq prompts nil published nil)
               (dired-unmark-all-marks)
               (should (dired-goto-file first))
               (should (equal (dired-get-filename nil t) first))

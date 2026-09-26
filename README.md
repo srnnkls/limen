@@ -12,8 +12,9 @@ Limen lets a coding agent read and act on the Emacs session you work in. It keep
 operations — read a live buffer, save it, read the focus and the windows, list diagnostics and
 compilation output, open a diff — and serves them to Claude Code, Codex, Pi and Oh My Pi. Every
 harness gets the `limen` command line and its own prompt hooks; Claude Code gets nothing else.
-Codex, Pi and Oh My Pi, when Herdr launches them, also get a per-launch loopback MCP route, which
-Pi and Oh My Pi reach through an extension. No MCP server runs until such a launch asks for one.
+With `limen-herdr-mcp` set, Codex, Pi and Oh My Pi, when Herdr launches them, also get a
+per-launch loopback MCP route that serves only the Emacs diff operations, which Pi and Oh My Pi
+reach through an extension. No MCP server runs until such a launch asks for one.
 Every file an operation reads or writes lies inside the agent's project.
 
 Limen also carries context the other way. With [herdr.el](https://github.com/srnnkls/herdr.el)
@@ -148,7 +149,7 @@ The `limen` command line:
 
 | Term | Meaning |
 | --- | --- |
-| *operation* | a named request an agent can make, such as `buffer.read`, served over the CLI, MCP or both |
+| *operation* | a named request an agent can make, such as `buffer.read`, served over the CLI, or over MCP for the diff operations |
 | *session* | one agent's connection to Emacs, bound to a project root and, under Herdr, to a pane |
 | *project confinement* | every path an operation reads or writes must lie inside the session's project |
 | *focus* | the buffer, point and selection of the selected window, or of the window used before an agent's terminal |
@@ -186,11 +187,12 @@ Limen against herdr.el, cera and scholia; they need those packages and their tes
 
 Where the code lives:
 
-- `limen.el`: the operation and event registry, sessions, project confinement, the built-in
+- `limen.el`: the operation registry, sessions, project confinement, the built-in
   operations, the CLI dispatcher and the agent skill.
-- `limen-editor.el`, `limen-compile.el`, `limen-trail.el`, `limen-scholia.el`: selection events
-  and diffs, compilation buffers, the buffer trail, annotations.
-- `limen-mcp.el`: the loopback MCP server Herdr-launched Codex, Pi and Oh My Pi agents use.
+- `limen-editor.el`, `limen-compile.el`, `limen-trail.el`, `limen-scholia.el`: interactive
+  diffs, compilation buffers, the buffer trail, annotations.
+- `limen-mcp.el`: the loopback MCP server that serves the diff operations to Herdr-launched Codex,
+  Pi and Oh My Pi agents.
 - `limen-provider.el`: what Limen knows about each harness.
 - `limen-herdr.el`, `limen-herdr-claude.el`, `limen-herdr-transient.el`: the Herdr bridge,
   Claude Code adoption, the menu.

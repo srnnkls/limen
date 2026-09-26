@@ -243,7 +243,7 @@ without a visible session, or without a root."
  "annotation.sessions" #'limen-scholia--sessions-operation
  :command "annotations sessions"
  :description "List scholia annotation sessions with their project-confined file counts."
- :effect 'read :parameters nil :interfaces '(cli mcp)
+ :effect 'read :parameters nil
  :enabled-p (lambda (_context) limen-scholia-available-p))
 
 (limen-register-operation
@@ -257,7 +257,6 @@ without a visible session, or without a root."
                       :description "Project-relative or absolute file path.")
                (:name "limit" :type integer
                       :description "Maximum number of annotations to return."))
- :interfaces '(cli mcp)
  :enabled-p (lambda (_context) limen-scholia-available-p))
 
 (limen-register-operation
@@ -271,7 +270,6 @@ without a visible session, or without a root."
                       :description "Restrict the rendering to one file.")
                (:name "format" :type string :enum ,limen-scholia--formats
                       :description "Export format; defaults to rustc."))
- :interfaces '(cli mcp)
  :enabled-p (lambda (_context) limen-scholia-available-p))
 
 (setf (alist-get "annotations" limen-context-sections nil nil #'equal)

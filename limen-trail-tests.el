@@ -55,12 +55,12 @@
         (let ((limen-operation-change-hook
                (list (lambda (action name) (push (cons action name) changes)))))
           (limen-trail-mode -1)
-          (should-not (limen-trail-tests--operation "trail.list" 'mcp))
+          (should-not (limen-trail-tests--operation "trail.list" 'cli))
           (should-error
            (limen-call "trail.list" nil (limen-make-request :interface 'cli))
            :type 'limen-disabled-operation)
           (limen-trail-mode 1)
-          (let ((operation (limen-trail-tests--operation "trail.list" 'mcp)))
+          (let ((operation (limen-trail-tests--operation "trail.list" 'cli)))
             (should operation)
             (should (equal (alist-get 'effect operation) "read"))
             (should (equal (map-keys (alist-get 'properties

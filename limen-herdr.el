@@ -67,6 +67,13 @@ the gutter.  With nothing kept on either side the text is sent alone."
   :type 'natnum
   :group 'limen-herdr)
 
+(defcustom limen-herdr-mcp nil
+  "Whether a launched agent whose harness takes one gets an MCP route.
+The route serves only the Emacs diff operations, which also need
+`limen-editor-enable-diffs'."
+  :type 'boolean
+  :group 'limen-herdr)
+
 (cl-defstruct limen-herdr-state
   provider session route launched-p)
 
@@ -521,9 +528,8 @@ The first returning non-nil has delivered it.")
 ;;;###autoload
 (defun limen-herdr-push-context (&optional target)
   "Push the current buffer's context to integrated Herdr TARGET.
-A function on `limen-herdr-push-functions' may carry it; failing that a
-session with an MCP route is sent the `context.push' event, and any
-other has the rendered context typed into the agent's pane."
+A function on `limen-herdr-push-functions' may carry it; failing that
+the rendered context is typed into the agent's pane."
   (interactive)
   (let* ((agent-session (limen-herdr--session target))
          (state (limen-herdr-state agent-session))
@@ -537,8 +543,6 @@ other has the rendered context typed into the agent's pane."
       (cond
        ((run-hook-with-args-until-success
          'limen-herdr-push-functions session context root))
-       ((limen-herdr-state-route state)
-        (limen-session-publish session "context.push" context))
        (t
         (herdr-agent-prompt
          (cons (herdr-agent-session-server agent-session)
@@ -572,7 +576,9 @@ an agent is worth nothing without the server it was read from."
     (pcase phase
       (:prepare
        (limen-herdr--prepare session provider
-                             (limen-provider-route (limen-provider provider)) t))
+                             (and limen-herdr-mcp
+                                  (limen-provider-route (limen-provider provider)))
+                             t))
       (:arguments (limen-herdr--arguments session context))
       (:adopted
        (if (limen-provider-hook-transport (limen-provider provider))
