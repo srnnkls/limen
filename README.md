@@ -10,10 +10,11 @@
 
 Limen lets a coding agent read and act on the Emacs session you work in. It keeps a registry of
 operations — read a live buffer, save it, read the focus and the windows, list diagnostics and
-compilation output, open a diff — and serves them to Claude Code, Codex, Pi and Oh My Pi over the
-channel each harness speaks: the `limen` command line, loopback MCP, a Pi extension, and the
-harnesses' own prompt hooks. Every file an operation reads or writes lies inside the agent's
-project.
+compilation output, open a diff — and serves them to Claude Code, Codex, Pi and Oh My Pi. Every
+harness gets the `limen` command line and its own prompt hooks; Claude Code gets nothing else.
+Codex, Pi and Oh My Pi, when Herdr launches them, also get a per-launch loopback MCP route, which
+Pi and Oh My Pi reach through an extension. No MCP server runs until such a launch asks for one.
+Every file an operation reads or writes lies inside the agent's project.
 
 Limen also carries context the other way. With [herdr.el](https://github.com/srnnkls/herdr.el)
 running the agents, each prompt you type into an agent's terminal arrives with what Emacs knows:
@@ -189,7 +190,7 @@ Where the code lives:
   operations, the CLI dispatcher and the agent skill.
 - `limen-editor.el`, `limen-compile.el`, `limen-trail.el`, `limen-scholia.el`: selection events
   and diffs, compilation buffers, the buffer trail, annotations.
-- `limen-mcp.el`: the loopback MCP server.
+- `limen-mcp.el`: the loopback MCP server Herdr-launched Codex, Pi and Oh My Pi agents use.
 - `limen-provider.el`: what Limen knows about each harness.
 - `limen-herdr.el`, `limen-herdr-claude.el`, `limen-herdr-transient.el`: the Herdr bridge,
   Claude Code adoption, the menu.
