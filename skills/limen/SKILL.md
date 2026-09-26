@@ -4,6 +4,14 @@ description: |
   Read and act on the user's live Emacs session through the `limen` CLI. Use when the task depends on what Emacs holds rather than the disk: the file and region the user is on, unsaved buffer text, Flymake/Flycheck diagnostics, compilation output, recently visited buffers, or opening a file at a location for the user.
 metadata:
   type: generic
+henia:
+  targets:
+    codex:
+      openai:
+        interface:
+          display_name: Limen
+          short_description: Read and act on the live Emacs session
+          default_prompt: Use $limen for the requested task.
 ---
 
 # limen
