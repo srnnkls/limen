@@ -202,6 +202,8 @@ Where the code lives:
 - `limen-message.el`, `limen-complete.el`: the Herdr message field.
 - `limen-transcript.el`: reading harness transcripts.
 - `bin/limen`: the POSIX shell client.
+- `skills/limen`: the agent skill for the `limen` command, imported by
+  [Tropos](https://github.com/srnnkls/tropos).
 - `extensions/limen-hooks`, `extensions/limen-mcp`: the Pi and Oh My Pi extensions.
 
 ## License
