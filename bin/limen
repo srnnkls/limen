@@ -2,6 +2,7 @@
 set -eu
 
 emacsclient=${EMACSCLIENT:-emacsclient}
+export ALTERNATE_EDITOR=false
 
 help() {
     cat <<'EOF'
