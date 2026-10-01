@@ -1,5 +1,3 @@
-version = 1
-
 [sources.jupyter]
 git = "https://github.com/emacs-jupyter/jupyter.git"
 
