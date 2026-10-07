@@ -296,17 +296,18 @@ to the context the prompt carries.")
 
 (defun limen-hooks--spec-installed-p (settings spec provider)
   "Return non-nil when Limen's PROVIDER hook is registered for SPEC in SETTINGS.
-SPEC is (EVENT . MATCHER); one event can carry a group per matcher."
+SPEC is (EVENT . MATCHER); one event can carry a group per matcher, and
+a group without one runs for every tool, so it covers any MATCHER."
   (seq-some (lambda (group)
-              (and (equal (limen-hooks--group-matcher group) (cdr spec))
+              (and (member (limen-hooks--group-matcher group) (list nil (cdr spec)))
                    (seq-some (lambda (handler)
                                (limen-hooks--handler-p handler provider))
                              (alist-get 'hooks group))))
             (limen-hooks--event-groups settings (car spec))))
 
-(defun limen-hooks-installed-p (provider)
+(defun limen-hooks-installed-p (provider &optional specs)
   "Return non-nil when PROVIDER runs Limen's hooks for every spec.
-An extension answers whatever Limen asks of it as soon as it is loaded,
+SPECS limits the check to those (EVENT . MATCHER) specs.  An extension answers whatever Limen asks of it as soon as it is loaded,
 so there is nothing to install and nothing to find missing."
   (if (limen-hooks-extension-provider-p provider)
       t
@@ -314,7 +315,7 @@ so there is nothing to install and nothing to find missing."
                      (limen-hooks-settings-file provider))))
       (seq-every-p (lambda (spec)
                      (limen-hooks--spec-installed-p settings spec provider))
-                   (limen-hooks-events provider)))))
+                   (or specs (limen-hooks-events provider))))))
 
 (defun limen-hooks--settings-events (settings)
   "Return the names of every event SETTINGS registers handlers for."
@@ -554,7 +555,8 @@ from gives no snapshot."
                                    (herdr-agent-resolve-session target)
                                  (error nil)))
                 (session (limen-herdr-session-for agent-session))
-                ((limen-hooks-installed-p (limen-session-provider session))))
+                ((limen-hooks-installed-p (limen-session-provider session)
+                                         limen-hooks--context-events)))
       (let ((draft (gethash session limen-hooks--drafts)))
         (remhash session limen-hooks--drafts)
         (when-let* ((pending (if (equal (car draft) context)
@@ -569,7 +571,8 @@ from gives no snapshot."
   "Carry CONTEXT on SESSION's next prompt when its provider has hooks installed."
   (when (and limen-hooks-mode
              (not (limen-session-closed-p session))
-             (limen-hooks-installed-p (limen-session-provider session)))
+             (limen-hooks-installed-p (limen-session-provider session)
+                                      limen-hooks--context-events))
     (puthash session context limen-hooks--pending)
     t))
 

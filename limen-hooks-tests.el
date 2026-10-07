@@ -396,6 +396,32 @@
                        agents)))
       (delete-file socket))))
 
+(ert-deftest limen-hooks-a-group-without-matcher-covers-every-tool ()
+  (limen-hooks-tests--with-settings
+    (setq limen-hooks--subscriptions
+          (append limen-hooks--subscriptions
+                  (list (cons "review"
+                              (list :events '(("PostToolUse" . "Edit|Write")))))))
+    (limen-hooks-install 'claude)
+    (should (limen-hooks-installed-p 'claude))
+    (let* ((file (limen-hooks-settings-file 'claude))
+           (settings (limen-hooks-tests--read file))
+           (hooks (alist-get 'hooks settings)))
+      (setf (alist-get 'PostToolUse hooks)
+            (vector `((hooks . ,(vector '((type . "command")
+                                          (command . "limen hook claude")))))))
+      (setf (alist-get 'hooks settings) hooks)
+      (limen-hooks--write-settings file settings)
+      (should (limen-hooks-installed-p 'claude)))))
+
+(ert-deftest limen-hooks-context-needs-only-the-context-hooks ()
+  (limen-hooks-tests--with-settings
+    (with-temp-file (limen-hooks-settings-file 'claude)
+      (insert "{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"limen hook claude\"}]}],"
+              "\"SessionStart\":[{\"hooks\":[{\"type\":\"command\",\"command\":\"limen hook claude\"}]}]}}"))
+    (should-not (limen-hooks-installed-p 'claude))
+    (should (limen-hooks-installed-p 'claude limen-hooks--context-events))))
+
 (ert-deftest limen-hooks-unsubscribing-keeps-what-others-still-need ()
   (limen-hooks-tests--with-settings
     (limen-hooks-install 'claude)
@@ -548,7 +574,7 @@ nothing to snapshot."
                   ((symbol-function 'herdr-agent-session-pane)
                    (lambda (_agent) "p1"))
                   ((symbol-function 'limen-hooks-installed-p)
-                   (lambda (_provider) installed))
+                   (lambda (&rest _) installed))
                   ((symbol-function 'limen-herdr--send-context-snapshot)
                    (lambda (_session)
                      (if snapshots snapshot (user-error "No file")))))
