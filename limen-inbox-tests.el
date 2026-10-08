@@ -179,7 +179,7 @@
             (should-not (limen-inbox-questions)))
         (delete-file transcript)))))
 
-(ert-deftest limen-inbox-groups-questions-by-dashboard-agent-and-prunes-the-rest ()
+(ert-deftest limen-inbox-groups-questions-by-dashboard-agent-and-keeps-the-rest ()
   (limen-inbox-tests--with-inbox
     (let ((alpha `((server_key . "/tmp/alpha.sock") (pane_id . "%1") (name . "api")))
           (beta `((server_key . "/tmp/alpha.sock") (pane_id . "%2") (name . "docs"))))
@@ -201,11 +201,12 @@
         (should (equal (mapcar (lambda (question) (alist-get 'header question))
                                (cdar groups))
                        '("Database" "Scope" "Cache"))))
+      (limen-inbox--toggle "t1#0" "PostgreSQL" nil)
+      (should-not (limen-inbox--groups (list beta)))
       (should (equal (mapcar (lambda (entry) (alist-get 'id entry))
                              (limen-inbox-questions))
-                     '("t1" "t3")))
-      (should-not (limen-inbox--groups (list beta)))
-      (should-not (limen-inbox-questions)))))
+                     '("t1" "t2" "t3" "t4")))
+      (should (equal (gethash "t1#0" limen-inbox--selected) '("PostgreSQL"))))))
 
 (ert-deftest limen-inbox-drops-transcript-questions-once-the-agent-is-not-blocked ()
   (limen-inbox-tests--with-inbox

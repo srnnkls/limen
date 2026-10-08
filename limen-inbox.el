@@ -334,17 +334,18 @@ once AGENT is not blocked and ENTRY is older than `limen-inbox-settle-seconds'."
 
 (defun limen-inbox--groups (agents)
   "Return the pending questions grouped by their asking agent among AGENTS.
-Entries no listed agent asked, or whose question left the screen, are dropped."
+Entries whose question left the screen are dropped.  Those no listed
+agent asked are left for the dashboard that lists their agent."
   (let (groups)
     (dolist (entry limen-inbox--questions)
-      (if-let* ((agent (limen-inbox--agent-for entry agents))
-                ((not (limen-inbox--stale-p entry agent))))
+      (when-let* ((agent (limen-inbox--agent-for entry agents)))
+        (if (limen-inbox--stale-p entry agent)
+            (limen-inbox--remove-if (lambda (candidate) (eq candidate entry)))
           (let ((group (assoc agent groups)))
             (if group
                 (setcdr group (append (cdr group) (alist-get 'questions entry)))
               (push (cons agent (copy-sequence (alist-get 'questions entry)))
-                    groups)))
-        (limen-inbox--remove-if (lambda (candidate) (eq candidate entry)))))
+                    groups))))))
     (nreverse groups)))
 
 (defun limen-inbox--entry-id (qid)
