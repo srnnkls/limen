@@ -180,7 +180,8 @@ line that runs it, without the program name, for the agent skill."
   "Open an integration session for PROVIDER and PROJECT-ROOT.
 ID and OWNER default to opaque values.  CAPABILITIES describes the transport.
 LOCATION names the pane the session's agent runs in, as a cons of the
-Herdr server key and the pane id, so a hook from that pane finds it."
+Herdr server key and the pane id, so a hook from that pane finds it.
+A pane runs one agent, so a session already open there is closed."
   (let ((canonical-root
          (when project-root
            (when (file-remote-p project-root)
@@ -200,6 +201,10 @@ Herdr server key and the pane id, so a hook from that pane finds it."
             :generation 1
             :capabilities capabilities
             :location location)))
+      (when (cdr location)
+        (let (previous)
+          (while (setq previous (limen-find-session-at location))
+            (limen-close-session previous))))
       (puthash session t limen--sessions)
       (run-hook-with-args 'limen-session-open-hook session)
       session)))

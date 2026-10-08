@@ -353,6 +353,20 @@
         (should (= status 2))
         (should (string-match-p "invalid_request" payload))))))
 
+(ert-deftest limen-open-session-replaces-the-session-at-its-pane ()
+  (let* ((limen--sessions (make-hash-table :test #'eq))
+         (pane (cons (limen-server-key "/tmp/h.sock") "%7"))
+         (paneless (cons (limen-server-key "/tmp/h.sock") nil))
+         (stale (limen-open-session :provider 'claude :location pane))
+         (unplaced (limen-open-session :provider 'claude :location paneless))
+         (current (limen-open-session :provider 'claude :location pane)))
+    (should (limen-session-closed-p stale))
+    (should-not (limen-find-session (limen-session-id stale)))
+    (should (eq (limen-find-session-at pane) current))
+    (should-not (limen-session-closed-p unplaced))
+    (limen-open-session :provider 'claude :location paneless)
+    (should-not (limen-session-closed-p unplaced))))
+
 (ert-deftest limen-sessions-dispatch-requests-and-deferred-results ()
   (limen-tests--with-registry
     (let ((limen--sessions (make-hash-table :test #'eq))
