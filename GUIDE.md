@@ -23,6 +23,7 @@ supports is in [docs/integrations.md](docs/integrations.md).
 - [Edit review](#edit-review)
 - [The question inbox](#the-question-inbox)
 - [Herd notices](#herd-notices)
+- [Working on something](#working-on-something)
 - [Model and context columns](#model-and-context-columns)
 - [Live memex transcripts](#live-memex-transcripts)
 - [The message field](#the-message-field)
@@ -70,6 +71,7 @@ Every module is a separate `require`. Load the ones whose features you want:
 | `limen-hooks` | herdr.el | context on every prompt, edit review |
 | `limen-inbox` | herdr.el | the question inbox in `herdr-status` |
 | `limen-herd` | herdr.el | herd notices |
+| `limen-workon` | herdr.el | `W` on the dashboard: start an agent on what providers offer |
 | `limen-model`, `limen-usage` | herdr.el | the dashboard's model and context columns |
 | `limen-memex` | memex.el | live transcript views |
 | `limen-message` | cera, memex.el | context, recap and status around the message field |
@@ -572,6 +574,33 @@ A member in the middle of a turn is never interrupted. Its notices wait and reac
 prompt, as hook context, or as soon as Herdr sees it idle; with `limen-herd-hold-for-busy` nil they
 are dropped. Notices never answer notices: a turn started by a prompt that opens with one of
 `limen-herd-quiet-prefixes` ends without a `finished` notice.
+
+## Working on something
+
+`limen-workon-mode` binds `W` on `herdr-status` to `limen-workon` and `C-w` to
+`limen-herdr-project-dispatch`:
+
+```elisp
+(setq limen-workon-providers (list my-issues-provider my-scopes-provider))
+(limen-workon-mode 1)
+```
+
+`W` offers what `limen-workon-providers` list for the project in one completion, grouped by
+provider. Limen ships no providers: each is a plist whose `:candidates` answers with items, and an
+item says how to get its branch, its prompt and, optionally, what to prepare in its worktree. The
+docstring of `limen-workon-providers` has the contract. Candidates are kept per project and
+refreshed in the background, so only a project's first `W` waits for them.
+
+The choice gets its branch, a worktree under `limen-workon-worktree-directory` of the main
+worktree, and a new agent started there on its prompt through Herdr's launch path, so it has its
+Limen session, hooks and name like any other. A new worktree with a mise config is trusted and
+`mise install`ed before the agent starts. `C-u W` first opens a menu for the branch base and name,
+the harness, model and reasoning effort, and an extra prompt; what it leaves unset comes from the
+project settings. Its `s` sends the choice's prompt to the agent at point instead.
+
+`C-w` sets the harness, model and reasoning effort every agent of the dashboard's project starts
+with, from `W` or not; `limen-herdr-project-settings` keeps them, and `savehist-mode` keeps that
+across sessions. Each harness spells model and effort its own way, which `limen-provider` records.
 
 ## Model and context columns
 

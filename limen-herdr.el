@@ -15,6 +15,7 @@
 (require 'limen-mcp)
 (require 'limen-provider)
 (require 'limen-trail)
+(require 'transient)
 
 (declare-function herdr-agent-adapter "ext:herdr-agent" (kind))
 (declare-function herdr-agent-register-adapter "ext:herdr-agent" (kind adapter))
@@ -28,6 +29,12 @@
 (declare-function herdr-agent-session-name "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-pane "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-project "ext:herdr-agent" (session) t)
+(declare-function herdr-status-entry-at-point "ext:herdr-status" ())
+(declare-function herdr-entry-directory "ext:herdr" (entry))
+(defvar herdr-agent-harnesses)
+(defvar herdr-status--project-root)
+(defvar limen-message-models)
+(defvar savehist-additional-variables)
 (declare-function herdr-agent-session-server "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-terminal "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-session-buffer "ext:herdr-agent" (session) t)
@@ -193,15 +200,128 @@ MCP exposes the standard Limen route.  LAUNCHED-P records process ownership."
     (limen-herdr--set-state session nil)
     t))
 
+(defvar limen-herdr-project-settings nil
+  "The harness, model and effort agents of a project start with.
+An alist of project root and a plist of `:harness', `:model' and
+`:effort'.  `limen-herdr-project-dispatch' sets them; `savehist-mode'
+keeps them.")
+
+(with-eval-after-load 'savehist
+  (add-to-list 'savehist-additional-variables 'limen-herdr-project-settings))
+
+(defvar limen-herdr-launch-settings nil
+  "Settings a launch binds to stand in for its project's.")
+
+(defun limen-herdr-settings (directory)
+  "Return the settings of the deepest project root covering DIRECTORY."
+  (let ((directory (file-name-as-directory (expand-file-name directory))))
+    (cdr (car (sort (seq-filter
+                     (lambda (entry)
+                       (string-prefix-p (file-name-as-directory (expand-file-name (car entry)))
+                                        directory))
+                     limen-herdr-project-settings)
+                    (lambda (a b) (> (length (car a)) (length (car b)))))))))
+
+(defun limen-herdr--settings-arguments (session)
+  "Return the launch arguments SESSION's settings choose its model and effort with.
+The settings are `limen-herdr-launch-settings', else its project's, and
+apply only to an agent of the harness they name, or of any when they
+name none."
+  (let* ((provider (limen-herdr--provider session))
+         (settings (or limen-herdr-launch-settings
+                       (and (herdr-agent-session-project session)
+                            (limen-herdr-settings (herdr-agent-session-project session)))))
+         (harness (plist-get settings :harness)))
+    (when-let* (((or (null harness) (equal harness (symbol-name provider))))
+                ((or (plist-get settings :model) (plist-get settings :effort)))
+                (entry (limen-provider provider))
+                (arguments (limen-provider-model-arguments entry)))
+      (funcall arguments (plist-get settings :model) (plist-get settings :effort)))))
+
 (defun limen-herdr--arguments (session arguments)
-  "Return complete ARGUMENTS transformed for Herdr SESSION."
-  (if-let* ((entry (limen-provider (limen-herdr--provider session))))
-      (let* ((state (limen-herdr-state session))
-             (route (and state (limen-herdr-state-route state))))
-        (funcall (limen-provider-arguments entry)
-                 (and route (limen-mcp-endpoint route))
-                 arguments))
-    arguments))
+  "Return complete ARGUMENTS transformed for Herdr SESSION.
+The model and effort its settings choose come first."
+  (let ((arguments (append (limen-herdr--settings-arguments session) arguments)))
+    (if-let* ((entry (limen-provider (limen-herdr--provider session))))
+        (let* ((state (limen-herdr-state session))
+               (route (and state (limen-herdr-state-route state))))
+          (funcall (limen-provider-arguments entry)
+                   (and route (limen-mcp-endpoint route))
+                   arguments))
+      arguments)))
+
+;;; Project settings menu
+
+(defun limen-herdr--offered (key)
+  "Return what `limen-message-models' lists under KEY for every harness."
+  (delete-dups (mapcan (lambda (entry) (copy-sequence (plist-get (cdr entry) key)))
+                       (bound-and-true-p limen-message-models))))
+
+(defun limen-herdr-read-harness (prompt initial history)
+  "Read a harness with PROMPT, INITIAL and HISTORY."
+  (require 'herdr-agent)
+  (completing-read prompt (mapcar #'car herdr-agent-harnesses) nil t initial history))
+
+(defun limen-herdr-read-model (prompt initial history)
+  "Read a model with PROMPT, INITIAL and HISTORY, offering `limen-message-models'."
+  (completing-read prompt (limen-herdr--offered :models) nil nil initial history))
+
+(defun limen-herdr-read-effort (prompt initial history)
+  "Read a reasoning effort with PROMPT, INITIAL and HISTORY."
+  (completing-read prompt (or (limen-herdr--offered :efforts)
+                              '("low" "medium" "high" "xhigh" "max"))
+                   nil nil initial history))
+
+(defconst limen-herdr--setting-flags
+  '((:harness . "--harness=") (:model . "--model=") (:effort . "--effort="))
+  "The menu argument each setting is set with.")
+
+(defun limen-herdr-settings-arguments (settings &optional flags)
+  "Return the menu arguments setting SETTINGS, among FLAGS."
+  (delq nil (mapcar (lambda (flag)
+                      (when-let* ((value (plist-get settings (car flag))))
+                        (concat (cdr flag) value)))
+                    (or flags limen-herdr--setting-flags))))
+
+(defun limen-herdr-arguments-settings (arguments &optional flags)
+  "Return the settings menu ARGUMENTS set, among FLAGS."
+  (mapcan (lambda (flag)
+            (when-let* ((value (transient-arg-value (cdr flag) arguments)))
+              (list (car flag) value)))
+          (or flags limen-herdr--setting-flags)))
+
+(defun limen-herdr--project-root ()
+  "Return the project the dashboard row at point, or the dashboard, is about."
+  (let* ((entry (and (fboundp 'herdr-status-entry-at-point)
+                     (derived-mode-p 'herdr-status-mode)
+                     (herdr-status-entry-at-point)))
+         (directory (or (and entry (herdr-entry-directory entry))
+                        (bound-and-true-p herdr-status--project-root)
+                        default-directory)))
+    (or (locate-dominating-file directory ".git") directory)))
+
+(defun limen-herdr-save-project-settings (&optional arguments)
+  "Save the settings the menu's ARGUMENTS set for the dashboard's project."
+  (interactive (list (transient-args 'limen-herdr-project-dispatch)))
+  (let ((root (limen-herdr--project-root))
+        (settings (limen-herdr-arguments-settings arguments)))
+    (setf (alist-get root limen-herdr-project-settings nil 'remove #'equal) settings)
+    (message "%s agents start with %s" (abbreviate-file-name root)
+             (if settings (string-join (limen-herdr-settings-arguments settings) " ")
+               "their defaults"))))
+
+;;;###autoload (autoload 'limen-herdr-project-dispatch "limen-herdr" nil t)
+(transient-define-prefix limen-herdr-project-dispatch ()
+  "Set the harness, model and effort the project's agents start with."
+  :value (lambda ()
+           (limen-herdr-settings-arguments
+            (cdr (assoc (limen-herdr--project-root) limen-herdr-project-settings))))
+  [:description
+   (lambda () (format "Agents of %s" (abbreviate-file-name (limen-herdr--project-root))))
+   ("-h" "harness" "--harness=" :reader limen-herdr-read-harness)
+   ("-m" "model" "--model=" :reader limen-herdr-read-model)
+   ("-e" "reasoning effort" "--effort=" :reader limen-herdr-read-effort)]
+  [("s" "save for this project" limen-herdr-save-project-settings)])
 
 (defun limen-herdr--session (target)
   "Return Herdr session identified by TARGET."
