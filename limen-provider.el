@@ -37,11 +37,22 @@ transcript instead.  EDIT-TOOLS name the tools that change files.
 SESSION-NAME maps a session id to the name the harness gave it.
 SKILL-SOURCE receives a project root, or nil, and returns the harness's
 skills as an alist of name and description.  SKILL-REFERENCE maps a
-skill name to what the harness is sent to invoke it.
+skill name to what the harness is sent to invoke it.  COMMAND-SOURCE
+receives a project root, or nil, and returns the harness's slash
+commands, its own and those written for it, as an alist of name and
+description; a command is sent as a slash and its name.  MODEL-ARGUMENTS
+maps a model and an effort level, either nil, to the launch arguments
+choosing them.
 CAPABILITIES is the plist `limen-herdr-status' reports."
   name config-directory hook-settings hook-transport route arguments
   question-tools transcript-questions-p edit-tools session-name
-  skill-source skill-reference capabilities)
+  skill-source skill-reference command-source model-arguments capabilities)
+
+(defun limen-provider--flag-arguments (model-flag effort-flag)
+  "Return a MODEL-ARGUMENTS function passing MODEL-FLAG and EFFORT-FLAG."
+  (lambda (model effort)
+    (append (and model (list model-flag model))
+            (and effort (list effort-flag effort)))))
 
 (defvar limen-provider--registry nil
   "Registered providers, oldest first.")
@@ -178,11 +189,79 @@ directories it reads them from read instead."
   (when-let* ((skills (limen-provider-skill-source provider)))
     (funcall skills root)))
 
+(defun limen-provider--command-files (directories &optional prefix)
+  "Return the commands the markdown files in DIRECTORIES define.
+Each is named by its file, after PREFIX, and described by its front
+matter; a later directory's command of some name answers for it."
+  (let (commands)
+    (dolist (directory directories)
+      (when (and directory (file-directory-p directory))
+        (dolist (file (directory-files directory t "\\`[^.].*\\.md\\'"))
+          (setf (alist-get (concat prefix (file-name-base file)) commands nil nil #'equal)
+                (limen-provider--skill-description file)))))
+    (nreverse commands)))
+
+(defun limen-provider--command-source (builtin directories &optional prefix)
+  "Return a COMMAND-SOURCE of the BUILTIN commands and those in DIRECTORIES.
+DIRECTORIES receives the project root, or nil, and returns the
+directories commands are written in; PREFIX goes before their names."
+  (lambda (root)
+    (append builtin (limen-provider--command-files (funcall directories root) prefix))))
+
+(defun limen-provider-commands (provider &optional root)
+  "Return the slash commands PROVIDER offers below ROOT, as name and description."
+  (when-let* ((commands (limen-provider-command-source provider)))
+    (funcall commands root)))
+
 (defun limen-provider-skill-call (provider skill)
   "Return what PROVIDER is sent to invoke SKILL."
   (if-let* ((reference (limen-provider-skill-reference provider)))
       (funcall reference skill)
     skill))
+
+(defconst limen-provider--claude-commands
+  '(("add-dir" . "Add a working directory") ("agents" . "Manage subagents")
+    ("clear" . "Clear the conversation") ("compact" . "Compact the conversation")
+    ("config" . "Open settings") ("context" . "Show context usage")
+    ("cost" . "Show token usage") ("doctor" . "Check the installation")
+    ("effort" . "Set the reasoning effort") ("exit" . "Exit")
+    ("export" . "Export the conversation") ("help" . "Show help")
+    ("hooks" . "Manage hooks") ("init" . "Write a CLAUDE.md")
+    ("login" . "Sign in") ("logout" . "Sign out") ("mcp" . "Manage MCP servers")
+    ("memory" . "Edit memory files") ("model" . "Set the model")
+    ("permissions" . "Manage permissions") ("plugin" . "Manage plugins")
+    ("resume" . "Resume a conversation") ("review" . "Review a pull request")
+    ("rewind" . "Rewind the conversation") ("status" . "Show status")
+    ("usage" . "Show plan usage"))
+  "Claude Code's own slash commands.")
+
+(defconst limen-provider--codex-commands
+  '(("approvals" . "Set what runs without asking") ("compact" . "Compact the conversation")
+    ("diff" . "Show the git diff") ("init" . "Write an AGENTS.md")
+    ("logout" . "Sign out") ("mcp" . "List MCP tools") ("mention" . "Mention a file")
+    ("model" . "Set the model and reasoning effort") ("new" . "Start a new conversation")
+    ("quit" . "Exit") ("review" . "Review the changes") ("status" . "Show status"))
+  "Codex's own slash commands.")
+
+(defconst limen-provider--pi-commands
+  '(("changelog" . "Show the changelog") ("compact" . "Compact the conversation")
+    ("copy" . "Copy the last answer") ("export" . "Export the session")
+    ("fork" . "Fork the session") ("hotkeys" . "Show hotkeys") ("login" . "Sign in")
+    ("logout" . "Sign out") ("model" . "Set the model") ("name" . "Name the session")
+    ("new" . "Start a new session") ("quit" . "Exit") ("reload" . "Reload resources")
+    ("resume" . "Resume a session") ("session" . "Show the session")
+    ("settings" . "Open settings") ("share" . "Share the session")
+    ("tree" . "Navigate the session tree"))
+  "Pi's own slash commands, which Oh My Pi shares.")
+
+(defun limen-provider--prompt-directories (home)
+  "Return a function giving the prompt directories below HOME and a project."
+  (lambda (root)
+    (list (expand-file-name "agent/prompts" (funcall home))
+          (and root (expand-file-name
+                     (format "%s/prompts" (file-name-nondirectory
+                                           (directory-file-name (funcall home))))
+                     root)))))
 
 (defun limen-provider-extension-directory ()
   "Return the directory holding the packaged harness extensions.
@@ -209,6 +288,12 @@ pane Limen launched and in one it only adopted alike."
                   (limen-provider--directory-skills
                    (limen-provider--claude-config-directory) root))
   :skill-reference (lambda (skill) (concat "/" skill))
+  :command-source (limen-provider--command-source
+                   limen-provider--claude-commands
+                   (lambda (root)
+                     (list (expand-file-name "commands" (limen-provider--claude-config-directory))
+                           (and root (expand-file-name ".claude/commands" root)))))
+  :model-arguments (limen-provider--flag-arguments "--model" "--effort")
   :capabilities
   '(:transport hooks :operations cli
                :passive-context prompt :explicit-context prompt :diffs nil)))
@@ -237,6 +322,15 @@ pane Limen launched and in one it only adopted alike."
                       (limen-provider--directory-skills
                        (limen-provider--codex-home) root)))
   :skill-reference (lambda (skill) (concat "$" skill))
+  :command-source (limen-provider--command-source
+                   limen-provider--codex-commands
+                   (lambda (_root)
+                     (list (expand-file-name "prompts" (limen-provider--codex-home))))
+                   "prompts:")
+  :model-arguments (lambda (model effort)
+                     (append (and model (list "-c" (format "model=%S" model)))
+                             (and effort
+                                  (list "-c" (format "model_reasoning_effort=%S" effort)))))
   :capabilities
   '(:transport hooks :operations cli
                :passive-context prompt :explicit-context terminal :diffs t)))
@@ -253,6 +347,10 @@ pane Limen launched and in one it only adopted alike."
                   (limen-provider--directory-skills
                    (limen-provider--pi-home) root))
   :skill-reference (lambda (skill) (concat "/skill:" skill))
+  :command-source (limen-provider--command-source
+                   limen-provider--pi-commands
+                   (limen-provider--prompt-directories #'limen-provider--pi-home))
+  :model-arguments (limen-provider--flag-arguments "--model" "--thinking")
   :capabilities
   '(:transport extension :operations cli
                :passive-context next-turn :explicit-context terminal :diffs t)))
@@ -269,6 +367,10 @@ pane Limen launched and in one it only adopted alike."
                   (limen-provider--directory-skills
                    (limen-provider--omp-home) root))
   :skill-reference (lambda (skill) (concat "/skill:" skill))
+  :command-source (limen-provider--command-source
+                   limen-provider--pi-commands
+                   (limen-provider--prompt-directories #'limen-provider--omp-home))
+  :model-arguments (limen-provider--flag-arguments "--model" "--thinking")
   :capabilities
   '(:transport extension :operations cli
                :passive-context next-turn :explicit-context terminal :diffs t)))
