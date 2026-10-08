@@ -34,9 +34,7 @@
 (declare-function herdr-agent-derive-name "ext:herdr-agent" (entry))
 (declare-function herdr-agent--repository "ext:herdr-agent" (directory))
 (declare-function herdr-entry-label "ext:herdr" (entry))
-(declare-function herdr-status-cached-agents "ext:herdr-status" ())
 (declare-function herdr-api-agent-list "ext:herdr-api" ())
-(declare-function herdr-agent-title "ext:herdr" (name))
 (declare-function herdr--entry-server "ext:herdr" (entry))
 (defvar herdr-socket-path)
 (defvar herdr-agent-name-function)
@@ -789,29 +787,18 @@ conses of the role and its text."
               (reverse (seq-take turns limen-herdr--name-turns))))))
 
 (defun limen-herdr--other-agents (entry)
-  "Return the names of the agents beside ENTRY, as they are shown.
-These are the agents the dashboard shows and every name already taken
-on ENTRY's server, which a new name has to differ from."
-  (let* ((own (alist-get 'name entry))
-         (server (herdr--entry-server entry))
-         (shown (when (derived-mode-p 'herdr-status-mode)
-                  (delq nil
-                        (mapcar (lambda (other)
-                                  (unless (and (equal (alist-get 'pane_id other)
-                                                      (alist-get 'pane_id entry))
-                                               (equal (alist-get 'server_key other)
-                                                      (alist-get 'server_key entry)))
-                                    (herdr-entry-label other)))
-                                (herdr-status-cached-agents)))))
-         (taken (mapcar #'herdr-agent-title
-                        (remove own
-                                (delq nil
-                                      (mapcar (lambda (agent) (alist-get 'name agent))
-                                              (ignore-errors
-                                                (let ((herdr-socket-path server))
-                                                  (alist-get 'agents
-                                                             (herdr-api-agent-list))))))))))
-    (delete-dups (append shown taken))))
+  "Return the agents running beside ENTRY in its herdr session, as shown.
+Each goes by its name's title, or the title its terminal shows."
+  (let ((server (herdr--entry-server entry)))
+    (delete-dups
+     (delq nil
+           (mapcar (lambda (agent)
+                     (unless (equal (alist-get 'pane_id agent) (alist-get 'pane_id entry))
+                       (when-let* ((label (herdr-entry-label agent)))
+                         (truncate-string-to-width label 60 nil nil "…"))))
+                   (ignore-errors
+                     (let ((herdr-socket-path server))
+                       (alist-get 'agents (herdr-api-agent-list)))))))))
 
 (defun limen-herdr--name-description (entry)
   "Return the description of Herdr agent ENTRY Claude names it from, or nil.
