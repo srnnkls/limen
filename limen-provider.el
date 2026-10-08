@@ -21,6 +21,21 @@
 (require 'json)
 (require 'seq)
 
+(defconst limen-provider-claude-small-model "claude-haiku-5-5"
+  "The Claude model Limen asks for short generated text, as recaps and names.")
+
+(defun limen-provider-claude-print-command (model instruction &rest arguments)
+  "Return a claude command answering its stdin with MODEL under INSTRUCTION.
+Nothing of the user's setup is loaded: no settings, hooks, tools, MCP
+servers or slash commands, and no session is kept.  ARGUMENTS come
+before the system prompt."
+  `("claude" "-p" "--model" ,model ,@arguments
+    "--disable-slash-commands" "--tools" ""
+    "--setting-sources" "" "--settings" "{\"disableAllHooks\":true}"
+    "--strict-mcp-config" "--mcp-config" "{\"mcpServers\":{}}"
+    "--no-session-persistence" "--output-format" "text"
+    "--system-prompt" ,instruction))
+
 (cl-defstruct (limen-provider (:constructor limen-provider--make))
   "What Limen knows about one agent harness.
 NAME is its symbol.  CONFIG-DIRECTORY and HOOK-SETTINGS are functions

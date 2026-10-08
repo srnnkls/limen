@@ -360,7 +360,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
     (limen-message--generate state 'key "private transcript; $(bad)")
     (should (equal stdin "private transcript; $(bad)"))
     (should-not (seq-some (lambda (arg) (string-match-p "private transcript" arg)) argv))
-    (should (equal (cadr (member "--model" argv)) "haiku"))
+    (should (equal (cadr (member "--model" argv)) limen-provider-claude-small-model))
     (should (equal (cadr (member "--tools" argv)) ""))
     (should (equal (cadr (member "--setting-sources" argv)) ""))
     (should (member "--strict-mcp-config" argv))

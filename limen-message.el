@@ -12,6 +12,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'seq)
+(require 'limen-provider)
 (require 'limen-transcript)
 
 (defface limen-message-recap
@@ -235,7 +236,7 @@ installed, fails or says nothing steps aside for the next."
   :type '(choice (const "minimal") (const "low") (const "medium") (const "high"))
   :group 'limen-message)
 
-(defcustom limen-message-claude-model "haiku"
+(defcustom limen-message-claude-model limen-provider-claude-small-model
   "The model claude is asked for a recap with."
   :type 'string :group 'limen-message)
 
@@ -1238,12 +1239,7 @@ the recap the command gave."
   "Return the claude command for INSTRUCTION, and TRANSCRIPT for its stdin.
 The transcript never reaches the command line, where it would be read as
 arguments; INSTRUCTION is carried as the system prompt, apart from it."
-  (cons `("claude" "-p" "--model" ,limen-message-claude-model
-          "--disable-slash-commands" "--tools" ""
-          "--setting-sources" "" "--settings" "{\"disableAllHooks\":true}"
-          "--strict-mcp-config" "--mcp-config" "{\"mcpServers\":{}}"
-          "--no-session-persistence" "--output-format" "text"
-          "--system-prompt" ,instruction)
+  (cons (limen-provider-claude-print-command limen-message-claude-model instruction)
         transcript))
 
 (defun limen-message--claude-answer (_directory output)
