@@ -120,7 +120,8 @@ from its own terminal is left alone, and its agents get neither context nor revi
 `limen-herdr-mode` names and titles Herdr agents through Limen while Herdr's own
 `herdr-agent-name-function` and `herdr-agent-title-function` stand. `limen-herdr-agent-name` asks
 `claude -p` with `limen-provider-claude-small-model`, the model recaps use as well, for a Title Case
-name after the task the agent's terminal title shows; Herdr keeps its slug as the agent's name, and
+name after the agent's last five turns, which it reads through memex, its terminal title and the
+names of the other agents on the dashboard; Herdr keeps its slug as the agent's name, and
 `limen-herdr-agent-title` shows that slug as Title Case again. Where Claude answers no valid name
 within `limen-herdr-name-timeout` seconds, Herdr's derived name stands.
 
