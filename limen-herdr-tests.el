@@ -4,6 +4,9 @@
 (require 'ert)
 (require 'limen-herdr)
 
+(defvar herdr-agent-name-function)
+(defvar herdr-agent-title-function)
+
 (ert-deftest limen-herdr-project-settings-choose-model-and-effort-at-launch ()
   (let ((limen-herdr-project-settings
          '(("/repo/" :harness "codex" :model "gpt-6" :effort "high")
@@ -31,6 +34,55 @@
     (should (equal (limen-herdr-arguments-settings
                     (limen-herdr-settings-arguments settings))
                    settings))))
+
+(ert-deftest limen-herdr-agent-name-asks-claude-about-the-task-its-title-shows ()
+  (let ((entry '((agent . "claude") (cwd . "/repo/limen/")
+                 (terminal_title_stripped . "Injectable agent name derivation")))
+        asked)
+    (cl-letf (((symbol-function 'herdr-entry-directory)
+               (lambda (entry) (alist-get 'cwd entry)))
+              ((symbol-function 'limen-herdr--ask-name)
+               (lambda (description) (setq asked description) "Limen Agent Naming")))
+      (should (equal (limen-herdr-agent-name entry) "Limen Agent Naming"))
+      (should (equal asked (concat "Repository: limen\nHarness: claude\n"
+                                   "Terminal title: Injectable agent name derivation\n"))))))
+
+(ert-deftest limen-herdr-agent-name-derives-one-where-claude-gives-none ()
+  (let ((titled '((agent . "claude") (terminal_title_stripped . "Index work")))
+        (untitled '((agent . "codex"))))
+    (cl-letf (((symbol-function 'herdr-entry-directory) #'ignore)
+              ((symbol-function 'limen-herdr--ask-name) #'ignore)
+              ((symbol-function 'herdr-agent-derive-name)
+               (lambda (entry) (concat "derived-" (alist-get 'agent entry)))))
+      (should (equal (limen-herdr-agent-name titled) "derived-claude"))
+      (should (equal (limen-herdr-agent-name untitled) "derived-codex")))))
+
+(ert-deftest limen-herdr-name-answers-only-a-short-title ()
+  (should (equal (limen-herdr--name-answer "Limen Workon Scope\n")
+                 "Limen Workon Scope"))
+  (dolist (answer '("limen-workon-scope" "Limen  Workon" "Limen: Workon"
+                    "Extraordinarily Long Title Over Thirty" "" nil))
+    (should-not (limen-herdr--name-answer answer))))
+
+(ert-deftest limen-herdr-agent-title-reads-a-name-as-words ()
+  (should (equal (limen-herdr-agent-title "limen-workon-scope") "Limen Workon Scope"))
+  (should (equal (limen-herdr-agent-title "my_agent-2") "My Agent 2")))
+
+(ert-deftest limen-herdr-takes-herdr-s-naming-only-where-its-defaults-stand ()
+  (let ((herdr-agent-name-function #'herdr-agent-derive-name)
+        (herdr-agent-title-function #'upcase))
+    (limen-herdr--take-names)
+    (should (eq herdr-agent-name-function #'limen-herdr-agent-name))
+    (should (eq herdr-agent-title-function #'upcase))
+    (limen-herdr--give-back-names)
+    (should (eq herdr-agent-name-function #'herdr-agent-derive-name))
+    (should (eq herdr-agent-title-function #'upcase))))
+
+(ert-deftest limen-herdr-name-command-uses-the-shared-small-model ()
+  (let ((argv (limen-herdr--name-command)))
+    (should (equal (cadr (member "--model" argv)) limen-provider-claude-small-model))
+    (should (equal (cadr (member "--effort" argv)) "low"))
+    (should (equal (car (last argv)) limen-herdr--name-instruction))))
 
 (provide 'limen-herdr-tests)
 ;;; limen-herdr-tests.el ends here

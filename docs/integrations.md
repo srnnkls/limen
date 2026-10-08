@@ -117,6 +117,13 @@ an adopted agent answers its hooks whether or not its terminal is on screen.
 Emacs is attached to (`herdr-known-sessions`) and work in known projects. A Herdr session driven
 from its own terminal is left alone, and its agents get neither context nor review.
 
+`limen-herdr-mode` names and titles Herdr agents through Limen while Herdr's own
+`herdr-agent-name-function` and `herdr-agent-title-function` stand. `limen-herdr-agent-name` asks
+`claude -p` with `limen-provider-claude-small-model`, the model recaps use as well, for a Title Case
+name after the task the agent's terminal title shows; Herdr keeps its slug as the agent's name, and
+`limen-herdr-agent-title` shows that slug as Title Case again. Where Claude answers no valid name
+within `limen-herdr-name-timeout` seconds, Herdr's derived name stands.
+
 ## Adding a harness
 
 `limen-provider-register` takes a `limen-provider` record, built with `limen-provider--make`:
