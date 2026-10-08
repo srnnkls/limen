@@ -143,11 +143,45 @@ root the way it would in a shell."
     (limen-complete-tests--in-field "#lim"
       (should (eq (limen-complete-tests--capf) 'fallback)))))
 
+(ert-deftest limen-complete-offers-slash-commands-beside-skills ()
+  (let ((herdr-message--pending '(("/servers/a.sock" . "shared") . "ctx"))
+        (limen-complete--skills nil))
+    (cl-letf (((symbol-function 'limen--project-root) (lambda (_directory) "/tmp/p/"))
+              ((symbol-function 'herdr-message--target-harness) (lambda (_target) "codex"))
+              ((symbol-function 'limen-provider-skills)
+               (lambda (_provider _root) '(("review-code" . "Review code"))))
+              ((symbol-function 'limen-provider-commands)
+               (lambda (_provider _root) '(("review" . "Review the changes") ("model" . nil)))))
+      (limen-complete-tests--in-field "/re"
+        (let* ((capf (limen-complete-tests--capf))
+               (exit (plist-get (nthcdr 3 capf) :exit-function)))
+          (should (equal (nth 2 capf) '("/review-code" "/review" "/model")))
+          (should (equal (funcall (plist-get (nthcdr 3 capf) :annotation-function) "/model")
+                         " codex command"))
+          (goto-char (point-max))
+          (insert "view")
+          (funcall exit "/review" 'finished)
+          (should (equal (buffer-string) "/review")))))))
+
+(ert-deftest limen-provider-commands-read-builtins-and-command-files ()
+  (let* ((home (make-temp-file "limen-commands" t))
+         (process-environment (cons (concat "CLAUDE_CONFIG_DIR=" home) process-environment)))
+    (unwind-protect
+        (progn
+          (make-directory (expand-file-name "commands" home))
+          (with-temp-file (expand-file-name "commands/emacs.md" home)
+            (insert "---\ndescription: Open files in Emacs\n---\nbody\n"))
+          (let ((commands (limen-provider-commands (limen-provider 'claude) nil)))
+            (should (equal (assoc "emacs" commands) '("emacs" . "Open files in Emacs")))
+            (should (assoc "compact" commands))))
+      (delete-directory home t))))
+
 (ert-deftest limen-complete-offers-the-skills-of-the-harness-written-to ()
   (let ((herdr-message--pending '(("/servers/a.sock" . "shared") . "ctx"))
         (limen-complete--skills nil))
     (cl-letf (((symbol-function 'limen--project-root) (lambda (_directory) "/tmp/p/"))
               ((symbol-function 'herdr-message--target-harness) (lambda (_target) "claude"))
+              ((symbol-function 'limen-provider-commands) #'ignore)
               ((symbol-function 'limen-provider-skills)
                (lambda (_provider _root)
                  '(("git" . "Modern git workflows. Use when branching.")
@@ -163,6 +197,7 @@ root the way it would in a shell."
     (setq limen-complete--skills nil)
     (cl-letf (((symbol-function 'limen--project-root) (lambda (_directory) "/tmp/p/"))
               ((symbol-function 'herdr-message--target-harness) (lambda (_target) "codex"))
+              ((symbol-function 'limen-provider-commands) #'ignore)
               ((symbol-function 'limen-provider-skills)
                (lambda (_provider _root) '(("bash" . "Bash patterns")))))
       (limen-complete-tests--in-field "/ba"

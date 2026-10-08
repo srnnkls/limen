@@ -12,9 +12,10 @@
 
 ;; Offers three completion sources inside a Cera field, each behind the
 ;; character that opens it: `@' project files, `#' scholia annotations of
-;; the visible sessions, and `/' the skills of the harness the message is
-;; going to.  A message written to Codex takes its skills in Codex's own
-;; form, so the field rewrites the `/' into a `$' as the skill lands.
+;; the visible sessions, and `/' the skills and slash commands of the
+;; harness the message is going to.  A message written to Codex takes its
+;; skills in Codex's own form, so the field rewrites the `/' into a `$' as
+;; a skill lands; a command keeps its slash.
 
 ;;; Code:
 
@@ -156,37 +157,52 @@ project every name does, from the directory the field belongs to."
           (push (cons key skills) limen-complete--skills)
           skills))))
 
-(defun limen-complete--skill-exit (provider position)
+(defun limen-complete--command-names (provider root)
+  "Return PROVIDER's slash commands below ROOT, reading them once."
+  (let ((key (list (limen-provider-name provider) root 'commands)))
+    (or (cdr (assoc key limen-complete--skills))
+        (let ((commands (limen-provider-commands provider root)))
+          (push (cons key commands) limen-complete--skills)
+          commands))))
+
+(defun limen-complete--skill-exit (provider position skills)
   "Return the function rewriting the character at POSITION for PROVIDER.
-Nothing is returned for a harness that invokes a skill by the character
-the field was opened with."
+It rewrites only when the candidate is one of SKILLS.  Nothing is
+returned for a harness that invokes a skill by the character the field
+was opened with."
   (let ((reference (limen-provider-skill-call provider ""))
         (opened (char-to-string (char-after position))))
     (unless (equal reference opened)
-      (lambda (_candidate status)
-        (when (memq status '(finished exact))
+      (lambda (candidate status)
+        (when (and (memq status '(finished exact))
+                   (assoc (string-remove-prefix opened candidate) skills))
           (save-excursion
             (goto-char position)
             (delete-char 1)
             (insert reference)))))))
 
 (defun limen-complete-skills (begin end)
-  "Complete a skill of the message's harness between BEGIN and END."
-  (when-let* ((provider (limen-complete--provider))
-              (skills (limen-complete--skill-names provider (limen-complete--root))))
-    (let ((opened (limen-complete--opened begin)))
-      (append (list begin end (limen-complete--carrying
-                               begin (mapcar #'car skills))
-                    :exclusive 'no :company-prefix-length t
-                    :annotation-function
-                    (lambda (candidate)
-                      (if-let* ((description
-                                 (cdr (assoc (string-remove-prefix opened candidate)
-                                             skills))))
-                          (concat " " (car (split-string description "\\. ")))
-                        (format " %s skill" (limen-provider-name provider)))))
-              (when-let* ((exit (limen-complete--skill-exit provider begin)))
-                (list :exit-function exit))))))
+  "Complete a skill or slash command of the message's harness between BEGIN and END."
+  (when-let* ((provider (limen-complete--provider)))
+    (let* ((root (limen-complete--root))
+           (skills (limen-complete--skill-names provider root))
+           (commands (limen-complete--command-names provider root))
+           (opened (limen-complete--opened begin)))
+      (when (or skills commands)
+        (append (list begin end (limen-complete--carrying
+                                 begin (delete-dups (mapcar #'car (append skills commands))))
+                      :exclusive 'no :company-prefix-length t
+                      :annotation-function
+                      (lambda (candidate)
+                        (let* ((name (string-remove-prefix opened candidate))
+                               (skill (assoc name skills))
+                               (description (cdr (or skill (assoc name commands)))))
+                          (if description
+                              (concat " " (car (split-string description "\\. ")))
+                            (format " %s %s" (limen-provider-name provider)
+                                    (if skill "skill" "command"))))))
+                (when-let* ((exit (limen-complete--skill-exit provider begin skills)))
+                  (list :exit-function exit)))))))
 
 
 ;;;; Routing
