@@ -87,7 +87,9 @@ SSE. Shutdown withdraws the extension's tools. The selection reaches Pi and Oh M
 ## Launch and adoption
 
 `limen-herdr-mode` registers one adapter with Herdr for the `claude`, `codex`, `pi` and `omp`
-kinds. Herdr calls it through an agent's life:
+kinds. It also tells Herdr, through `herdr-message-shown-functions`, that a memex view of an
+agent's conversation already shows that agent, so a message written from the view leaves the
+agent's terminal where it is. Herdr calls the adapter through an agent's life:
 
 ```elisp
 (adapter session :prepare)

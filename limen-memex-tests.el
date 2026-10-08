@@ -73,6 +73,23 @@ buffers it is asked to redraw in REFRESHED, and timers fire at once."
             (should (equal refreshed views))))
       (delete-directory directory t))))
 
+(ert-deftest limen-memex-knows-the-view-of-an-agents-conversation ()
+  (limen-memex-tests--with-views '(("s1" "/tmp/limen-memex/s1.jsonl"))
+    (cl-letf (((symbol-function 'herdr--entry-for-target)
+               (lambda (target)
+                 (pcase (cdr target)
+                   ("by-id" '((agent_session (kind . "id") (value . "s1"))))
+                   ("by-path" '((agent_session (kind . "path")
+                                               (value . "/tmp/limen-memex/s1.jsonl"))))
+                   ("other" '((agent_session (kind . "id") (value . "s2"))))))))
+      (with-current-buffer (car views)
+        (should (limen-memex-shows-agent-p '("a.sock" . "by-id")))
+        (should (limen-memex-shows-agent-p '("a.sock" . "by-path")))
+        (should-not (limen-memex-shows-agent-p '("a.sock" . "other")))
+        (should-not (limen-memex-shows-agent-p '("a.sock" . "gone"))))
+      (with-temp-buffer
+        (should-not (limen-memex-shows-agent-p '("a.sock" . "by-id")))))))
+
 (ert-deftest limen-memex-coalesces-a-burst-into-one-redraw ()
   (limen-memex-tests--with-views '(("s1" "/tmp/limen-memex/s1.jsonl"))
     (let ((payload '((hook_event_name . "PostToolUse") (session_id . "s1")))

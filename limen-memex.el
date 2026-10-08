@@ -22,6 +22,7 @@
 (require 'limen-hooks)
 
 (declare-function memex-view-refresh "ext:memex-view" (&optional buffer))
+(declare-function herdr--entry-for-target "ext:herdr-agent" (target))
 (defvar memex-view-session-id)
 (defvar memex-view-source-path)
 
@@ -82,6 +83,20 @@ where a harness reports no transcript."
                      (or (not limen-memex-live-visible-only)
                          (get-buffer-window buffer 'visible))))
               (buffer-list)))
+
+(defun limen-memex-shows-agent-p (target)
+  "Return non-nil when this buffer is a memex view of TARGET's conversation.
+TARGET is a herdr agent's (SERVER-KEY . TERMINAL-ID), and its
+conversation is the session herdr reports the agent running, by id or
+by transcript."
+  (when-let* (((derived-mode-p 'memex-session-mode))
+              ((fboundp 'herdr--entry-for-target))
+              (reference (alist-get 'agent_session (herdr--entry-for-target target))))
+    (limen-memex--view-p
+     (current-buffer)
+     (pcase (alist-get 'kind reference)
+       ("id" `((session_id . ,(alist-get 'value reference))))
+       ("path" `((transcript_path . ,(alist-get 'value reference))))))))
 
 (defun limen-memex--refresh (buffer)
   "Redraw BUFFER's transcript, unless it was killed while waiting."

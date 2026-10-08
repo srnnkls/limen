@@ -35,6 +35,8 @@
 (declare-function limen-message-disable "limen-message" ())
 (defvar herdr-agent--sessions)
 (defvar herdr-send-context-functions)
+(defvar herdr-message-shown-functions)
+(autoload 'limen-memex-shows-agent-p "limen-memex")
 
 (defgroup limen-herdr nil
   "Connect Herdr agent sessions to Limen."
@@ -601,6 +603,7 @@ an agent is worth nothing without the server it was read from."
               (unless existing
                 (push kind registered))))
           (add-hook 'herdr-send-context-functions #'limen-herdr-send-context)
+          (add-hook 'herdr-message-shown-functions #'limen-memex-shows-agent-p)
           t)
       (error
        (unless context-registered
@@ -617,6 +620,7 @@ an agent is worth nothing without the server it was read from."
         unregistered)
     (when context-registered
       (remove-hook 'herdr-send-context-functions #'limen-herdr-send-context))
+    (remove-hook 'herdr-message-shown-functions #'limen-memex-shows-agent-p)
     (condition-case err
         (progn
           (dolist (kind '("claude" "codex" "pi" "omp"))
