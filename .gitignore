@@ -5,3 +5,4 @@
 
 # phora-vendored third-party sources (regenerated from phora.lock)
 /resources/
+.worktrees/
