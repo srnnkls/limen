@@ -138,13 +138,14 @@ and :effort sets one the way :command sets a model, such as
 (declare-function limen-usage-format "limen-usage" (held total))
 (declare-function limen-usage-window "limen-usage" (model))
 (declare-function herdr-agent-prompt "ext:herdr-agent" (target text))
-(declare-function herdr-agent-paste "ext:herdr-agent" (target text))
+(declare-function herdr-agent-run "ext:herdr-agent" (target text))
 (declare-function herdr--entry-for-target "ext:herdr-agent" (target))
 (declare-function herdr-agent--entry-project "ext:herdr-agent" (entry))
 (declare-function herdr--entry-label "ext:herdr" (entry))
 (declare-function herdr-entry-directory "ext:herdr" (entry))
 (declare-function herdr-workspace-label "ext:herdr" (directory))
 (declare-function herdr-current-workspace-label "ext:herdr" ())
+(declare-function herdr-terminal-screen-p "ext:herdr-terminal" (&optional buffer))
 (declare-function herdr-status-glyph "ext:herdr-status" (glyph))
 (defvar herdr-status-field-glyphs)
 (declare-function herdr-agent-read "ext:herdr-agent" (target))
@@ -649,8 +650,7 @@ Codex takes no model by name, so the menu is opened and MODEL's row
 chosen by its digit.  The reasoning levels Codex offers MODEL are read
 here, with the one it highlights as the default; a level opening a
 further menu has that one read too.  A menu left half-way is closed."
-  (herdr-agent-paste target "/model")
-  (herdr-agent-type-keys target '("enter"))
+  (herdr-agent-run target "/model")
   (let (done)
     (unwind-protect
         (let ((row (assoc model (limen-message--codex-rows
@@ -1427,7 +1427,9 @@ a field close it again."
       (funcall original target context)
     (limen-message--dismiss)
     (if (not (and (not (minibufferp))
-                  (not (get-buffer-process (current-buffer)))
+                  (or (and (fboundp 'herdr-terminal-screen-p)
+                           (herdr-terminal-screen-p))
+                      (not (get-buffer-process (current-buffer))))
                   (require 'cera nil t) (fboundp 'cera-pane)
                   (fboundp 'cera-update-pane) (fboundp 'cera-read-stack)))
         (funcall original target context)

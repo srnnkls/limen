@@ -79,6 +79,23 @@ A pane stacks blocks, which stand where the lines of one text stood."
       (should (equal (limen-message--read-field #'list 'target "source")
                      '(target "source"))))))
 
+(ert-deftest limen-message-takes-the-field-over-a-terminal-but-not-a-process ()
+  (let ((limen-message-context t) (cera-read-context-function nil)
+        (cera-session-keymap nil) (cera-session-start-hook nil)
+        terminal)
+    (cl-letf (((symbol-function 'require) (lambda (&rest _) t))
+              ((symbol-function 'cera-pane) #'list)
+              ((symbol-function 'cera-update-pane) #'ignore)
+              ((symbol-function 'cera-read-stack) #'ignore)
+              ((symbol-function 'get-buffer-process) (lambda (&rest _) 'process))
+              ((symbol-function 'herdr-terminal-screen-p) (lambda (&rest _) terminal)))
+      (with-temp-buffer
+        (should-not (limen-message--read-field
+                     (lambda (&rest _) cera-read-context-function) 'target "source"))
+        (setq terminal t)
+        (should (limen-message--read-field
+                 (lambda (&rest _) cera-read-context-function) 'target "source"))))))
+
 (ert-deftest limen-message-missing-memex-is-unavailable ()
   (limen-message-tests--state
     (cl-letf (((symbol-function 'herdr-agent-find) (lambda (&rest _) 'session))
@@ -1246,8 +1263,11 @@ the default.  BODY sees the keys sent in SENT, the offers in OFFERED and
 where Codex ended up in PLACE."
   (declare (indent 1))
   `(let ((place 'composer) sent offered)
-     (cl-letf (((symbol-function 'herdr-agent-paste)
-                (lambda (_target text) (push text sent)))
+     (cl-letf (((symbol-function 'herdr-agent-run)
+                (lambda (_target text)
+                  (push text sent)
+                  (push "enter" sent)
+                  (when (eq place 'composer) (setq place 'models))))
                ((symbol-function 'herdr-agent-type-keys)
                 (lambda (_target keys)
                   (dolist (key keys)
