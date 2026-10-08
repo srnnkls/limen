@@ -119,7 +119,7 @@ Limen binds no global key. These commands are the entry points:
 | [`limen-hooks-install`](REFERENCE.md#limen-hooksel) | add Limen's hooks to a harness's settings |
 | [`limen-hooks-uninstall`](REFERENCE.md#limen-hooksel) | remove them |
 | [`limen-herdr-claude-adopt`](REFERENCE.md#limen-herdr-claudeel) | take up a Claude Code agent Herdr already runs |
-| [`limen-herd-dispatch`](REFERENCE.md#limen-herdel) | choose the herd notices agents receive; `n` in `herdr-status` |
+| [`limen-herd-dispatch`](REFERENCE.md#limen-herdel) | choose the herd notices agents receive; `n` in Herdr's herd menu |
 | [`limen-trail-clear`](REFERENCE.md#limen-trailel) | forget the buffer trail |
 | [`limen-inbox-clear`](REFERENCE.md#limen-inboxel) | forget every pending question |
 | [`limen-model-backfill`](REFERENCE.md#limen-modelel), [`limen-usage-backfill`](REFERENCE.md#limen-usageel) | fill the dashboard's model and context columns for agents started earlier |

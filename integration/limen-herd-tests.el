@@ -60,18 +60,19 @@
       (should (string-match-p "notify:finished,exited"
                               (cdr (car herdr-herd-tests--prompts)))))))
 
-(ert-deftest limen-herd-menu-attaches-to-the-dashboard-and-detaches ()
+(ert-deftest limen-herd-menu-attaches-to-the-herd-menu-only ()
   (unwind-protect
-      (progn
+      (let ((new-agent (lookup-key herdr-status-mode-map "n"))
+            (dispatch-n (transient-get-suffix 'herdr-status-dispatch "n")))
         (limen-herd--attach-menu)
-        (should (transient-get-suffix 'herdr-status-dispatch "n"))
-        (should (transient-get-suffix 'herdr-herd-dispatch "n"))
-        (should (eq (lookup-key herdr-status-mode-map "n") #'limen-herd-dispatch))
         (limen-herd--attach-menu)
+        (should (eq (plist-get (cdr (transient-get-suffix 'herdr-herd-dispatch "n"))
+                               :command)
+                    'limen-herd-dispatch))
+        (should (eq (lookup-key herdr-status-mode-map "n") new-agent))
         (limen-herd--detach-menu)
-        (should-not (ignore-errors (transient-get-suffix 'herdr-status-dispatch "n")))
         (should-not (ignore-errors (transient-get-suffix 'herdr-herd-dispatch "n")))
-        (should-not (lookup-key herdr-status-mode-map "n")))
+        (should (equal (transient-get-suffix 'herdr-status-dispatch "n") dispatch-n)))
     (limen-herd--detach-menu)))
 
 (provide 'limen-herd-integration-tests)

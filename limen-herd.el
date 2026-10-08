@@ -53,7 +53,6 @@
 (defvar herdr-herd-sent-functions)
 (defvar herdr-agent-event-functions)
 (defvar herdr-session)
-(defvar herdr-status-mode-map)
 
 (defgroup limen-herd nil
   "Herd notices through agent hooks."
@@ -633,33 +632,24 @@ rename <pane> \"herd:<name> %sfinished,exited\"'. A notice opens with
   (and (fboundp prefix) (get prefix 'transient--prefix) t))
 
 (defun limen-herd--attach-menu ()
-  "Reach the menu from the dashboard and the herd menu."
-  (when (and (limen-herd--prefix-loaded-p 'herdr-status-dispatch)
-             (not (ignore-errors (transient-get-suffix 'herdr-status-dispatch "n"))))
-    (transient-append-suffix 'herdr-status-dispatch #'herdr-herd-dispatch
-      '("n" "notices" limen-herd-dispatch)))
-  (when (boundp 'herdr-status-mode-map)
-    (define-key herdr-status-mode-map "n" #'limen-herd-dispatch))
+  "Reach the menu from the herd menu."
   (when (and (limen-herd--prefix-loaded-p 'herdr-herd-dispatch)
              (not (ignore-errors (transient-get-suffix 'herdr-herd-dispatch "n"))))
     (transient-append-suffix 'herdr-herd-dispatch "R"
       '("n" "notices" limen-herd-dispatch))))
 
 (defun limen-herd--detach-menu ()
-  "Take the menu out of the dashboard and the herd menu again."
-  (dolist (prefix '(herdr-status-dispatch herdr-herd-dispatch))
-    (when (and (limen-herd--prefix-loaded-p prefix)
-               (ignore-errors (transient-get-suffix prefix "n")))
-      (transient-remove-suffix prefix "n")))
-  (when (and (boundp 'herdr-status-mode-map)
-             (eq (lookup-key herdr-status-mode-map "n") #'limen-herd-dispatch))
-    (define-key herdr-status-mode-map "n" nil)))
+  "Take the menu out of the herd menu again."
+  (when (and (limen-herd--prefix-loaded-p 'herdr-herd-dispatch)
+             (eq (plist-get (cdr (ignore-errors
+                                   (transient-get-suffix 'herdr-herd-dispatch "n")))
+                            :command)
+                 'limen-herd-dispatch))
+    (transient-remove-suffix 'herdr-herd-dispatch "n")))
 
 (defun limen-herd--attach-when-loaded ()
   "Attach the menu once the dashboard and herd packages are loaded."
   (limen-herd--attach-menu)
-  (with-eval-after-load 'herdr-status
-    (when limen-herd-mode (limen-herd--attach-menu)))
   (with-eval-after-load 'herdr-herd
     (when limen-herd-mode (limen-herd--attach-menu))))
 

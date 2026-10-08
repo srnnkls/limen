@@ -239,8 +239,7 @@ and `limen-inbox-option-section-map`, whose parent is the question map.
 | `limen-herd-herd-subscribe-all`, `limen-herd-herd-unsubscribe-all`, `limen-herd-herd-subscribe-defaults` | the same for every member of the herd at point |
 | `limen-herd-toggle-online`, `limen-herd-toggle-prompt`, `limen-herd-toggle-finished`, `limen-herd-toggle-exited` | toggle one kind |
 
-`limen-herd-dispatch`, on `n` in `herdr-status`, in `herdr-status-dispatch` and in
-`herdr-herd-dispatch`:
+`limen-herd-dispatch`, on `n` in `herdr-herd-dispatch`:
 
 | Key | Does |
 | --- | --- |

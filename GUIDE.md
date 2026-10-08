@@ -555,7 +555,7 @@ tells each member what the others do:
 
 There are four kinds of notice: `online` (a member came up), `prompt` (it started a turn),
 `finished` (it ended one) and `exited`. A member receives nothing until it subscribes. Press `n`
-on an agent in `herdr-status`, or in Herdr's herd menu, to open `limen-herd-dispatch`: `o`, `p`,
+in Herdr's herd menu on an agent in `herdr-status` to open `limen-herd-dispatch`: `o`, `p`,
 `f` and `x` toggle a kind for the agents at point or in the region; `a`, `n` and `d` set all,
 none, or `limen-herd-default-events`; `A`, `N` and `D` do the same for the whole herd at point.
 The choice is stored in the pane label as `notify:KIND,...` next to `herd:NAME`, so it survives
