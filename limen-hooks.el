@@ -307,7 +307,8 @@ a group without one runs for every tool, so it covers any MATCHER."
 
 (defun limen-hooks-installed-p (provider &optional specs)
   "Return non-nil when PROVIDER runs Limen's hooks for every spec.
-SPECS limits the check to those (EVENT . MATCHER) specs.  An extension answers whatever Limen asks of it as soon as it is loaded,
+SPECS limits the check to those (EVENT . MATCHER) specs.  An
+extension answers whatever Limen asks of it as soon as it is loaded,
 so there is nothing to install and nothing to find missing."
   (if (limen-hooks-extension-provider-p provider)
       t
@@ -556,7 +557,7 @@ from gives no snapshot."
                                  (error nil)))
                 (session (limen-herdr-session-for agent-session))
                 ((limen-hooks-installed-p (limen-session-provider session)
-                                         limen-hooks--context-events)))
+                                          limen-hooks--context-events)))
       (let ((draft (gethash session limen-hooks--drafts)))
         (remhash session limen-hooks--drafts)
         (when-let* ((pending (if (equal (car draft) context)
