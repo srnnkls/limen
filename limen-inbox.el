@@ -922,16 +922,44 @@ MULTI controls toggling and whether notes are supported."
          (oset section keymap (if notes-enabled
                                   'limen-inbox--preview-option-map
                                 'limen-inbox-option-section-map))
-         (magit-insert-heading
-           (format "      %d. " (1+ index))
-           (if (member label chosen) "● " "○ ")
-           (propertize label 'font-lock-face 'herdr-status-meta))
+         (let ((lead (format "      %d. %s " (1+ index)
+                             (if (member label chosen) "●" "○"))))
+           (magit-insert-heading
+             lead
+             (propertize (limen-inbox--wrap label (string-width lead))
+                         'font-lock-face 'herdr-status-meta)))
          (limen-inbox--insert-preview (nth index previews))
          (when (and notes-enabled (stringp (nth index previews)))
            (let ((notes (limen-inbox--note qid (1+ index))))
              (when (limen-inbox--notes-p notes)
                (limen-inbox--insert-note notes))))))
      options)))
+
+(defun limen-inbox--width ()
+  "Return the columns a line of the dashboard has before it is cut off."
+  (1- (if-let* ((window (get-buffer-window nil t)))
+          (window-body-width window)
+        (frame-width))))
+
+(defun limen-inbox--wrap (text column)
+  "Return TEXT broken at spaces to fit the dashboard from COLUMN on.
+Each further line is set in to COLUMN; a word too long for a line keeps
+it whole."
+  (let ((width (max 20 (- (limen-inbox--width) column)))
+        (lines nil))
+    (dolist (line (split-string text "\n"))
+      (while (> (string-width line) width)
+        (let* ((fit (length (truncate-string-to-width line width)))
+               (head (substring line 0 (min (length line) (1+ fit))))
+               (break (or (string-match-p " [^ ]*\\'" head)
+                          (string-match-p " " line fit)
+                          (length line))))
+          (when (zerop break)
+            (setq break (or (string-match-p " " line 1) (length line))))
+          (push (substring line 0 break) lines)
+          (setq line (string-trim-left (substring line break) " +"))))
+      (push line lines))
+    (string-join (nreverse lines) (concat "\n" (make-string column ?\s)))))
 
 (defun limen-inbox--question-heading (question)
   "Return QUESTION's header and text as one label line."
@@ -952,21 +980,26 @@ other case renders the question read-only."
     (if (not (and limen-inbox-answer (alist-get 'answerable question)))
         (progn
           (insert "    "
-                  (propertize (limen-inbox--question-heading question)
-                              'font-lock-face 'herdr-status-label)
-                  (cond (multi "  (multi)")
-                        ((alist-get 'other question) "  (or other)")
-                        (t ""))
+                  (limen-inbox--wrap
+                   (concat (propertize (limen-inbox--question-heading question)
+                                       'font-lock-face 'herdr-status-label)
+                           (cond (multi "  (multi)")
+                                 ((alist-get 'other question) "  (or other)")
+                                 (t "")))
+                   4)
                   "\n")
           (when options
             (if (seq-some #'stringp previews)
                 (seq-map-indexed
                  (lambda (label index)
-                   (insert (format "      %d. %s\n" (1+ index) label))
+                   (let ((lead (format "      %d. " (1+ index))))
+                     (insert lead (limen-inbox--wrap label (string-width lead))
+                             "\n"))
                    (limen-inbox--insert-preview (nth index previews)))
                  options)
               (insert "      "
-                      (propertize (string-join options " · ")
+                      (propertize (limen-inbox--wrap (string-join options " · ")
+                                                     6)
                                   'font-lock-face 'herdr-status-meta)
                       "\n"))))
       (magit-insert-section section
@@ -980,17 +1013,20 @@ other case renders the question read-only."
                                'limen-inbox-question-section-map))
 	(magit-insert-heading
 	  "    "
-	  (propertize (limen-inbox--question-heading question)
-		      'font-lock-face 'herdr-status-label)
-	  (cond ((eq (gethash (limen-inbox--entry-id qid) limen-inbox--tabs)
-		     'unknown)
-		 (propertize "  pane out of sync" 'font-lock-face 'warning))
-		((limen-inbox--committed-p qid)
-		 (propertize "  ✓ sent" 'font-lock-face 'success))
-		((not (eq (gethash qid limen-inbox--sent 'missing) 'missing))
-		 (propertize "  changed" 'font-lock-face 'warning))
-		(multi (propertize "  (multi)" 'font-lock-face 'herdr-status-meta))
-		(t "")))
+	  (limen-inbox--wrap
+	   (concat
+	    (propertize (limen-inbox--question-heading question)
+			'font-lock-face 'herdr-status-label)
+	    (cond ((eq (gethash (limen-inbox--entry-id qid) limen-inbox--tabs)
+		       'unknown)
+		   (propertize "  pane out of sync" 'font-lock-face 'warning))
+		  ((limen-inbox--committed-p qid)
+		   (propertize "  ✓ sent" 'font-lock-face 'success))
+		  ((not (eq (gethash qid limen-inbox--sent 'missing) 'missing))
+		   (propertize "  changed" 'font-lock-face 'warning))
+		  (multi (propertize "  (multi)" 'font-lock-face 'herdr-status-meta))
+		  (t "")))
+	   4))
         (limen-inbox--insert-options qid options multi previews)))))
 
 (defun limen-inbox--agent-target (agent)

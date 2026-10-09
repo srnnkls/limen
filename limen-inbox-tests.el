@@ -319,6 +319,28 @@
       (should (string-match-p "PostgreSQL · MongoDB" (buffer-string)))
       (should-not (string-match-p "[○●]" (buffer-string))))))
 
+(ert-deftest limen-inbox-wraps-a-long-question-and-option ()
+  (let ((limen-inbox-answer nil))
+    (cl-letf (((symbol-function 'limen-inbox--width) (lambda () 30)))
+      (with-temp-buffer
+        (limen-inbox--insert-question
+         '((qid . "t1#0") (answerable . t)
+           (question . "Which database should the service write its events to?")
+           (options "PostgreSQL" "MongoDB") (previews "a" nil) (multi) (other . t))
+         '("/tmp/alpha.sock" . "t1") t)
+        (should (equal (car (split-string (buffer-string) "\n"))
+                       "    Which database should the"))
+        (should (string-search "\n    service write its events\n    to?  (or other)\n"
+                               (buffer-string)))
+        (dolist (line (split-string (buffer-string) "\n"))
+          (should (<= (string-width line) 30)))))))
+
+(ert-deftest limen-inbox-wrap-keeps-a-word-too-long-for-the-line-whole ()
+  (cl-letf (((symbol-function 'limen-inbox--width) (lambda () 30)))
+    (should (equal (limen-inbox--wrap
+                    "see /a/very/long/path/that/does/not/fit/anywhere now" 4)
+                   "see\n    /a/very/long/path/that/does/not/fit/anywhere\n    now"))))
+
 (defmacro limen-inbox-tests--with-value (value &rest body)
   "Run BODY with section VALUE and recorded individual pane keys."
   (declare (indent 1) (debug t))
