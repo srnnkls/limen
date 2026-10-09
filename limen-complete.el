@@ -182,7 +182,8 @@ was opened with."
             (insert reference)))))))
 
 (defun limen-complete-skills (begin end)
-  "Complete a skill or slash command of the message's harness between BEGIN and END."
+  "Complete a skill or slash command of the message's harness.
+BEGIN and END bound the text to complete."
   (when-let* ((provider (limen-complete--provider)))
     (let* ((root (limen-complete--root))
            (skills (limen-complete--skill-names provider root))
