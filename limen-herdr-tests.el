@@ -128,6 +128,9 @@
   (should (equal (limen-herdr--name-answer
                   "{\"result\":\"x\",\"structured_output\":{\"name\":\" Emacs Blocking Hooks \"}}")
                  "Emacs Blocking Hooks"))
+  (should (equal (limen-herdr--name-answer
+                  "{\"structured_output\":{\"name\":\"Buchungskreis Rename Dry Runs\"}}")
+                 "Buchungskreis Rename Dry Runs"))
   (dolist (output '("{\"structured_output\":{\"name\":\"limen-workon-scope\"}}"
                     "{\"structured_output\":{\"name\":\"Limen  Workon\"}}"
                     "{\"structured_output\":{\"name\":\"Extraordinarily Long Title Over Thirty\"}}"
