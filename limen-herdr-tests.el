@@ -134,8 +134,13 @@
   (should (equal (limen-herdr--name-answer
                   "{\"structured_output\":{\"name\":\"Hooks Blocking the Main Loop\"}}")
                  "Hooks Blocking the Main Loop"))
+  (should (equal (limen-herdr--name-answer
+                  "{\"structured_output\":{\"name\":\"Conduct.ai Competitive Analysis\"}}")
+                 "Conduct.ai Competitive Analysis"))
   (dolist (output '("{\"structured_output\":{\"name\":\"limen-workon-scope\"}}"
                     "{\"structured_output\":{\"name\":\"Limen  Workon\"}}"
+                    "{\"structured_output\":{\"name\":\"Limen: Workon\"}}"
+                    "{\"structured_output\":{\"name\":\"Workon\\nScope\"}}"
                     "{\"structured_output\":{\"name\":\"Extraordinarily Long Title Over Thirty\"}}"
                     "{\"structured_output\":{}}" "{\"result\":\"Emacs Blocking Hooks\"}"
                     "Emacs Blocking Hooks" "" nil))
