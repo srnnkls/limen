@@ -854,6 +854,12 @@ workspace without a setting of its own follows."
                  'limen-herd-dispatch))
     (transient-remove-suffix 'herdr-herd-dispatch "n")))
 
+(defun limen-herd--start ()
+  "Record the agents herdr reports and introduce those of aware workspaces.
+An agent recorded here is never taken for an arrival later."
+  (limen-herd--seed)
+  (limen-herd--enqueue #'limen-herd--sync-awareness))
+
 (defun limen-herd--attach-when-loaded ()
   "Attach the menus once the dashboard and herd packages are loaded."
   (limen-herd--attach-menu)
@@ -879,13 +885,13 @@ removes the events again where nothing else needs them."
     (add-hook 'herdr-herd-protocol-functions #'limen-herd--protocol)
     (add-hook 'herdr-herd-sent-functions #'limen-herd--on-sent)
     (add-hook 'herdr-agent-event-functions #'limen-herd--on-herdr-event)
-    (limen-herd--seed)
     (limen-herd--subscribe)
     (limen-herd--attach-when-loaded)
     (limen-hooks-subscribe "herd" :events limen-herd--events
                            :provider-events (limen-herd--provider-events)
                            :function #'limen-herd--on-event)
-    (limen-herd--enqueue #'limen-herd--sync-awareness))
+    (with-eval-after-load 'herdr-herd
+      (when limen-herd-mode (limen-herd--start))))
    (t
     (remove-hook 'herdr-herd-protocol-functions #'limen-herd--protocol)
     (remove-hook 'herdr-herd-sent-functions #'limen-herd--on-sent)

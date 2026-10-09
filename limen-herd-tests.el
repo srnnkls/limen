@@ -359,6 +359,20 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
                                (limen-herd-tests--event "PostToolUse" "a")))
       (should-not (limen-herd-tests--event "PostToolUse" "a")))))
 
+(ert-deftest limen-herd-agents-already-running-are-introduced-not-announced ()
+  (limen-herd-tests--with-herd
+      (list (limen-herd-tests--entry "a" :workspace "w1")
+            (limen-herd-tests--entry "b" :workspace "w1"))
+    (let ((limen-herd-workspace-awareness t))
+      (limen-herd--start)
+      (limen-herd-tests--drain)
+      (limen-herd-tests--observe "%a" "working")
+      (limen-herd-tests--observe "%b" "idle")
+      (should (equal (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "go"))
+                     (concat "[workspace] Agents here:\n  %b b\n"
+                             limen-herd-workspace-protocol)))
+      (should-not (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "go"))))))
+
 (ert-deftest limen-herd-audiences-and-transports-are-pluggable ()
   (limen-herd-tests--with-herd
       (list (limen-herd-tests--entry "a")
