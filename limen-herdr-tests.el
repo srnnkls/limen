@@ -4,8 +4,11 @@
 (require 'ert)
 (require 'limen-herdr)
 
+(declare-function herdr-agent-derive-name "ext:herdr-agent" (entry))
+
 (defvar herdr-agent-name-function)
 (defvar herdr-agent-title-function)
+(defvar herdr-socket-path)
 
 (ert-deftest limen-herdr-project-settings-choose-model-and-effort-at-launch ()
   (let ((limen-herdr-project-settings
