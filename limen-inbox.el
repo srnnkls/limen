@@ -89,9 +89,17 @@ Accepting the field saves notes locally; it does not commit an answer."
   "Whether completing all question commits offers to submit the answers.
 When non-nil, any question's commit can offer submission once every
 current choice is committed, regardless of tab order.  Confirmation is
-required before navigating to Submit and sending the whole block.
+required before navigating to Submit and sending the whole block, unless
+the call asks a single question and `limen-inbox-confirm-single-question'
+is nil.
 When nil, commits only advance to the next tab.  A preview dialog that
 submits immediately on Enter must then be answered in the agent window."
+  :type 'boolean
+  :group 'limen-hooks)
+
+(defcustom limen-inbox-confirm-single-question nil
+  "Whether submitting a call that asks a single question asks for confirmation.
+When nil, committing the only question submits it at once."
   :type 'boolean
   :group 'limen-hooks)
 
@@ -716,7 +724,7 @@ Entry ID is marked out of sync if the old question remains on screen."
           (user-error "Pane notes were edited externally; finish in the agent window"))
         (unless (or submit-tab limen-inbox-answer-submit-eagerly)
           (user-error "This question submits immediately; answer in the agent window"))
-        (when (or submit-tab (y-or-n-p "Submit all answers? "))
+        (when (or submit-tab (limen-inbox--confirm-submit id))
           (if (limen-inbox--committed-p qid)
               (limen-inbox--goto-tab target id (1+ index))
             (unless (equal notes old)
@@ -735,6 +743,14 @@ Entry ID is marked out of sync if the old question remains on screen."
           (if submit-tab t
             (limen-inbox--answered qid)
             'submitted))))))
+
+(defun limen-inbox--confirm-submit (id)
+  "Return non-nil when entry ID's answers may be submitted.
+A call asking a single question needs no confirmation unless
+`limen-inbox-confirm-single-question' asks for it."
+  (or (and (not limen-inbox-confirm-single-question)
+           (= (length (limen-inbox--entry-questions id)) 1))
+      (y-or-n-p "Submit all answers? ")))
 
 (defun limen-inbox--submit-block (target id)
   "Submit entry ID on TARGET from its Submit tab."
@@ -783,7 +799,7 @@ when every question has its current answer committed."
       (cond
        ((and limen-inbox-answer-submit-eagerly
              (limen-inbox--ready-p id)
-             (y-or-n-p "Submit all answers? ")
+             (limen-inbox--confirm-submit id)
              (limen-inbox--goto-tab
               target id (length (limen-inbox--entry-questions id)))
              (limen-inbox--submit-block target id))

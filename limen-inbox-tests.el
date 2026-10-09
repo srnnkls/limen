@@ -35,6 +35,7 @@
          (limen-inbox--sent-notes (make-hash-table :test 'equal))
          (limen-inbox-key-delay 0)
          (limen-inbox-inline-notes nil)
+         (limen-inbox-confirm-single-question t)
          (refreshes 0))
      (cl-letf (((symbol-function 'herdr-status-request-refresh)
                 (lambda () (cl-incf refreshes))))
@@ -556,6 +557,21 @@
             (limen-inbox-commit-at-point))
           (should (equal sent '("left" "right" "return" "return")))
           (should-not (limen-inbox-questions)))))))
+
+(ert-deftest limen-inbox-submits-a-single-question-without-confirmation ()
+  (limen-inbox-tests--with-inbox
+    (let ((limen-inbox-answer-submit-eagerly t)
+          (limen-inbox-confirm-single-question nil))
+      (limen-inbox--add '((id . "t1") (questions ((qid . "t1#0")))))
+      (puthash "t1#0" '("A") limen-inbox--selected)
+      (limen-inbox-tests--with-value
+          '(:qid "t1#0" :options ("A" "B") :last t
+            :target ("/tmp/alpha.sock" . "t1"))
+        (cl-letf (((symbol-function 'y-or-n-p)
+                   (lambda (_) (error "Asked for confirmation"))))
+          (limen-inbox-commit-at-point))
+        (should (equal sent '("1" "right" "return" "return")))
+        (should-not (limen-inbox-questions))))))
 
 (ert-deftest limen-inbox-eager-submit-after-out-of-order-commits ()
   (dolist (confirm '(nil t))
