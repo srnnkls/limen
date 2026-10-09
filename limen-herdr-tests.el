@@ -43,6 +43,8 @@
     (cl-letf (((symbol-function 'herdr-entry-directory)
                (lambda (entry) (alist-get 'cwd entry)))
               ((symbol-function 'herdr-agent--repository) (lambda (_) "/repo/limen/"))
+              ((symbol-function 'limen-herdr--opening-request)
+               (lambda (id) (and (equal id "s1") "Make agent names injectable")))
               ((symbol-function 'limen-herdr--recent-messages)
                (lambda (id) (and (equal id "s1")
                                  '(("user" . "Name agents from their talk")
@@ -52,12 +54,23 @@
               ((symbol-function 'limen-herdr--ask-name)
                (lambda (description) (setq asked description) "Limen Agent Naming")))
       (should (equal (limen-herdr-agent-name entry) "Limen Agent Naming"))
-      (should (equal asked (concat "Repository: limen\nHarness: claude\n"
-                                   "Terminal title: Injectable agent name derivation\n"
-                                   "Other agents: Memex Popup Window, Cmw Migrations\n"
-                                   "\nConversation:\n\n"
-                                   "user: Name agents from their talk\n\n"
-                                   "assistant: Reading memex now\n"))))))
+      (should (equal asked (concat "<agent>\nrepository: limen\nharness: claude\n"
+                                   "terminal title: Injectable agent name derivation\n</agent>\n\n"
+                                   "<opening_request>\nMake agent names injectable\n</opening_request>\n\n"
+                                   "<recent_turns>\nuser: Name agents from their talk\n\n"
+                                   "assistant: Reading memex now\n</recent_turns>\n\n"
+                                   "<names_taken>\nMemex Popup Window\nCmw Migrations\n</names_taken>\n\n"
+                                   "Name the agent described above."))))))
+
+(ert-deftest limen-herdr-opening-request-is-the-session-s-first-question ()
+  (cl-letf (((symbol-function 'limen-herdr--memex)
+             (lambda (&rest _)
+               '(((record . ((role . "assistant") (text . "hello"))))
+                 ((record . ((role . "user") (text . "  "))))
+                 ((record . ((role . "user") (text . "Could hooks block Emacs?"))))
+                 ((record . ((role . "user") (text . "later"))))))))
+    (should (equal (limen-herdr--opening-request "s1") "Could hooks block Emacs?"))
+    (should-not (limen-herdr--opening-request nil))))
 
 (ert-deftest limen-herdr-recent-messages-read-the-last-turns-each-side-once ()
   (let ((limen-herdr--name-turns 2)
@@ -112,11 +125,15 @@
       (should (equal (limen-herdr-agent-name untitled) "derived-codex")))))
 
 (ert-deftest limen-herdr-name-answers-only-a-short-title ()
-  (should (equal (limen-herdr--name-answer "Limen Workon Scope\n")
-                 "Limen Workon Scope"))
-  (dolist (answer '("limen-workon-scope" "Limen  Workon" "Limen: Workon"
-                    "Extraordinarily Long Title Over Thirty" "" nil))
-    (should-not (limen-herdr--name-answer answer))))
+  (should (equal (limen-herdr--name-answer
+                  "{\"result\":\"x\",\"structured_output\":{\"name\":\" Emacs Blocking Hooks \"}}")
+                 "Emacs Blocking Hooks"))
+  (dolist (output '("{\"structured_output\":{\"name\":\"limen-workon-scope\"}}"
+                    "{\"structured_output\":{\"name\":\"Limen  Workon\"}}"
+                    "{\"structured_output\":{\"name\":\"Extraordinarily Long Title Over Thirty\"}}"
+                    "{\"structured_output\":{}}" "{\"result\":\"Emacs Blocking Hooks\"}"
+                    "Emacs Blocking Hooks" "" nil))
+    (should-not (limen-herdr--name-answer output))))
 
 (ert-deftest limen-herdr-agent-title-reads-a-name-as-words ()
   (should (equal (limen-herdr-agent-title "limen-workon-scope") "Limen Workon Scope"))
@@ -136,6 +153,9 @@
   (let ((argv (limen-herdr--name-command)))
     (should (equal (cadr (member "--model" argv)) limen-provider-claude-small-model))
     (should (equal (cadr (member "--effort" argv)) "low"))
+    (should (equal (cadr (member "--output-format" argv)) "json"))
+    (should (= 1 (cl-count "--output-format" argv :test #'equal)))
+    (should (equal (cadr (member "--json-schema" argv)) limen-herdr--name-schema))
     (should (equal (car (last argv)) limen-herdr--name-instruction))))
 
 (provide 'limen-herdr-tests)

@@ -28,12 +28,14 @@
   "Return a claude command answering its stdin with MODEL under INSTRUCTION.
 Nothing of the user's setup is loaded: no settings, hooks, tools, MCP
 servers or slash commands, and no session is kept.  ARGUMENTS come
-before the system prompt."
+before the system prompt; without an `--output-format' among them the
+answer is plain text."
   `("claude" "-p" "--model" ,model ,@arguments
+    ,@(unless (member "--output-format" arguments) '("--output-format" "text"))
     "--disable-slash-commands" "--tools" ""
     "--setting-sources" "" "--settings" "{\"disableAllHooks\":true}"
     "--strict-mcp-config" "--mcp-config" "{\"mcpServers\":{}}"
-    "--no-session-persistence" "--output-format" "text"
+    "--no-session-persistence"
     "--system-prompt" ,instruction))
 
 (cl-defstruct (limen-provider (:constructor limen-provider--make))
