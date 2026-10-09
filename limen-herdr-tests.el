@@ -131,6 +131,9 @@
   (should (equal (limen-herdr--name-answer
                   "{\"structured_output\":{\"name\":\"Buchungskreis Rename Dry Runs\"}}")
                  "Buchungskreis Rename Dry Runs"))
+  (should (equal (limen-herdr--name-answer
+                  "{\"structured_output\":{\"name\":\"Hooks Blocking the Main Loop\"}}")
+                 "Hooks Blocking the Main Loop"))
   (dolist (output '("{\"structured_output\":{\"name\":\"limen-workon-scope\"}}"
                     "{\"structured_output\":{\"name\":\"Limen  Workon\"}}"
                     "{\"structured_output\":{\"name\":\"Extraordinarily Long Title Over Thirty\"}}"
@@ -140,7 +143,10 @@
 
 (ert-deftest limen-herdr-agent-title-reads-a-name-as-words ()
   (should (equal (limen-herdr-agent-title "limen-workon-scope") "Limen Workon Scope"))
-  (should (equal (limen-herdr-agent-title "my_agent-2") "My Agent 2")))
+  (should (equal (limen-herdr-agent-title "my_agent-2") "My Agent 2"))
+  (should (equal (limen-herdr-agent-title "rename-of-the-buchungskreis-to-enfi")
+                 "Rename of the Buchungskreis to Enfi"))
+  (should (equal (limen-herdr-agent-title "the-state-of-in") "The State of In")))
 
 (ert-deftest limen-herdr-takes-herdr-s-naming-only-where-its-defaults-stand ()
   (let ((herdr-agent-name-function #'herdr-agent-derive-name)
