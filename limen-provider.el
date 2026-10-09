@@ -51,6 +51,8 @@ arguments and returns the complete argument list.
 QUESTION-TOOLS name the tools that ask the user a question and
 TRANSCRIPT-QUESTIONS-P says those questions must be read from the
 transcript instead.  EDIT-TOOLS name the tools that change files.
+TURN-CONTEXT-EVENTS name the hook events whose context the harness reads
+in the middle of a turn.
 SESSION-NAME maps a session id to the name the harness gave it.
 SKILL-SOURCE receives a project root, or nil, and returns the harness's
 skills as an alist of name and description.  SKILL-REFERENCE maps a
@@ -62,7 +64,7 @@ maps a model and an effort level, either nil, to the launch arguments
 choosing them.
 CAPABILITIES is the plist `limen-herdr-status' reports."
   name config-directory hook-settings hook-transport route arguments
-  question-tools transcript-questions-p edit-tools session-name
+  question-tools transcript-questions-p edit-tools turn-context-events session-name
   skill-source skill-reference command-source model-arguments capabilities)
 
 (defun limen-provider--flag-arguments (model-flag effort-flag)
@@ -300,6 +302,7 @@ pane Limen launched and in one it only adopted alike."
   :arguments (lambda (_endpoint arguments) arguments)
   :question-tools '("AskUserQuestion")
   :edit-tools '("Edit" "Write" "MultiEdit")
+  :turn-context-events '("PostToolUse")
   :session-name #'limen-provider--claude-session-name
   :skill-source (lambda (root)
                   (limen-provider--directory-skills

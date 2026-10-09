@@ -205,8 +205,11 @@ A feature joins through `limen-hooks-subscribe' rather than directly,
 so the events it reads are installed along with it.  Each receives the
 provider name, the decoded payload extended with the `server' and `pane'
 of the Herdr pane, the resolved Limen session or nil, and the request
-context.  A string one returns for a `UserPromptSubmit' event is added
-to the context the prompt carries.")
+context.  The payload's `context' is non-nil when the answer carries
+context: on a `UserPromptSubmit' event, or mid-turn on one of the
+provider's `turn-context-events', for an agent the hook answers.  A
+string a function returns then joins that context; otherwise it is
+dropped, so a function hands over text only when `context' says so.")
 
 (defvar limen-hooks--drafts (make-hash-table :test #'eq)
   "Rendered text and context of the latest Herdr context per session.")
@@ -846,6 +849,11 @@ waits on it."
   (or (not limen-hooks-context-attached-only)
       (and session (limen-herdr-attached-p session))))
 
+(defun limen-hooks--turn-context-events (provider)
+  "Return the events PROVIDER, a name, reads context from mid-turn."
+  (when-let* ((entry (limen-provider (intern provider))))
+    (limen-provider-turn-context-events entry)))
+
 (defun limen-hooks-output (request context)
   "Return the hook output for the CLI REQUEST in CONTEXT, or an empty string."
   (let ((provider (alist-get 'provider request)))
@@ -867,7 +875,14 @@ waits on it."
            (root (if session
                      (limen-session-project-root session)
                    (limen-request-project-root context)))
-           (payload (append payload `((server . ,server) (pane . ,pane))))
+           (answered (or session limen-hooks-answer-unattached))
+           (turn-p (member event (limen-hooks--turn-context-events provider)))
+           (payload (append payload
+                            `((server . ,server) (pane . ,pane)
+                              (context . ,(and answered
+                                               (or turn-p
+                                                   (equal event "UserPromptSubmit"))
+                                               t)))))
            (extra (delq nil
                         (mapcar (lambda (function)
                                   (let ((value (funcall function provider payload
@@ -876,8 +891,9 @@ waits on it."
                                          (not (string-empty-p value))
                                          value)))
                                 limen-hooks-event-functions)))
-           (text (when (or session limen-hooks-answer-unattached)
+           (text (when answered
                    (pcase event
+                     ((guard turn-p) (string-join extra "\n\n"))
                      ("SessionStart" (limen-skill context))
                      ("UserPromptSubmit"
                       (string-join

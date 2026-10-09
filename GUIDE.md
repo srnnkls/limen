@@ -575,6 +575,28 @@ prompt, as hook context, or as soon as Herdr sees it idle; with `limen-herd-hold
 are dropped. Notices never answer notices: a turn started by a prompt that opens with one of
 `limen-herd-quiet-prefixes` ends without a `finished` notice.
 
+### Aware workspaces
+
+With `limen-herd-workspace-awareness` set, the agents of every Herdr workspace know each other
+without joining a herd. Each is told once who else is there and how to reach them; an agent
+arriving later gets the same, and the others learn it arrived. `A` in `herdr-status` flips this for
+the dashboard's scope: on a project dashboard for that project's workspace alone, on the global one
+for every workspace without a setting of its own.
+
+```text
+[workspace] Agents here:
+  w1:p2    memex-index (claude)
+Reach one: herdr agent prompt <pane> "<msg>" (interrupts; `herdr agent
+get <pane>' first). Arrivals are announced like this; do not reply.
+```
+
+None of this is typed into a terminal. It travels as hook context: a Claude Code agent at work
+reads it after its next tool call, any other with its next prompt. The user never sees it, and an
+agent without Limen's hooks hears nothing. A notice is handed over only to a hook whose answer
+carries it, and once. The workspace and the
+herd are two of `limen-herd-audiences`, and the hook and the typed prompt two of
+`limen-herd-transports`; a new audience or transport is one more function in either list.
+
 ## Working on something
 
 `limen-workon-mode` binds `W` on `herdr-status` to `limen-workon` and `C-w` to

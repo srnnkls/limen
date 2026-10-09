@@ -374,6 +374,34 @@
                          "")))
       (delete-directory root t))))
 
+(ert-deftest limen-hooks-output-carries-context-mid-turn-where-the-provider-reads-it ()
+  (let* ((root (file-truename (make-temp-file "limen-hooks-turn" t)))
+         (limen-hooks-answer-unattached nil)
+         (marks nil)
+         (limen-hooks-event-functions
+          (list (lambda (_provider payload &rest _)
+                  (push (alist-get 'context payload) marks)
+                  "[workspace] b arrived."))))
+    (unwind-protect
+        (progn
+          (should (equal (limen-hooks-tests--context
+                          (limen-hooks-tests--hook-request "claude" "PostToolUse" nil root)
+                          root)
+                         ""))
+          (should (equal marks '(nil)))
+          (let ((limen-hooks-answer-unattached t))
+            (should (equal (limen-hooks-tests--context
+                            (limen-hooks-tests--hook-request "claude" "PostToolUse" nil root)
+                            root)
+                           '("PostToolUse" . "[workspace] b arrived.")))
+            (should (eq (car marks) t))
+            (should (equal (limen-hooks-tests--context
+                            (limen-hooks-tests--hook-request "codex" "PostToolUse" nil root)
+                            root)
+                           ""))
+            (should-not (car marks))))
+      (delete-directory root t))))
+
 (ert-deftest limen-hooks-agent-for-matches-pane-then-session ()
   (let* ((socket (make-temp-file "limen-hooks-socket"))
          (agents `(((pane_id . "%1") (server_key . ,socket)

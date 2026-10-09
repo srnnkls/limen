@@ -238,6 +238,7 @@ and `limen-inbox-option-section-map`, whose parent is the question map.
 | `limen-herd-subscribe-all`, `limen-herd-unsubscribe-all`, `limen-herd-subscribe-defaults` | set the agents at point, in the region, or read, to all, none, or `limen-herd-default-events` |
 | `limen-herd-herd-subscribe-all`, `limen-herd-herd-unsubscribe-all`, `limen-herd-herd-subscribe-defaults` | the same for every member of the herd at point |
 | `limen-herd-toggle-online`, `limen-herd-toggle-prompt`, `limen-herd-toggle-finished`, `limen-herd-toggle-exited` | toggle one kind |
+| `limen-herd-toggle-awareness` | on `A` in `herdr-status`: flip awareness for the project dashboard's workspace, or globally on the global one |
 
 `limen-herd-dispatch`, on `n` in `herdr-herd-dispatch`:
 
@@ -251,11 +252,16 @@ and `limen-inbox-option-section-map`, whose parent is the question map.
 | --- | --- | --- | --- |
 | `limen-herd-default-events` | set of `online`, `prompt`, `finished`, `exited` | `(finished exited)` | what "defaults" subscribes to |
 | `limen-herd-hold-for-busy` | boolean | `t` | hold notices for a member mid-turn; nil drops them |
-| `limen-herd-prompt-length` | integer ≥ 0 | `120` | characters of a prompt a notice repeats |
-| `limen-herd-excerpt-length` | integer ≥ 0 | `160` | characters of the last answer a `finished` notice repeats; 0 leaves it out |
+| `limen-herd-prompt-length` | integer ≥ 0 | `80` | characters of a prompt a notice repeats |
+| `limen-herd-excerpt-length` | integer ≥ 0 | `0` | characters of the last answer a `finished` notice repeats; 0 leaves it out |
 | `limen-herd-quiet-prefixes` | list of strings | `("[herd " "/herd ")` | prompt openings whose turn ends without a `finished` notice |
 | `limen-herd-label-prefix` | string | `"notify:"` | opening of the pane-label word listing subscriptions |
 | `limen-herd-fallback-delay` | number | `5` | seconds a Herdr state change waits for a hook to report the same turn |
+| `limen-herd-workspace-awareness` | boolean | `nil` | make every workspace's agents aware of each other; a workspace toggled on its project dashboard keeps its own setting |
+| `limen-herd-workspace-prefix` | string | `"[workspace] "` | opening of what an aware workspace tells its agents |
+| `limen-herd-workspace-protocol` | string | how to reach a peer | the line after the roster an agent is told |
+| `limen-herd-audiences` | list of functions | herd, then workspace | who hears of an event: called with the kind, the sender, the live agents and the notice function; returns `(VIA TEXT . RECIPIENTS)` lists |
+| `limen-herd-transports` | alist of symbol to function | `prompt`, `hook` | how a notice reaches a recipient: `prompt` types it once the agent is free, `hook` adds it unseen to the context of its next prompt |
 
 ### limen-model.el
 
