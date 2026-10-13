@@ -179,5 +179,83 @@
     (should (equal (cadr (member "--json-schema" argv)) limen-herdr--name-schema))
     (should (equal (car (last argv)) limen-herdr--name-instruction))))
 
+;; Auto-naming
+
+(ert-deftest limen-herdr-ask-name-reads-the-answer-of-the-naming-process ()
+  (cl-letf (((symbol-function 'limen-herdr--name-command)
+             (lambda ()
+               '("sh" "-c" "cat >/dev/null; printf '{\"structured_output\":{\"name\":\"Hazard Slots\"}}'"))))
+    (should (equal (limen-herdr--ask-name "described") "Hazard Slots")))
+  (cl-letf (((symbol-function 'limen-herdr--name-command)
+             (lambda () '("sh" "-c" "cat >/dev/null; exit 1"))))
+    (should-not (limen-herdr--ask-name "described"))))
+
+(ert-deftest limen-herdr-generic-labels-are-the-harness-and-its-defaults ()
+  (cl-letf (((symbol-function 'herdr-entry-label)
+             (lambda (entry) (alist-get 'label entry))))
+    (should (limen-herdr--generic-p '((agent . "claude") (label . "claude"))))
+    (should (limen-herdr--generic-p '((agent . "codex") (label . "Codex"))))
+    (should (limen-herdr--generic-p '((agent . "claude") (label . "Claude Code"))))
+    (should (limen-herdr--generic-p '((agent . "claude") (label . "Agent 2"))))
+    (should (limen-herdr--generic-p '((agent . "claude"))))
+    (should-not (limen-herdr--generic-p '((agent . "claude") (label . "Agent Names on Load"))))
+    (should-not (limen-herdr--generic-p '((agent . "claude") (label . "Skills in Claude Code"))))))
+
+(ert-deftest limen-herdr-every-few-turns-name-the-agent-that-ended-them ()
+  (let ((limen-herdr-auto-name-turns 2)
+        (limen-herdr--turns (make-hash-table :test #'equal))
+        (stop '((hook_event_name . "Stop") (server . "/s.sock") (pane . "w1:p1")))
+        named)
+    (cl-letf (((symbol-function 'run-with-timer)
+               (lambda (_delay _repeat function &rest arguments)
+                 (push (cons function arguments) named))))
+      (should-not (limen-herdr--on-turn 'claude stop nil nil))
+      (limen-herdr--on-turn 'claude '((hook_event_name . "UserPromptSubmit")
+                                      (server . "/s.sock") (pane . "w1:p1"))
+                            nil nil)
+      (should-not named)
+      (limen-herdr--on-turn 'claude stop nil nil)
+      (should (equal named '((limen-herdr--auto-name "/s.sock" "w1:p1"))))
+      (limen-herdr--on-turn 'claude stop nil nil)
+      (should (= (length named) 1)))))
+
+(ert-deftest limen-herdr-auto-rename-names-only-an-agent-still-generic ()
+  (let ((entry '((server_key . "/s.sock") (pane_id . "w1:p1")
+                 (terminal_id . "t1") (agent . "claude") (label . "Claude Code")))
+        renamed)
+    (cl-letf (((symbol-function 'limen-herdr--agent-at) (lambda (_server _pane) entry))
+              ((symbol-function 'herdr-entry-label) (lambda (entry) (alist-get 'label entry)))
+              ((symbol-function 'herdr-agent-name-slug) (lambda (_title) "hazard-slots"))
+              ((symbol-function 'herdr-agent--available-name)
+               (lambda (name _server) (if (equal name "hazard-slots") "hazard-slots-2" name)))
+              ((symbol-function 'herdr-agent-rename)
+               (lambda (target title) (push (cons target title) renamed))))
+      (limen-herdr--auto-rename "/s.sock" "w1:p1" "Hazard Slots")
+      (should (equal renamed '((("/s.sock" . "t1") . "hazard-slots-2"))))
+      (setq renamed nil)
+      (cl-letf (((symbol-function 'herdr-agent--available-name) (lambda (name _server) name)))
+        (limen-herdr--auto-rename "/s.sock" "w1:p1" "Hazard Slots")
+        (should (equal renamed '((("/s.sock" . "t1") . "Hazard Slots"))))
+        (setq renamed nil)
+        (limen-herdr--auto-rename "/s.sock" "w1:p1" nil)
+        (setf (alist-get 'label entry) "Named Already")
+        (limen-herdr--auto-rename "/s.sock" "w1:p1" "Hazard Slots")
+        (should-not renamed)))))
+
+(ert-deftest limen-herdr-name-description-leaves-out-a-generic-title ()
+  (cl-letf (((symbol-function 'herdr-entry-directory) #'ignore)
+            ((symbol-function 'limen-herdr--opening-request) (lambda (_) "Trace the rename"))
+            ((symbol-function 'limen-herdr--recent-messages) #'ignore)
+            ((symbol-function 'limen-herdr--other-agents) #'ignore))
+    (dolist (title '("Claude Code" "claude" "Agent 3"))
+      (should (string-match-p
+               "terminal title: none"
+               (limen-herdr--name-description
+                `((agent . "claude") (terminal_title_stripped . ,title))))))
+    (should (string-match-p
+             "terminal title: Trace the rename"
+             (limen-herdr--name-description
+              '((agent . "claude") (terminal_title_stripped . "Trace the rename")))))))
+
 (provide 'limen-herdr-tests)
 ;;; limen-herdr-tests.el ends here

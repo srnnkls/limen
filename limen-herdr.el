@@ -36,6 +36,11 @@
 (declare-function herdr-entry-label "ext:herdr" (entry))
 (declare-function herdr-api-agent-list "ext:herdr-api" ())
 (declare-function herdr--entry-server "ext:herdr" (entry))
+(declare-function herdr-agent-rename "ext:herdr-agent" (target title))
+(declare-function herdr-agent-name-slug "ext:herdr-agent" (string))
+(declare-function herdr-agent--available-name "ext:herdr-agent" (name server-key))
+(declare-function limen-hooks-subscribe "limen-hooks" (feature &rest arguments))
+(declare-function limen-hooks-unsubscribe "limen-hooks" (feature))
 (defvar herdr-socket-path)
 (defvar herdr-agent-name-function)
 (defvar herdr-agent-title-function)
@@ -700,8 +705,9 @@ an agent is worth nothing without the server it was read from."
                  (condition-case nil (herdr-agents) (error nil))))))
    (condition-case nil (herdr-all-sessions) (error nil))))
 
-(defcustom limen-herdr-name-timeout 10
-  "Seconds `limen-herdr-agent-name' waits for Claude before deriving a name."
+(defcustom limen-herdr-name-timeout 20
+  "Seconds `limen-herdr-agent-name' waits for Claude before deriving a name.
+Claude answers in four to eight seconds, more under load."
   :type 'number
   :group 'limen-herdr)
 
@@ -866,7 +872,9 @@ agent comes last, so that what the agent was told is never taken for
 what Claude is asked.  An agent with neither a terminal title nor a
 conversation has nothing to be named after."
   (let* ((title (alist-get 'terminal_title_stripped entry))
-         (title (and (stringp title) (not (string-blank-p title)) title))
+         (title (and (stringp title)
+                     (not (limen-herdr--generic-label-p title (alist-get 'agent entry)))
+                     title))
          (directory (herdr-entry-directory entry))
          (session (alist-get 'value (alist-get 'agent_session entry)))
          (opening (limen-herdr--opening-request session))
@@ -926,35 +934,47 @@ unless they open or close the title."
                    (capitalize word)))
                words " ")))
 
+(defun limen-herdr--start-naming (description callback)
+  "Ask Claude to name DESCRIPTION and return the process, or nil.
+CALLBACK receives the title Claude answers, or nil, once it exits."
+  (let ((output "")
+        (stderr (generate-new-buffer " *limen name stderr*")))
+    (condition-case nil
+        (let ((process
+               (make-process
+                :name "limen-name" :command (limen-herdr--name-command)
+                :connection-type 'pipe :coding 'utf-8-unix :noquery t
+                :stderr stderr
+                :filter (lambda (_ chunk) (setq output (concat output chunk)))
+                :sentinel
+                (lambda (process _)
+                  (when (memq (process-status process) '(exit signal))
+                    (kill-buffer stderr)
+                    (funcall callback
+                             (and (eq (process-status process) 'exit)
+                                  (zerop (process-exit-status process))
+                                  (limen-herdr--name-answer output))))))))
+          (process-send-string process description)
+          (process-send-eof process)
+          process)
+      (file-missing (kill-buffer stderr) nil))))
+
 (defun limen-herdr--ask-name (description)
   "Return what Claude answers for DESCRIPTION within the timeout, or nil.
 Emacs waits on the answer, as the name is offered as soon as it comes,
 and \\[keyboard-quit] gives up on it."
-  (let ((output "")
-        (stderr (generate-new-buffer " *limen name stderr*"))
-        (deadline (+ (float-time) limen-herdr-name-timeout))
-        process)
+  (let* ((deadline (+ (float-time) limen-herdr-name-timeout))
+         (done nil)
+         (answer nil)
+         (process (limen-herdr--start-naming
+                   description (lambda (title) (setq answer title done t)))))
     (unwind-protect
-        (condition-case nil
-            (progn
-              (setq process
-                    (make-process
-                     :name "limen-name" :command (limen-herdr--name-command)
-                     :connection-type 'pipe :coding 'utf-8-unix :noquery t
-                     :stderr stderr
-                     :filter (lambda (_ chunk) (setq output (concat output chunk)))
-                     :sentinel #'ignore))
-              (process-send-string process description)
-              (process-send-eof process)
-              (while (and (process-live-p process) (< (float-time) deadline))
-                (accept-process-output process 0.05))
-              (when (and (eq (process-status process) 'exit)
-                         (zerop (process-exit-status process)))
-                (limen-herdr--name-answer output)))
-          (file-missing nil))
-      (when (process-live-p process)
-        (delete-process process))
-      (kill-buffer stderr))))
+        (progn
+          (while (and process (not done) (< (float-time) deadline))
+            (accept-process-output nil 0.05))
+          answer)
+      (when (and process (process-live-p process))
+        (delete-process process)))))
 
 (defun limen-herdr-agent-name (entry)
   "Return a title Claude gives Herdr agent ENTRY after its task.
@@ -964,7 +984,104 @@ derives."
   (or (with-temp-message "Naming the agent…"
         (when-let* ((description (limen-herdr--name-description entry)))
           (limen-herdr--ask-name description)))
-      (herdr-agent-derive-name entry)))
+      (progn (message "Claude gave no name; offering a derived one")
+             (herdr-agent-derive-name entry))))
+
+(defcustom limen-herdr-auto-name-turns 3
+  "Turns an agent finishes under a generic label before Claude names it.
+`limen-herdr-auto-name-mode' counts them."
+  :type 'natnum
+  :group 'limen-herdr)
+
+(defcustom limen-herdr-generic-labels
+  '("\\`Claude Code\\'" "\\`Codex\\'" "\\`Agent\\(?: [0-9]+\\)?\\'")
+  "Regexps matching the labels an agent wears before anything names it.
+An agent labeled with its harness alone counts as well.  Case is ignored."
+  :type '(repeat regexp)
+  :group 'limen-herdr)
+
+(defvar limen-herdr-auto-name-mode)
+
+(defvar limen-herdr--turns (make-hash-table :test #'equal)
+  "Turns counted toward naming each agent, keyed by server and pane.")
+
+(defun limen-herdr--generic-label-p (label harness)
+  "Return non-nil when LABEL says no more than that HARNESS runs."
+  (let ((case-fold-search t))
+    (or (not (stringp label))
+        (string-blank-p label)
+        (string-equal-ignore-case label (or harness ""))
+        (seq-some (lambda (regexp) (string-match-p regexp label))
+                  limen-herdr-generic-labels))))
+
+(defun limen-herdr--generic-p (entry)
+  "Return non-nil when Herdr agent ENTRY goes by a generic label."
+  (limen-herdr--generic-label-p (herdr-entry-label entry) (alist-get 'agent entry)))
+
+(defun limen-herdr--agent-at (server pane)
+  "Return the entry of the agent in PANE on SERVER, or nil."
+  (when-let* ((agent (seq-find (lambda (agent) (equal (alist-get 'pane_id agent) pane))
+                               (ignore-errors
+                                 (let ((herdr-socket-path server))
+                                   (alist-get 'agents (herdr-api-agent-list)))))))
+    (cons (cons 'server_key server) agent)))
+
+(defun limen-herdr--auto-rename (server pane title)
+  "Name the agent in PANE on SERVER after TITLE, if it is still generic.
+A taken name gives way to the unique one herdr would take instead."
+  (when-let* ((title title)
+              (entry (limen-herdr--agent-at server pane))
+              ((limen-herdr--generic-p entry))
+              (slug (herdr-agent-name-slug title)))
+    (let ((name (herdr-agent--available-name slug server)))
+      (condition-case err
+          (herdr-agent-rename (cons server (alist-get 'terminal_id entry))
+                              (if (equal name slug) title name))
+        (error (message "Limen could not name agent %s: %s"
+                        pane (error-message-string err)))))))
+
+(defun limen-herdr--auto-name (server pane)
+  "Have Claude name the agent in PANE on SERVER, if it is still generic."
+  (when-let* ((entry (limen-herdr--agent-at server pane))
+              ((limen-herdr--generic-p entry))
+              (description (limen-herdr--name-description entry)))
+    (limen-herdr--start-naming
+     description (lambda (title)
+                   (when limen-herdr-auto-name-mode
+                     (limen-herdr--auto-rename server pane title))))))
+
+(defun limen-herdr--on-turn (_provider payload _session _request)
+  "Count the turn hook PAYLOAD ends, naming its agent every few of them.
+Answers nil, adding nothing to the context a prompt carries."
+  (when-let* (((equal (alist-get 'hook_event_name payload) "Stop"))
+              (server (alist-get 'server payload))
+              (pane (alist-get 'pane payload)))
+    (let* ((key (cons server pane))
+           (turns (1+ (gethash key limen-herdr--turns 0))))
+      (if (< turns limen-herdr-auto-name-turns)
+          (puthash key turns limen-herdr--turns)
+        (puthash key 0 limen-herdr--turns)
+        (run-with-timer 0 nil #'limen-herdr--auto-name server pane))))
+  nil)
+
+;;;###autoload
+(define-minor-mode limen-herdr-auto-name-mode
+  "Name agents still under a generic label once they have worked a while.
+An agent labeled with its harness, its harness's default title or
+herdr's placeholder is named by Claude, as `limen-herdr-agent-name'
+names one, every `limen-herdr-auto-name-turns' turns until it has a
+name.  Enabling subscribes the Stop hook; disabling unsubscribes it."
+  :global t
+  :group 'limen-herdr
+  (cond
+   (limen-herdr-auto-name-mode
+    (require 'limen-hooks)
+    (limen-hooks-subscribe "auto-name" :events '(("Stop"))
+                           :function #'limen-herdr--on-turn))
+   (t
+    (when (featurep 'limen-hooks)
+      (limen-hooks-unsubscribe "auto-name"))
+    (clrhash limen-herdr--turns))))
 
 (defun limen-herdr--adapter (session phase &optional context)
   "Apply Limen adapter PHASE to Herdr SESSION using CONTEXT."
