@@ -1136,18 +1136,10 @@ whole of it was read."
            :offset offset :limit (- end offset))
         (error (limen-message--unavailable state))))))
 
-(defun limen-message--rescan (state &optional lost)
-  "Scan for what STATE\='s session has said since, and read it back.
-The index only holds what it was last shown, so a session read straight
-from it answers with whatever it said the last time it was scanned.  The
-scan runs behind what is already on screen, where its cost is unseen.
-LOST is carried through to `limen-message--count'."
-  (limen-message--request
-   state #'memex-api-index nil
-   (lambda (_result) (limen-message--count state lost))))
-
 (defun limen-message--count (state &optional lost)
   "Ask for the record count of STATE\='s session, and read back from there.
+Reading the session has memex take in what it said since it was last
+scanned.
 A session that holds nothing is gone as far as the field is concerned,
 and LOST, where given, is called to look for its replacement."
   (let ((missing (lambda ()
@@ -1192,9 +1184,7 @@ cost in front of every field, where the session is almost always known."
              (limen-message--remember
               state (list source (alist-get 'session_id row)
                           (alist-get 'source_path row)))
-             (if reindexed
-                 (limen-message--count state)
-               (limen-message--rescan state)))))))
+             (limen-message--count state))))))
    :source source :session-id (and (equal kind "id") value)
    :source-path (and (equal kind "path") value) :limit 2))
 
@@ -1213,7 +1203,7 @@ cost in front of every field, where the session is almost always known."
               (limen-message--unavailable state)
             (if-let* ((scope (gethash target limen-message--scopes)))
                 (progn (limen-message--remember state scope)
-                       (limen-message--rescan
+                       (limen-message--count
                         state (lambda ()
                                 (remhash target limen-message--scopes)
                                 (limen-message--locate state source kind value))))

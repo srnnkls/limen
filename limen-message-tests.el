@@ -543,10 +543,9 @@ A pane stacks blocks, which stand where the lines of one text stood."
 
 (ert-deftest limen-message-rpc-handles-cancel-through-public-api-on-close ()
   (limen-message-tests--state
-    (let ((index-handle (make-pipe-process :name "limen-test-index" :noquery t))
-          (session-handle (make-pipe-process :name "limen-test-session" :noquery t))
+    (let ((session-handle (make-pipe-process :name "limen-test-session" :noquery t))
           (page-handle (make-pipe-process :name "limen-test-page" :noquery t))
-          index-callback sessions-callback page-callback cancelled)
+          sessions-callback page-callback cancelled)
       (unwind-protect
           (cl-letf (((symbol-function 'require) (lambda (&rest _) t))
                     ((symbol-function 'herdr-agent-find) (lambda (&rest _) 'session))
@@ -554,9 +553,6 @@ A pane stacks blocks, which stand where the lines of one text stood."
                      (lambda (_) '((kind . "id") (value . "id"))))
                     ((symbol-function 'herdr-agent-session-kind) (lambda (_) "claude"))
                     ((symbol-function 'herdr-agent-session-project) #'ignore)
-                    ((symbol-function 'memex-api-index)
-                     (lambda (callback &rest _)
-                       (setq index-callback callback) index-handle))
                     ((symbol-function 'memex-api-sessions)
                      (lambda (callback &rest _)
                        (setq sessions-callback callback) session-handle))
@@ -571,9 +567,6 @@ A pane stacks blocks, which stand where the lines of one text stood."
             (delete-process session-handle)
             (funcall sessions-callback
                      '(((source . "claude") (session_id . "id") (source_path . "/opaque"))))
-            (should (eq (caar (limen-message--state-requests state)) index-handle))
-            (delete-process index-handle)
-            (funcall index-callback '((files_scanned . 0)))
             (should (eq (caar (limen-message--state-requests state)) page-handle))
             (should (= (length (limen-message--state-requests state)) 1))
             (limen-message--close state)
@@ -583,7 +576,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
             (funcall page-callback '((total . 99)))
             (should-not updates)
             (should-not (limen-message--state-requests state)))
-        (dolist (handle (list index-handle session-handle page-handle))
+        (dolist (handle (list session-handle page-handle))
           (when (process-live-p handle) (delete-process handle)))))))
 
 (ert-deftest limen-message-lists-sessions-before-paying-for-a-scan ()
@@ -626,7 +619,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
                 ((symbol-function 'memex-api-session-page)
                  (lambda (&rest _) (push 'page order) nil)))
         (limen-message--resolve state)
-        (should (equal (reverse order) '(index page)))
+        (should (equal (reverse order) '(page)))
         (should (equal (limen-message--state-latest state) "earlier reply"))
         (should (string-match-p "earlier reply"
                                 (limen-message-tests--text (cdar updates))))))))
@@ -650,7 +643,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
                  (lambda (_id _path callback &rest _)
                    (push 'page order) (funcall callback '((total . 0))))))
         (limen-message--resolve state)
-        (should (equal (reverse order) '(index page sessions index sessions)))
+        (should (equal (reverse order) '(page sessions index sessions)))
         (should-not (gethash (limen-message--state-target state)
                              limen-message--scopes))))))
 
