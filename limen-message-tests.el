@@ -1490,5 +1490,9 @@ where Codex ended up in PLACE."
       (should (equal (limen-message--state-effort state) "xhigh"))
       (should (equal reported '("server" "%4" "Opus 5.5/xhigh"))))))
 
+(ert-deftest limen-message-status-icons-sit-at-text-size-by-default ()
+  (should-not (plist-get (cdr (car (face-default-spec 'limen-message-status-icon)))
+                         :height)))
+
 (provide 'limen-message-tests)
 ;;; limen-message-tests.el ends here

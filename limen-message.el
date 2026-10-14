@@ -116,8 +116,10 @@ and :effort sets one the way :command sets a model, such as
   :group 'limen-message)
 
 (defface limen-message-status-icon
-  '((t :inherit limen-message-status :height 0.75))
-  "Face of the icons on the status line below a message field."
+  '((t :inherit limen-message-status))
+  "Face of the icons on the status line below a message field.
+A :height below 1.0 takes Nerd Font glyphs down to the text, and the
+glyph is raised to stay centred on its line."
   :group 'limen-message)
 
 (defvar cera-read-context-function)
@@ -503,8 +505,8 @@ where there is none."
 
 (defun limen-message--centring ()
   "Return the raise centring a glyph in `limen-message-status-icon' on its line.
-The face scales the glyph down, leaving the height it gave up above it;
-raising it by half of that, measured in its own height, centres it."
+A face that scales the glyph down leaves the height it gave up above
+it; raising it by half of that, measured in its own height, centres it."
   (let ((height (face-attribute 'limen-message-status-icon :height nil t)))
     (when (and (floatp height) (< 0 height 1))
       `(raise ,(/ (- 1.0 height) (* 2 height))))))

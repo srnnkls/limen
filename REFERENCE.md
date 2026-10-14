@@ -359,7 +359,7 @@ keys appear while `limen-message-context` is set.
 | `limen-message-agent-rule` | orange foreground, else inherits `warning` | the rule beside the agent's messages, while both sides show |
 | `limen-message-user-rule` | blue foreground, else inherits `link` | the rule beside your prompts, while both sides show |
 | `limen-message-status` | inherits `shadow` | the status line |
-| `limen-message-status-icon` | inherits `limen-message-status`, height 0.75 | icons on the status line |
+| `limen-message-status-icon` | inherits `limen-message-status` | icons on the status line |
 
 `limen-message-codex-model` is a ready `:command` for Codex: it drives Codex's `/model` menu and
 reads the reasoning level offered for the chosen model.
