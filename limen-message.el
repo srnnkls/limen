@@ -150,6 +150,7 @@ and :effort sets one the way :command sets a model, such as
 (declare-function herdr-status-glyph "ext:herdr-status" (glyph))
 (declare-function herdr-status-label "ext:herdr-status" (entry &optional entries))
 (declare-function herdr-status-state-mark "ext:herdr-status" (entry))
+(declare-function herdr-status-field-glyph "ext:herdr-status" (field &optional value))
 (defvar herdr-status-field-glyphs)
 (declare-function herdr-agent-read "ext:herdr-agent" (target))
 (declare-function herdr-agent-type-keys "ext:herdr-agent" (target keys))
@@ -486,11 +487,14 @@ so the line says where the message goes."
 
 (defun limen-message--status-part (field text)
   "Return TEXT behind the glyph `herdr-status' leads FIELD with.
-The glyphs are the dashboard's, `herdr-status-field-glyphs', so a field
-reads the same in both; TEXT stands alone where there is none."
-  (let ((glyph (if (require 'herdr-status nil t)
-                   (herdr-status-glyph (alist-get field herdr-status-field-glyphs))
-                 "")))
+The glyphs are the dashboard's, so a field reads the same in both, the
+context glyph filling with the share TEXT reports; TEXT stands alone
+where there is none."
+  (let ((glyph (cond ((not (require 'herdr-status nil t)) "")
+                     ((fboundp 'herdr-status-field-glyph)
+                      (herdr-status-field-glyph field text))
+                     (t (herdr-status-glyph
+                         (alist-get field herdr-status-field-glyphs))))))
     (if (string-empty-p glyph)
         text
       (concat (propertize glyph 'face 'limen-message-status-icon

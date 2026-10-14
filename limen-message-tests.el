@@ -14,6 +14,7 @@
 (defvar cera-session-keymap nil)
 (defvar cera-session-start-hook nil)
 (defvar herdr-status-field-glyphs)
+(defvar herdr-status-context-glyphs)
 
 (defun limen-message-tests--text (content)
   "Return CONTENT as the text a pane draws, whether blocks or one string."
@@ -1397,6 +1398,18 @@ where Codex ended up in PLACE."
       (limen-message-tests--with-agent-in "shiftlet"
         (should (equal (substring-no-properties (limen-message--status state))
                        "W shiftlet  P agent"))))))
+
+(ert-deftest limen-message-status-context-glyph-fills-with-the-window ()
+  (skip-unless (and (require 'herdr-status nil t)
+                    (fboundp 'herdr-status-field-glyph)))
+  (let ((herdr-status-context-glyphs '(("e") ("h") ("f")))
+        (herdr-status-field-glyphs '((context "%"))))
+    (should (equal (substring-no-properties
+                    (limen-message--status-part 'context "100k/200k"))
+                   "h 100k/200k"))
+    (should (equal (substring-no-properties
+                    (limen-message--status-part 'context "200k/200k"))
+                   "f 200k/200k"))))
 
 (ert-deftest limen-message-reads-an-agent-attached-nowhere-from-herdr ()
   (limen-message-tests--state
