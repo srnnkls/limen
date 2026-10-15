@@ -72,7 +72,7 @@
                    nil nil))
       (should (equal scheduled
                      '((0 nil limen-model--report-with-effort
-                          ("/tmp/alpha.sock" "%1" "Opus 5" nil claude)))))
+                          ("/tmp/alpha.sock" "%1" "Opus 5" nil claude nil)))))
       (setq scheduled nil)
       (limen-model--report-event
        "claude" (limen-model-tests--payload "UserPromptSubmit" 'model "Opus 5")
@@ -81,6 +81,37 @@
       (limen-model--report-event
        "claude" (limen-model-tests--payload "SessionStart" nil nil) nil nil)
       (should-not scheduled))))
+
+(ert-deftest limen-model-reports-the-effort-a-status-line-sees ()
+  (let (scheduled)
+    (cl-letf (((symbol-function 'run-at-time)
+               (lambda (_time _repeat function &rest arguments)
+                 (push (cons function arguments) scheduled))))
+      (limen-model--report-event
+       "claude"
+       (append (limen-model-tests--payload "StatusLine" 'model "claude-opus-5-5")
+               '((effort . "high") (transcript_path . "/tmp/t.jsonl")))
+       nil nil)
+      (should (equal scheduled
+                     '((limen-model--report-with-effort
+                        "/tmp/alpha.sock" "%1" "claude-opus-5-5" "/tmp/t.jsonl"
+                        claude "high")))))
+    (cl-letf (((symbol-function 'limen-model-report)
+               (lambda (_server _pane label) label))
+              ((symbol-function 'limen-model-effort)
+               (lambda (&rest _) (ert-fail "read the transcript"))))
+      (should (equal (limen-model--report-with-effort
+                      "/s" "%1" "claude-opus-5-5" "/tmp/t.jsonl" 'claude "high")
+                     "claude-opus-5-5/high")))))
+
+(ert-deftest limen-model-redraws-the-dashboard-on-a-report ()
+  (let (redrawn)
+    (cl-letf (((symbol-function 'herdr-api-pane-report-metadata) #'ignore)
+              ((symbol-function 'herdr-status-request-refresh)
+               (lambda () (setq redrawn t))))
+      (should (equal (limen-model-report "/tmp/alpha.sock" "%1" "Opus 5/high")
+                     "Opus 5/high"))
+      (should redrawn))))
 
 (ert-deftest limen-model-drops-a-report-an-unreachable-server-refuses ()
   (cl-letf (((symbol-function 'herdr-api-pane-report-metadata)
@@ -107,11 +138,13 @@
                        removed))))
       (limen-model-mode 1)
       (should (equal requested '("model")))
-      (should (equal (limen-hooks-events 'claude) '(("PostModelSwitch") ("Stop"))))
+      (should (equal (limen-hooks-events 'claude)
+                     '(("PostModelSwitch") ("Stop"))))
       (should-not (limen-hooks-events 'codex))
       (should (memq #'limen-model--report-event limen-hooks-event-functions))
       (limen-model-mode 1)
-      (should (equal (limen-hooks-events 'claude) '(("PostModelSwitch") ("Stop"))))
+      (should (equal (limen-hooks-events 'claude)
+                     '(("PostModelSwitch") ("Stop"))))
       (should (= (length limen-hooks--subscriptions) 1))
       (limen-model-mode -1)
       (should-not (limen-hooks-events 'claude))

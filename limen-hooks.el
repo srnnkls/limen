@@ -146,6 +146,11 @@ not who answers them."
 A harness that names them otherwise is translated into these at its own
 edge, so a subscriber reads one set of names whichever harness it hears.")
 
+(defconst limen-hooks-status-line-event "StatusLine"
+  "The event a status line sends through the hook, which no harness emits.
+It is answered with an object holding `received', so the sender can
+tell a payload Emacs took from one that never reached it.")
+
 (defconst limen-hooks--context-events '(("UserPromptSubmit") ("SessionStart"))
   "Hook events context injection needs.")
 
@@ -908,11 +913,14 @@ waits on it."
                                    extra))
                        "\n\n"))
                      (_ nil)))))
-      (if (and text (not (string-empty-p text)))
-          (json-serialize
-           `((hookSpecificOutput . ((hookEventName . ,event)
-                                    (additionalContext . ,text)))))
-        ""))))
+      (cond
+       ((equal event limen-hooks-status-line-event)
+        (json-serialize '((received . t))))
+       ((and text (not (string-empty-p text)))
+        (json-serialize
+         `((hookSpecificOutput . ((hookEventName . ,event)
+                                  (additionalContext . ,text))))))
+       (t "")))))
 
 (defun limen-hooks--subscribe-review ()
   "Subscribe edit review while it is asked for, and drop it once it is not."

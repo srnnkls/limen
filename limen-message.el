@@ -522,11 +522,12 @@ moment a pick changes it."
     (limen-model-report (car target) pane label)))
 
 (defun limen-message--status (state)
-  "Return the model and context window STATE's agent last answered with, or nil.
+  "Return the model, effort and context window STATE's agent runs on, or nil.
 A model or effort picked in the composer stands in for the one answered
 with, and an agent of another workspace is named in front."
   (let ((answer (limen-message--answer state)))
-    (let* ((model (limen-message--model-label answer))
+    (let* ((model (limen-message--model-label (cons '(effort) answer)))
+           (effort (and model (alist-get 'effort answer)))
            (usage (and answer (require 'limen-usage nil t)
                        (limen-usage-of-answer answer)))
            (elsewhere (limen-message--elsewhere state))
@@ -537,6 +538,8 @@ with, and an agent of another workspace is named in front."
                                    (limen-message--status-part 'pane (cdr elsewhere)))
                               (and model
                                    (limen-message--status-part 'model model))
+                              (and effort
+                                   (limen-message--status-part 'effort effort))
                               (and usage
                                    (limen-message--status-part
                                     'context

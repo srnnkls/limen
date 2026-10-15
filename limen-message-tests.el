@@ -1393,8 +1393,9 @@ where Codex ended up in PLACE."
           (limen-message--state-effort state) "xhigh")
     (cl-letf (((symbol-function 'limen-message--agent) #'ignore)
               ((symbol-function 'limen-message--elsewhere) #'ignore))
-      (should (string-suffix-p "Opus 5.5/xhigh"
-                               (substring-no-properties (limen-message--status state)))))))
+      (let ((status (substring-no-properties (limen-message--status state))))
+        (should (string-match-p "Opus 5.5 .*xhigh\\'" status))
+        (should-not (string-match-p "/xhigh" status))))))
 
 (ert-deftest limen-message-pick-effort-reports-it-with-the-model ()
   "The effort picked goes to the agent, the status line and the dashboard."

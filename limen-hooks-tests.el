@@ -342,6 +342,25 @@
           (should (equal (car seen) `("codex" "Stop" nil nil nil nil ,root))))
       (delete-directory root t))))
 
+(ert-deftest limen-hooks-output-tells-a-status-line-its-payload-arrived ()
+  (let* ((root (file-truename (make-temp-file "limen-hooks-status-line" t)))
+         (limen-trail-mode nil)
+         (limen-herdr-context-fields-functions nil)
+         (limen-hooks--pending (make-hash-table :test #'eq))
+         (limen-hooks--last (make-hash-table :test #'eq))
+         (limen-hooks-event-functions nil))
+    (unwind-protect
+        (progn
+          (should (equal (limen-hooks-output
+                          (limen-hooks-tests--hook-request "claude" "StatusLine" nil root)
+                          (limen-hooks-tests--request root))
+                         "{\"received\":true}"))
+          (should (equal (limen-hooks-output
+                          (limen-hooks-tests--hook-request "claude" "Stop" nil root)
+                          (limen-hooks-tests--request root))
+                         "")))
+      (delete-directory root t))))
+
 (ert-deftest limen-hooks-output-adds-what-event-functions-return-to-a-prompt ()
   (let* ((root (file-truename (make-temp-file "limen-hooks-extra" t)))
          (limen-trail-mode nil)

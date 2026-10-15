@@ -28,6 +28,7 @@
 
 (defvar herdr-socket-path)
 (defvar herdr-status-model-token)
+(declare-function herdr-status-request-refresh "ext:herdr-status" ())
 
 (defgroup limen-model nil
   "Report the model an agent answers with to its Herdr pane."
@@ -77,8 +78,11 @@ has the transcript read instead."
   :group 'limen-model)
 
 (defconst limen-model--payload-keys
-  '(("SessionStart" . model) ("PostModelSwitch" . to_model))
-  "The key each event carries its model under, keyed by event.")
+  `(("SessionStart" . model) ("PostModelSwitch" . to_model)
+    (,limen-hooks-status-line-event . model))
+  "The key each event carries its model under, keyed by event.
+A status line that sees the model or effort change sends it through
+Limen's hook as `limen-hooks-status-line-event', effort and all.")
 
 (defun limen-model--name (value)
   "Return the model VALUE names, or nil.
@@ -103,14 +107,17 @@ the session start as sometimes leaving it out."
 
 (defun limen-model-report (server pane model)
   "Report MODEL as PANE's model on the Herdr SERVER.
-Returns the model on success.  A server that cannot be reached is not
-worth interrupting a hook over, so the report is dropped instead."
+Returns the model on success, and has a live dashboard redraw it.  A
+server that cannot be reached is not worth interrupting a hook over, so
+the report is dropped instead."
   (when (and server pane model)
     (condition-case nil
         (let ((herdr-socket-path server))
           (herdr-api-pane-report-metadata
            pane limen-model-source
            :tokens (list (cons (intern (limen-model-token)) model)))
+          (when (fboundp 'herdr-status-request-refresh)
+            (herdr-status-request-refresh))
           model)
       (error nil))))
 
@@ -152,11 +159,15 @@ at the one its provider's settings start a session on."
       (format "%s/%s" model effort)
     model))
 
-(defun limen-model--report-with-effort (server pane model transcript provider)
-  "Report MODEL with the effort PROVIDER's TRANSCRIPT runs at to PANE on SERVER."
+(defun limen-model--report-with-effort (server pane model transcript provider
+                                               &optional effort)
+  "Report MODEL with its EFFORT to PANE on SERVER.
+Without EFFORT, the one PROVIDER's TRANSCRIPT runs at is reported."
   (limen-model-report server pane
                       (limen-model-label
-                       model (and transcript (limen-model-effort transcript provider)))))
+                       model (or effort
+                                 (and transcript
+                                      (limen-model-effort transcript provider))))))
 
 (defun limen-model--report-transcript (server pane transcript provider)
   "Report the model PROVIDER's TRANSCRIPT last answered with to PANE on SERVER."
@@ -182,7 +193,9 @@ returned, where waiting on a socket reaches nothing but itself."
               (pane (alist-get 'pane payload)))
     (if-let* ((model (limen-model-of payload)))
         (run-at-time 0 nil #'limen-model--report-with-effort server pane model
-                     (alist-get 'transcript_path payload) (intern provider))
+                     (alist-get 'transcript_path payload) (intern provider)
+                     (let ((effort (alist-get 'effort payload)))
+                       (and (stringp effort) (not (string-empty-p effort)) effort)))
       (when-let* (((limen-model--asked-for-p provider payload))
                   (transcript (alist-get 'transcript_path payload)))
         (run-at-time 0 nil #'limen-model--report-transcript
