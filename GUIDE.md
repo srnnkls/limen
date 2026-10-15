@@ -570,15 +570,15 @@ hooks reach Emacs reports the same turns with more detail: a `prompt` notice rep
 `limen-herd-excerpt-length` characters of the answer. A state change waits
 `limen-herd-fallback-delay` seconds for such a hook before it becomes the notice itself.
 
-A member in the middle of a turn is never interrupted. Its notices wait and reach it with its next
-prompt, as hook context, or as soon as Herdr sees it idle; with `limen-herd-hold-for-busy` nil they
-are dropped. Notices never answer notices: a turn started by a prompt that opens with one of
+Notices are never typed into a pane. They wait and reach the member with its next prompt or tool
+call, as hook context the user does not see. Notices never answer notices: a turn started by a prompt that opens with one of
 `limen-herd-quiet-prefixes` ends without a `finished` notice.
 
 ### Aware workspaces
 
-With `limen-herd-workspace-awareness` set, the agents of every Herdr workspace know each other
-without joining a herd. Each is told once who else is there and how to reach them; an agent
+With `limen-herd-workspace-awareness` set, the agents of every editor workspace know each other
+without joining a herd. An agent belongs to the workspace `herdr-workspace-label` gives its
+directory, whichever Herdr workspace its pane sits in. Each is told once who else is there and how to reach them; an agent
 arriving later gets the same, and the others learn it arrived. `A` in `herdr-status` flips this for
 the dashboard's scope: on a project dashboard for that project's workspace alone, on the global one
 for every workspace without a setting of its own.

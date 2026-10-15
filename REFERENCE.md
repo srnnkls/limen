@@ -251,12 +251,12 @@ and `limen-inbox-option-section-map`, whose parent is the question map.
 | Option | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `limen-herd-default-events` | set of `online`, `prompt`, `finished`, `exited` | `(finished exited)` | what "defaults" subscribes to |
-| `limen-herd-hold-for-busy` | boolean | `t` | hold notices for a member mid-turn; nil drops them |
 | `limen-herd-prompt-length` | integer ≥ 0 | `80` | characters of a prompt a notice repeats |
 | `limen-herd-excerpt-length` | integer ≥ 0 | `0` | characters of the last answer a `finished` notice repeats; 0 leaves it out |
 | `limen-herd-quiet-prefixes` | list of strings | `("[herd " "/herd ")` | prompt openings whose turn ends without a `finished` notice |
 | `limen-herd-label-prefix` | string | `"notify:"` | opening of the pane-label word listing subscriptions |
 | `limen-herd-fallback-delay` | number | `5` | seconds a Herdr state change waits for a hook to report the same turn |
+| `limen-herd-agents-max-age` | number | `30` | seconds the live agents Herdr last reported serve notices before it is asked again; pane events keep them current meanwhile |
 | `limen-herd-workspace-awareness` | boolean | `nil` | make every workspace's agents aware of each other; a workspace toggled on its project dashboard keeps its own setting |
 | `limen-herd-workspace-prefix` | string | `"[workspace] "` | opening of what an aware workspace tells its agents |
 | `limen-herd-workspace-protocol` | string | how to reach a peer | the line after the roster an agent is told |

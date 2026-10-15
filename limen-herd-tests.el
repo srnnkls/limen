@@ -7,12 +7,17 @@
 (defvar herdr-herd-protocol-functions)
 (defvar herdr-herd-sent-functions)
 (defvar herdr-agent-event-functions)
+(defvar herdr-entries-in-scope-function)
 
 (defun limen-herd-tests--entry (name &rest keys)
   "Return a Herdr agent entry called NAME.
-KEYS may set :status :label :session :workspace."
+KEYS may set :status :label :session :workspace :herdr-workspace.
+:workspace names the editor workspace the agent's directory belongs in,
+:herdr-workspace the herdr workspace its pane sits in."
   `((name . ,name) (agent . "claude")
-    (workspace_id . ,(plist-get keys :workspace))
+    (workspace_id . ,(plist-get keys :herdr-workspace))
+    (foreground_cwd . ,(and (plist-get keys :workspace)
+                            (concat "/src/" (plist-get keys :workspace))))
     (agent_status . ,(or (plist-get keys :status) "idle"))
     (agent_session . ((value . ,(or (plist-get keys :session) name))))
     (pane_label . ,(plist-get keys :label))
@@ -29,12 +34,12 @@ KEYS may set :status :label :session :workspace."
 (defmacro limen-herd-tests--with-herd (members &rest body)
   "Run BODY with MEMBERS as the herd `limen' and every Herdr call stubbed.
 The sender is the member whose pane the payload names; `prompts' collects
-what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
-`renames' what `limen-herd--rename' received as (PANE . LABEL)."
+what `herdr-agent-prompt' received as (TARGET . TEXT), which must stay
+empty, `renames' what `limen-herd--rename' received as (PANE . LABEL),
+and `fetches' how often herdr was asked for the live agents."
   (declare (indent 1) (debug (form body)))
   `(let ((limen-herd--prompts (make-hash-table :test #'equal))
          (limen-herd--held (make-hash-table :test #'equal))
-         (limen-herd--whispers (make-hash-table :test #'equal))
          (limen-herd--overrides (make-hash-table :test #'equal))
          (limen-herd--labels nil)
          (limen-herd--arrived (make-hash-table :test #'equal))
@@ -44,12 +49,15 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
          (limen-herd--chatter (make-hash-table :test #'equal))
          (limen-herd--queue nil)
          (limen-herd--queue-timer nil)
+         (limen-herd--snapshot nil)
          (limen-herd-fallback-delay 0)
          (members ,members)
          (prompts nil)
-         (renames nil))
-     (ignore renames)
-     (cl-letf (((symbol-function 'herdr-herd-live-agents) (lambda (&rest _) members))
+         (renames nil)
+         (fetches 0))
+     (ignore renames fetches)
+     (cl-letf (((symbol-function 'herdr-herd-live-agents)
+                (lambda (&rest _) (cl-incf fetches) members))
                ((symbol-function 'herdr-herd-of-entry)
                 (lambda (entry)
                   (when (string-prefix-p "herd:" (or (alist-get 'pane_label entry) ""))
@@ -57,10 +65,10 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
                ((symbol-function 'herdr-herd-member-entries)
                 (lambda (_herd &optional agents)
                   (seq-filter #'herdr-herd-of-entry agents)))
-               ((symbol-function 'herdr-workspaces)
-                (lambda ()
-                  (mapcar (lambda (id) `((workspace_id . ,id) (label . ,(concat "ws-" id))))
-                          '("w1" "w2"))))
+               ((symbol-function 'herdr-entry-directory)
+                (lambda (entry) (alist-get 'foreground_cwd entry)))
+               ((symbol-function 'herdr-workspace-label)
+                (lambda (directory) (concat "ws-" (file-name-nondirectory directory))))
                ((symbol-function 'herdr-herd-notice)
                 (lambda (herd text) (format "[herd %s] %s" (cdr herd) text)))
                ((symbol-function 'herdr-herd-entry-brief)
@@ -89,7 +97,12 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
                 (lambda (entry) (alist-get 'terminal_id entry)))
                ((symbol-function 'herdr-agent-prompt)
                 (lambda (target text) (push (cons target text) prompts) text)))
-       ,@body)))
+       (prog1 (progn ,@body)
+         (should-not prompts)))))
+
+(defun limen-herd-tests--held (id)
+  "Return the notices waiting for agent session ID's hook context."
+  (gethash id limen-herd--held))
 
 (defun limen-herd-tests--event (event id &rest fields)
   "Answer the hook EVENT from agent ID, then run what it queued."
@@ -120,35 +133,24 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
       (should-not (limen-herd-subscriptions
                    (limen-herd-tests--entry "b" :label "herd:limen notify:bogus"))))))
 
-(ert-deftest limen-herd-finished-notice-reaches-subscribed-idle-peers-and-holds-for-busy ()
+(ert-deftest limen-herd-finished-notice-waits-for-each-subscribed-peer-s-hook-context ()
   (limen-herd-tests--with-herd
       (list (limen-herd-tests--entry "a" :label "herd:limen")
             (limen-herd-tests--entry "b" :label "herd:limen notify:finished")
             (limen-herd-tests--entry "c" :label "herd:limen notify:finished"
                                      :status "working")
             (limen-herd-tests--entry "d" :label "herd:limen"))
-    (let ((limen-herd-excerpt-length 160))
+    (let ((limen-herd-excerpt-length 160)
+          (notice "[herd limen] a finished: \"fix the tests\". Said: \"All green.\""))
       (should-not (limen-herd-tests--event
                    "UserPromptSubmit" "a" '(prompt . "fix the tests\nplease")))
-      (should-not prompts)
+      (should (= (hash-table-count limen-herd--held) 0))
       (limen-herd-tests--event "Stop" "a" '(stop_hook_active . :false)
                                '(last_assistant_message . "All green.\nDetails."))
-      (should (equal prompts
-                     '(("term-b" . "[herd limen] a finished: \"fix the tests\". Said: \"All green.\""))))
-      (should (equal (limen-herd-tests--event "UserPromptSubmit" "c" '(prompt . "go on"))
-                     "[herd limen] a finished: \"fix the tests\". Said: \"All green.\""))
+      (should (equal (limen-herd-tests--event "UserPromptSubmit" "b" '(prompt . "go on"))
+                     notice))
+      (should (equal (limen-herd-tests--event "PostToolUse" "c") notice))
       (should-not (limen-herd-tests--event "UserPromptSubmit" "c" '(prompt . "more")))
-      (should (= (hash-table-count limen-herd--held) 0)))))
-
-(ert-deftest limen-herd-a-busy-peer-is-skipped-when-holding-is-off ()
-  (limen-herd-tests--with-herd
-      (list (limen-herd-tests--entry "a" :label "herd:limen")
-            (limen-herd-tests--entry "c" :label "herd:limen notify:finished"
-                                     :status "blocked"))
-    (let ((limen-herd-hold-for-busy nil))
-      (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "task"))
-      (limen-herd-tests--event "Stop" "a")
-      (should-not prompts)
       (should (= (hash-table-count limen-herd--held) 0)))))
 
 (ert-deftest limen-herd-ignores-chatter-turns ()
@@ -160,29 +162,28 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
     (limen-herd-tests--event "Stop" "a")
     (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "/herd limen — you are a"))
     (limen-herd-tests--event "Stop" "a")
-    (should-not prompts)
+    (should-not (limen-herd-tests--held "b"))
     (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "real work"))
-    (should (equal (cdr (car prompts))
-                   "[herd limen] a started: \"real work\"."))
     (limen-herd-tests--event "Stop" "a" '(stop_hook_active . t))
-    (should (= (length prompts) 1))
+    (should (equal (limen-herd-tests--held "b")
+                   '("[herd limen] a started: \"real work\".")))
     (limen-herd-tests--event "Stop" "a")
-    (should (equal (cdr (car prompts))
-                   "[herd limen] a finished: \"real work\"."))))
+    (should (equal (limen-herd-tests--held "b")
+                   '("[herd limen] a started: \"real work\"."
+                     "[herd limen] a finished: \"real work\".")))))
 
 (ert-deftest limen-herd-online-and-exit-notices ()
   (limen-herd-tests--with-herd
       (list (limen-herd-tests--entry "a" :label "herd:limen")
             (limen-herd-tests--entry "b" :label "herd:limen notify:online,exited"))
     (limen-herd-tests--event "SessionStart" "a" '(source . "compact"))
-    (should-not prompts)
+    (should-not (limen-herd-tests--held "b"))
     (limen-herd-tests--event "SessionStart" "a" '(source . "resume"))
-    (should (equal (cdr (car prompts))
-                   "[herd limen] a is online."))
     (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "task"))
     (limen-herd-tests--event "SessionEnd" "a" '(reason . "logout"))
-    (should (equal (cdr (car prompts))
-                   "[herd limen] a exited (logout)."))
+    (should (equal (limen-herd-tests--held "b")
+                   '("[herd limen] a is online."
+                     "[herd limen] a exited (logout).")))
     (should (= (hash-table-count limen-herd--prompts) 0))))
 
 (defun limen-herd-tests--observe (pane status)
@@ -196,20 +197,20 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
       (list (limen-herd-tests--entry "a" :label "herd:limen")
             (limen-herd-tests--entry "b" :label "herd:limen notify:online,prompt,finished,exited"))
     (limen-herd-tests--observe "%a" "unknown")
-    (should-not prompts)
+    (should-not (limen-herd-tests--held "b"))
     (limen-herd-tests--observe "%a" "idle")
-    (should (equal (cdr (car prompts)) "[herd limen] a is online."))
     (limen-herd-tests--observe "%a" "idle")
-    (should (= (length prompts) 1))
+    (should (equal (limen-herd-tests--held "b") '("[herd limen] a is online.")))
     (limen-herd-tests--observe "%a" "working")
-    (should (equal (cdr (car prompts)) "[herd limen] a started a turn."))
     (limen-herd-tests--observe "%a" "blocked")
-    (should (= (length prompts) 2))
     (limen-herd-tests--observe "%a" "idle")
-    (should (equal (cdr (car prompts)) "[herd limen] a finished a turn."))
     (limen-herd--on-herdr-event "/tmp/alpha.sock" "pane.exited" '((pane_id . "%a")))
     (limen-herd-tests--drain)
-    (should (equal (cdr (car prompts)) "[herd limen] a exited."))
+    (should (equal (limen-herd-tests--held "b")
+                   '("[herd limen] a is online."
+                     "[herd limen] a started a turn."
+                     "[herd limen] a finished a turn."
+                     "[herd limen] a exited.")))
     (should (= (hash-table-count limen-herd--states) 0))))
 
 (ert-deftest limen-herd-seeding-tells-nobody-about-agents-already-there ()
@@ -219,9 +220,9 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
     (limen-herd--seed)
     (should (= (hash-table-count limen-herd--states) 2))
     (limen-herd-tests--observe "%a" "working")
-    (should-not prompts)
+    (should-not (limen-herd-tests--held "b"))
     (limen-herd-tests--observe "%a" "idle")
-    (should (equal (cdr (car prompts)) "[herd limen] a finished a turn."))))
+    (should (equal (limen-herd-tests--held "b") '("[herd limen] a finished a turn.")))))
 
 (ert-deftest limen-herd-a-hooked-turn-silences-its-state-change ()
   (limen-herd-tests--with-herd
@@ -232,18 +233,18 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
     (limen-herd-tests--observe "%a" "working")
     (limen-herd-tests--event "Stop" "a")
     (limen-herd-tests--observe "%a" "idle")
-    (should (equal (mapcar #'cdr prompts)
-                   '("[herd limen] a finished: \"task\"."
-                     "[herd limen] a started: \"task\".")))
+    (should (equal (limen-herd-tests--held "b")
+                   '("[herd limen] a started: \"task\"."
+                     "[herd limen] a finished: \"task\".")))
     (let ((limen-herd-fallback-delay 5)
           (key (cons (limen-herd--pane-key "/tmp/alpha.sock" "%a") 'prompt)))
       (limen-herd-tests--observe "%a" "working")
       (should (gethash key limen-herd--timers))
       (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "again"))
       (should-not (gethash key limen-herd--timers))
-      (should (= (length prompts) 3)))))
+      (should (= (length (limen-herd-tests--held "b")) 3)))))
 
-(ert-deftest limen-herd-held-notices-flush-when-herdr-sees-the-member-idle ()
+(ert-deftest limen-herd-notices-wait-for-hook-context-when-herdr-sees-the-member-idle ()
   (limen-herd-tests--with-herd
       (list (limen-herd-tests--entry "a" :label "herd:limen")
             (limen-herd-tests--entry "b" :label "herd:limen notify:prompt,finished")
@@ -252,21 +253,17 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
     (limen-herd--seed)
     (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "task"))
     (limen-herd-tests--event "Stop" "a")
-    (should (= (length prompts) 2))
-    (should (gethash "c" limen-herd--held))
     (limen-herd-tests--observe "%c" "idle")
-    (should (equal (seq-take prompts 2)
-                   '(("term-c" . "[herd limen] a finished: \"task\".")
-                     ("term-b" . "[herd limen] c finished a turn."))))
-    (should-not (gethash "c" limen-herd--held))
-    (limen-herd-tests--observe "%c" "working")
-    (limen-herd-tests--observe "%c" "idle")
-    (should (= (length prompts) 4))
-    (limen-herd-tests--observe "%c" "working")
-    (should (equal (cdr (car prompts)) "[herd limen] c started a turn."))
+    (should (equal (limen-herd-tests--held "c") '("[herd limen] a finished: \"task\".")))
+    (should (equal (car (last (limen-herd-tests--held "b")))
+                   "[herd limen] c finished a turn."))
+    (should (equal (limen-herd-tests--event "UserPromptSubmit" "c" '(prompt . "next"))
+                   "[herd limen] a finished: \"task\"."))
+    (should (= (length (limen-herd-tests--held "b")) 4))
     (limen-herd--on-sent (nth 2 members) "[herd limen] roster")
+    (limen-herd-tests--observe "%c" "working")
     (limen-herd-tests--observe "%c" "idle")
-    (should (= (length prompts) 5))))
+    (should (= (length (limen-herd-tests--held "b")) 4))))
 
 (ert-deftest limen-herd-a-hook-answers-before-herdr-is-reached ()
   (limen-herd-tests--with-herd
@@ -294,7 +291,7 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
       (list (limen-herd-tests--entry "b" :label "herd:limen notify:finished"))
     (limen-herd-tests--event "UserPromptSubmit" "z" '(prompt . "task"))
     (limen-herd-tests--event "Stop" "z")
-    (should-not prompts)))
+    (should (= (hash-table-count limen-herd--held) 0))))
 
 (ert-deftest limen-herd-awareness-introduces-every-agent-and-arrivals-through-hooks-only ()
   (limen-herd-tests--with-herd
@@ -322,6 +319,21 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
                              limen-herd-workspace-protocol)))
       (should-not (limen-herd-tests--event "UserPromptSubmit" "z" '(prompt . "go")))
       (should-not prompts))))
+
+(ert-deftest limen-herd-awareness-follows-the-editor-workspace-not-herdr-s ()
+  (limen-herd-tests--with-herd
+      (list (limen-herd-tests--entry "a" :workspace "w1" :herdr-workspace "h1")
+            (limen-herd-tests--entry "b" :workspace "w1" :herdr-workspace "h2")
+            (limen-herd-tests--entry "z" :workspace "w2" :herdr-workspace "h1"))
+    (let ((limen-herd-workspace-awareness t))
+      (limen-herd--enqueue #'limen-herd--sync-awareness)
+      (limen-herd-tests--drain)
+      (should (equal (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "go"))
+                     (concat "[workspace] Agents here:\n  %b b\n"
+                             limen-herd-workspace-protocol)))
+      (should (equal (limen-herd-tests--event "UserPromptSubmit" "z" '(prompt . "go"))
+                     (concat "[workspace] No other agents here yet.\n"
+                             limen-herd-workspace-protocol))))))
 
 (ert-deftest limen-herd-a-workspace-setting-overrides-the-global-one ()
   (limen-herd-tests--with-herd
@@ -389,6 +401,110 @@ what `herdr-agent-prompt' received as (TARGET . TEXT), newest first, and
                                            (remove self agents))))))))
       (limen-herd-tests--event "SessionStart" "a" '(source . "startup"))
       (should (equal sent '(("b" . "online:a is online.")))))))
+
+(ert-deftest limen-herd-notices-reuse-the-agents-herdr-last-reported ()
+  (limen-herd-tests--with-herd
+      (list (limen-herd-tests--entry "a" :label "herd:limen")
+            (limen-herd-tests--entry "b" :label "herd:limen notify:prompt"))
+    (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "one"))
+    (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "two"))
+    (should (= fetches 1))
+    (should (equal (limen-herd-tests--held "b")
+                   '("[herd limen] a started: \"one\"."
+                     "[herd limen] a started: \"two\".")))
+    (setcar limen-herd--snapshot (- (float-time) limen-herd-agents-max-age 1))
+    (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "three"))
+    (should (= fetches 2))))
+
+(ert-deftest limen-herd-pane-events-keep-the-reported-agents-current ()
+  (limen-herd-tests--with-herd
+      (list (limen-herd-tests--entry "a" :label "herd:limen")
+            (limen-herd-tests--entry "b" :label "herd:limen notify:prompt"))
+    (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "one"))
+    (should (= fetches 1))
+    (limen-herd--on-herdr-event
+     "/tmp/alpha.sock" "pane.updated"
+     '((pane (pane_id . "%b") (label . "herd:limen notify:prompt")
+             (agent . "claude") (agent_status . "working")
+             (agent_session (value . "b")))))
+    (should (equal (alist-get 'agent_status
+                              (limen-herd--known-agent
+                               (limen-herd--pane-key "/tmp/alpha.sock" "%b")))
+                   "working"))
+    (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "two"))
+    (should (= fetches 1))
+    (setq members (list (car members)))
+    (limen-herd--on-herdr-event "/tmp/alpha.sock" "pane.exited" '((pane_id . "%b")))
+    (should-not (limen-herd--known-agent (limen-herd--pane-key "/tmp/alpha.sock" "%b")))
+    (should (= fetches 1))
+    (setq members (append members
+                          (list (limen-herd-tests--entry "c" :label "herd:limen notify:prompt"))))
+    (limen-herd--on-herdr-event
+     "/tmp/alpha.sock" "pane.agent_detected"
+     '((pane_id . "%c") (agent . "claude") (agent_status . "idle")))
+    (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "three"))
+    (should (= fetches 2))
+    (should (equal (limen-herd-tests--held "c") '("[herd limen] a started: \"three\".")))
+    (limen-herd--on-herdr-event
+     "/tmp/alpha.sock" "pane.updated"
+     '((pane (pane_id . "%c") (label . "herd:limen") (agent . "claude")
+             (agent_status . "idle") (agent_session (value . "c")))))
+    (should-not limen-herd--snapshot)))
+
+(ert-deftest limen-herd-an-unknown-sender-has-herdr-asked-once-per-pass ()
+  (limen-herd-tests--with-herd
+      (list (limen-herd-tests--entry "a" :label "herd:limen")
+            (limen-herd-tests--entry "b" :label "herd:limen notify:prompt"))
+    (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "warm"))
+    (should (= fetches 1))
+    (limen-herd--on-event "claude" (limen-herd-tests--payload
+                                    "UserPromptSubmit" "x" '(prompt . "one"))
+                          nil nil)
+    (limen-herd--on-event "claude" (limen-herd-tests--payload
+                                    "UserPromptSubmit" "y" '(prompt . "two"))
+                          nil nil)
+    (limen-herd-tests--drain)
+    (should (= fetches 2))
+    (limen-herd-tests--event "UserPromptSubmit" "outside" '(prompt . "x")
+                             '(pane . ""))
+    (should (= fetches 2))))
+
+(ert-deftest limen-herd-a-drain-that-must-ask-herdr-waits-while-the-user-is-busy ()
+  (limen-herd-tests--with-herd
+      (list (limen-herd-tests--entry "a" :label "herd:limen")
+            (limen-herd-tests--entry "b" :label "herd:limen notify:prompt"))
+    (let ((busy t))
+      (cl-letf (((symbol-function 'limen-herd--input-busy-p) (lambda () busy)))
+        (unwind-protect
+            (progn
+              (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "one"))
+              (should (= fetches 0))
+              (should limen-herd--queue)
+              (should (timerp limen-herd--queue-timer))
+              (setq busy nil)
+              (limen-herd-tests--drain)
+              (should (= fetches 1))
+              (should-not limen-herd--queue)
+              (setq busy t)
+              (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "two"))
+              (should-not limen-herd--queue)
+              (should (equal (limen-herd-tests--held "b")
+                             '("[herd limen] a started: \"one\"."
+                               "[herd limen] a started: \"two\"."))))
+          (when limen-herd--queue-timer
+            (cancel-timer limen-herd--queue-timer)))))))
+
+(ert-deftest limen-herd-asks-herdr-for-every-session-whatever-buffer-is-current ()
+  (limen-herd-tests--with-herd (list (limen-herd-tests--entry "a"))
+    (let ((seen t))
+      (cl-letf (((symbol-function 'herdr-herd-live-agents)
+                 (lambda (&rest _)
+                   (setq seen (local-variable-p 'herdr-entries-in-scope-function))
+                   members)))
+        (with-temp-buffer
+          (setq-local herdr-entries-in-scope-function #'ignore)
+          (limen-herd--fetch-agents))
+        (should-not seen)))))
 
 (ert-deftest limen-herd-mode-registers-and-installs ()
   (let ((limen-hooks--subscriptions nil)
