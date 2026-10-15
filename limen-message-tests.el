@@ -25,7 +25,6 @@
   "Return CONTENT without its spacers and the margin each line carries.
 A pane stacks blocks, which stand where the lines of one text stood."
   (let* ((text (limen-message-tests--text content))
-         (text (if (string-prefix-p "\n" text) (substring text 1) text))
          (offset (if (string-prefix-p " " (limen-message--margin 'default)) " " ""))
          (rule (concat offset limen-message-rule " "))
          (blank (make-string (string-width (concat limen-message-rule " ")) ?\s)))
@@ -177,7 +176,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
                                          (limen-message-tests--record 4 "tool_result" "result")
                                          (limen-message-tests--record 4 "user" "new question"))))))))
       (limen-message--page state 8)
-      (should (equal (limen-message--state-latest state) "first block\nlast block"))
+      (should (equal (limen-message--state-latest state) "last block"))
       (should (= (length (limen-message--state-records state)) 5)))))
 
 (ert-deftest limen-message-summary-selects-five-turns-not-five-records ()
@@ -212,7 +211,7 @@ A pane stacks blocks, which stand where the lines of one text stood."
                                                                  turn "head")))))))))))
         (limen-message--page state 64)
         (should (equal offsets '(0 32)))
-        (should (equal (limen-message--state-latest state) "head\ntail"))))))
+        (should (equal (limen-message--state-latest state) "tail"))))))
 
 (defun limen-message-tests--capped (records char-limit)
   "Read RECORDS under a scan cap of one page and CHAR-LIMIT, returning STATE."
@@ -926,8 +925,8 @@ session it was found in before."
 (ert-deftest limen-message-messages-are-what-the-assistant-said-per-turn ()
   "A turn opens at a question, whatever the records number themselves.
 Memex gives each record of a Claude session a `turn_id' of its own, so
-a reply written in several blocks is one message only if the grouping
-is read off the questions."
+the grouping is read off the questions, and a turn written in several
+blocks answers with its last: the ones before it lead up to a tool."
   (let ((records (list (limen-message-tests--record 7 "assistant" "second, part two")
                        (limen-message-tests--record 6 "assistant" "second, part one")
                        (limen-message-tests--record 5 "user" "second question")
@@ -935,11 +934,11 @@ is read off the questions."
                        (limen-message-tests--record 3 "user" "first question")
                        (limen-message-tests--record 2 "assistant" "before the page"))))
     (should (equal (limen-message--messages records)
-                   '(("assistant" . "second, part one\nsecond, part two")
+                   '(("assistant" . "second, part two")
                      ("assistant" . "first answer")
                      ("assistant" . "before the page"))))
     (should (equal (limen-message--messages records '("assistant" "user"))
-                   '(("assistant" . "second, part one\nsecond, part two")
+                   '(("assistant" . "second, part two")
                      ("user" . "second question")
                      ("assistant" . "first answer")
                      ("user" . "first question")
@@ -1235,8 +1234,10 @@ is read off the questions."
         (limen-message-markdown nil))
     (limen-message-tests--state
       (setf (limen-message--state-records state)
-            (list (limen-message-tests--record 2 "assistant" "second")
-                  (limen-message-tests--record 1 "assistant" "first"))
+            (list (limen-message-tests--record 4 "assistant" "second")
+                  (limen-message-tests--record 3 "user" "asked again")
+                  (limen-message-tests--record 2 "assistant" "first")
+                  (limen-message-tests--record 1 "user" "asked"))
             (limen-message--state-scope state) '("claude" "id" "/opaque"))
       (limen-message--finish state)
       (limen-message-cycle-messages)
@@ -1244,8 +1245,10 @@ is read off the questions."
     ;; A field of its own, opened after the one that chose the number.
     (limen-message-tests--state
       (setf (limen-message--state-records state)
-            (list (limen-message-tests--record 2 "assistant" "second")
-                  (limen-message-tests--record 1 "assistant" "first"))
+            (list (limen-message-tests--record 4 "assistant" "second")
+                  (limen-message-tests--record 3 "user" "asked again")
+                  (limen-message-tests--record 2 "assistant" "first")
+                  (limen-message-tests--record 1 "user" "asked"))
             (limen-message--state-scope state) '("claude" "id" "/opaque"))
       (limen-message--finish state)
       (should (equal (limen-message-tests--bare (cdar updates))

@@ -1045,16 +1045,17 @@ when not given."
     (delete-dups (mapcar (lambda (record) (gethash record table)) records))))
 
 (defun limen-message--turn-text (records turn table &optional role)
-  "Return what ROLE said in TURN of newest-first RECORDS, turned by TABLE.
-ROLE defaults to the assistant."
+  "Return what ROLE said last in TURN of newest-first RECORDS, turned by TABLE.
+ROLE defaults to the assistant.  An agent writes a block before each tool
+it calls, saying what it is about to do, so the turn's last block is its
+answer and the ones before it are the way there."
   (let ((role (or role "assistant")))
-    (mapconcat (lambda (record) (alist-get 'text record))
-               (reverse (cl-remove-if-not
-                         (lambda (record)
-                           (and (equal (alist-get 'role record) role)
-                                (equal (gethash record table) turn)))
-                         records))
-               "\n")))
+    (or (alist-get 'text
+                   (cl-find-if (lambda (record)
+                                 (and (equal (alist-get 'role record) role)
+                                      (equal (gethash record table) turn)))
+                               records))
+        "")))
 
 (defun limen-message--messages (records &optional roles)
   "Return what ROLES said in each turn of RECORDS, newest first.
