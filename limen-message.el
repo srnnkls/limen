@@ -57,7 +57,7 @@ the line without Limen knowing the theme."
   :group 'limen-message)
 
 (defcustom limen-message-headroom-above 1
-  "Pixels of blank space kept under the blank line that opens the context.
+  "Pixels of blank space kept under the blank line above the agent's name.
 Room above a line is only room under the line before it, so the top of
 the pane costs a blank line of its own whatever this is — the display
 gives a line its full height or none at all.  This trims that line,
@@ -148,6 +148,8 @@ and :effort sets one the way :command sets a model, such as
 (declare-function herdr-current-workspace-label "ext:herdr" ())
 (declare-function herdr-terminal-screen-p "ext:herdr-terminal" (&optional buffer))
 (declare-function herdr-status-glyph "ext:herdr-status" (glyph))
+(declare-function herdr-status-label "ext:herdr-status" (entry &optional entries))
+(declare-function herdr-status-state-mark "ext:herdr-status" (entry))
 (defvar herdr-status-field-glyphs)
 (declare-function herdr-agent-read "ext:herdr-agent" (target))
 (declare-function herdr-agent-type-keys "ext:herdr-agent" (target keys))
@@ -349,21 +351,18 @@ RULE-FACE draws the rule, `limen-message-rule-face' when nil."
                (split-string text "\n") "\n")))
 
 (defun limen-message--blocks (parts)
-  "Return PARTS as the blocks the pane stacks, held apart and off its edges.
-A block is its text consed onto the room kept beneath it.  An empty one
-leads the stack, since room above a line is only room under the line
-before it, and it keeps `limen-message-headroom-above'; the last keeps
-`limen-message-headroom'.  Each message behind the recap keeps
+  "Return PARTS as the blocks the pane stacks, held apart and off its edge.
+A block is its text consed onto the room kept beneath it.  The last
+keeps `limen-message-headroom', and each message behind the recap
 `limen-message-message-gap\=' under it.  Cera puts the space in, so the
 pane says how far apart its parts stand rather than drawing it."
   (let ((last (1- (length parts))))
-    (cons (cons "" limen-message-headroom-above)
-          (seq-map-indexed
-           (lambda (part index)
-             (cons part (cond ((= index last) limen-message-headroom)
-                              ((zerop index) 0)
-                              (t limen-message-message-gap))))
-           parts))))
+    (seq-map-indexed
+     (lambda (part index)
+       (cons part (cond ((= index last) limen-message-headroom)
+                        ((zerop index) 0)
+                        (t limen-message-message-gap))))
+     parts)))
 
 (defvar limen-message--rendered (make-hash-table :test #'equal)
   "Markdown already drawn, keyed by the text it was drawn from.
@@ -433,6 +432,29 @@ so drawn nowhere."
                     limen-message-text-face nil
                     (limen-message--rule-face (car message)))))
                window)))))))
+
+(defun limen-message--agent-line (target)
+  "Return agent TARGET's state glyph and name, as `herdr-status' draws them.
+The glyph stands in the margin the rule takes below, so the name starts
+in the column the recap does; without the dashboard the name stands
+alone, uncoloured."
+  (let ((margin (make-string (string-width (concat limen-message-rule " ")) ?\s)))
+    (or (ignore-errors
+          (when-let* (((require 'herdr-status nil t))
+                      (entry (herdr--entry-for-target target)))
+            (concat (herdr-status-state-mark entry) (herdr-status-label entry))))
+        (concat margin (format "%s" (cdr target))))))
+
+(defun limen-message--agent-pane (target)
+  "Return the pane naming agent TARGET above the context.
+It opens the stack, so the blank line room above the name needs is its
+own, and it shows nothing where TARGET has no name."
+  (let ((line (or (ignore-errors (limen-message--agent-line target)) "")))
+    (cera-pane :id 'limen-agent :kind 'readonly :bracket nil :prefix nil
+               :text (if (string-blank-p line)
+                         ""
+                       (list (cons "" limen-message-headroom-above)
+                             (cons line 0))))))
 
 (defun limen-message--agent (state)
   "Return STATE's agent as its provider, session reference and project, or nil.
@@ -1443,7 +1465,8 @@ a field close it again."
                                                 :key #'cera-pane-kind)))
                       (cera-set-pane-text input draft))
                     (append
-                     (list (cera-pane :id 'limen-context :kind 'readonly
+                     (list (limen-message--agent-pane target)
+                           (cera-pane :id 'limen-context :kind 'readonly
                                       :text "" :bracket nil :prefix nil))
                      defaults
                      (and limen-message-status
