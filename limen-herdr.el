@@ -413,6 +413,19 @@ of \"key: value\" strings, or nil.")
                                        (alist-get 'message record) "\n"))))
                        diagnostics "; "))))
 
+(defvar limen-herdr-buffer-label-functions nil
+  "Functions naming a buffer in rendered context in place of its name.
+Each receives the buffer and returns a label or nil; the first label
+wins.  A buffer whose name carries how it is made can be named by what
+an agent can look it up as.")
+
+(defun limen-herdr--buffer-label (name)
+  "Return the label rendered context gives the buffer called NAME."
+  (or (when-let* ((buffer (and name (get-buffer name))))
+        (run-hook-with-args-until-success
+         'limen-herdr-buffer-label-functions buffer))
+      name))
+
 (defun limen-herdr--context-fields (context root)
   "Return the key-value header lines for single-buffer CONTEXT below ROOT."
   (let ((path (limen-herdr--context-path (alist-get 'path context) root))
@@ -422,8 +435,10 @@ of \"key: value\" strings, or nil.")
         (symbol (alist-get 'symbol context)))
     (delq nil
           (list (format "%s: %s%s"
-                        (if path "file" "buffer")
-                        (or path (alist-get 'buffer context))
+                        (cond ((alist-get 'selected context) "selection")
+                              (path "file")
+                              (t "buffer"))
+                        (or path (limen-herdr--buffer-label (alist-get 'buffer context)))
                         (if position (concat ":" position) ""))
                 (and mode (format "mode: %s" mode))
                 (and definition (format "defun: %s" definition))
@@ -614,15 +629,20 @@ it has."
   "Return point context for SESSION with a current-line fallback.
 File buffers and Dired report as explicit context; other buffers report
 their name, mode, and text at point.  Sending is the user's own choice,
-so a buffer outside the project of SESSION reports the same way."
+so a buffer outside the project of SESSION reports the same way.  A
+region the user selected is marked `selected', where the line taken in
+its place is not."
   (let ((virtual (and (not (derived-mode-p 'dired-mode))
                       (not buffer-file-name)
                       (not (string-prefix-p " " (buffer-name))))))
     (limen-herdr--with-point-state
      (if (or (derived-mode-p 'dired-mode) (use-region-p))
-         (if virtual
-             (limen-herdr--virtual-context)
-           (limen-herdr--current-context session))
+         (let ((context (if virtual
+                            (limen-herdr--virtual-context)
+                          (limen-herdr--current-context session))))
+           (if (and (use-region-p) (not (alist-get 'items context)))
+               (cons (cons 'selected t) context)
+             context))
        (save-mark-and-excursion
          (let ((transient-mark-mode t))
            (set-mark (line-beginning-position))

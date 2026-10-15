@@ -403,11 +403,14 @@ agents Emacs holds a session for, attached or not.
 purpose: the region, or the current line without one, or the marked files in Dired. Herdr's own
 message and send commands take the same snapshot when the target agent has a Limen session.
 
-The rendered context of a Herdr message looks like this:
+The rendered context of a Herdr message looks like this. A region you selected leads with
+`selection:`; the current line taken without one leads with `file:`, or `buffer:` where no file
+is visited. Herdr quotes a selected region in the message itself, so a prompt hook carrying the
+context names the selection without repeating its text.
 
 ~~~text
 Emacs context
-file: src/app.py:40:0-41:15
+selection: src/app.py:40:0-41:15
 mode: python-mode
 defun: handler
 symbol: evnt
@@ -768,7 +771,8 @@ when a subcommand exists.
 
 `limen-context-sections` maps section names to functions of the request, and adding an entry
 adds a section to `context.get`. `limen-herdr-context-fields-functions` adds header lines to sent
-context and context blocks. A feature that reacts to hook events subscribes with
+context and context blocks. `limen-herdr-buffer-label-functions` names a buffer in them by what an
+agent can look it up as; `limen-memex` names a transcript view `memex session ID`. A feature that reacts to hook events subscribes with
 `limen-hooks-subscribe`; [docs/hook-payload.md](docs/hook-payload.md) describes the events and
 the call.
 

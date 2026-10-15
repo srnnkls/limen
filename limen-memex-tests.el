@@ -158,5 +158,17 @@ buffers it is asked to redraw in REFRESHED, and timers fire at once."
       (should-not limen-memex-live-mode)
       (should-not limen-hooks--subscriptions))))
 
+(ert-deftest limen-memex-names-a-view-by-its-session-in-context ()
+  (with-temp-buffer
+    (rename-buffer "*memex session s1 (~/.claude/projects/p/s1.jsonl)*" t)
+    (should (equal (limen-herdr--buffer-label (buffer-name)) (buffer-name)))
+    (setq-local memex-view-session-id "s1")
+    (should (equal (limen-herdr--buffer-label (buffer-name)) "memex session s1"))
+    (should (equal (car (limen-herdr--context-fields
+                         `((buffer . ,(buffer-name)) (line . 2) (column . 0)
+                           (end_line . 3) (end_column . 0) (selected . t))
+                         nil))
+                   "selection: memex session s1:2:0-3:0"))))
+
 (provide 'limen-memex-tests)
 ;;; limen-memex-tests.el ends here

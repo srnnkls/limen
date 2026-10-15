@@ -57,6 +57,16 @@ A buried view stays as it was until it is refreshed or opened again."
 (defvar-local limen-memex--timer nil
   "The timer redrawing this view once its agent's events settle.")
 
+(defun limen-memex-buffer-label (buffer)
+  "Return the memex session BUFFER views, as an agent looks it up, or nil.
+The viewer's name carries the transcript's path, which is how memex
+keeps it rather than anything an agent asks memex for."
+  (with-current-buffer buffer
+    (when-let* ((id (bound-and-true-p memex-view-session-id)))
+      (format "memex session %s" id))))
+
+(add-hook 'limen-herdr-buffer-label-functions #'limen-memex-buffer-label)
+
 (defun limen-memex--present (value)
   "Return VALUE when it is a non-empty string, or nil."
   (and (stringp value) (not (string-empty-p value)) value))

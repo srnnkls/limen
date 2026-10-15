@@ -125,6 +125,7 @@ scholia; when that fails, the operations stay disabled until `limen-scholia` is 
 | Hook | Called with | Returns |
 | --- | --- | --- |
 | `limen-herdr-context-fields-functions` | the context alist and the session root | a list of `"key: value"` header lines, or nil |
+| `limen-herdr-buffer-label-functions` | a buffer visiting no file | the name rendered context gives it, or nil for its buffer name |
 | `limen-herdr-context-hook` | the session, the context, the root and the rendered text, after a Herdr send renders it | ignored |
 | `limen-herdr-push-functions` | the session, the context and the root, before a push is typed into the pane | non-nil when it delivered the push |
 

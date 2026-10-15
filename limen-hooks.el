@@ -568,7 +568,11 @@ from gives no snapshot."
                                (condition-case nil
                                    (limen-herdr--send-context-snapshot session)
                                  (error nil)))))
-          (puthash session pending limen-hooks--pending)
+          ;; Herdr quotes a selected region in the message itself.
+          (puthash session (if (alist-get 'selected pending)
+                               (cons '(quoted . t) pending)
+                             pending)
+                   limen-hooks--pending)
           text)))))
 
 (defun limen-hooks--queue-push (session context _root)
@@ -610,7 +614,7 @@ project answers for a pane Emacs never took up."
        ((and file (integerp line))
         (format "%s:%d" (limen-herdr--context-path file root) line))
        (file (limen-herdr--context-path file root))
-       (t (alist-get 'name record))))))
+       (t (limen-herdr--buffer-label (alist-get 'name record)))))))
 
 (defun limen-hooks--focus-position (focus)
   "Return FOCUS's selected range, or the line holding point, or nil."
@@ -633,7 +637,7 @@ a region says it more exactly still."
   (when-let* ((focus)
               (where (if-let* ((file (alist-get 'file focus)))
                          (limen-herdr--context-path file root)
-                       (alist-get 'name focus))))
+                       (limen-herdr--buffer-label (alist-get 'name focus)))))
     (format "focus: %s%s" where
             (if-let* ((position (limen-hooks--focus-position focus)))
                 (concat ":" position)
@@ -646,11 +650,11 @@ a region says it more exactly still."
 (defun limen-hooks--selection-block (focus &optional sent)
   "Return the fenced text FOCUS has selected, or nil.
 Nothing is returned when there is no selection or when SENT, the text
-the prompt already carries, is that selection.  A selection longer than
-`limen-hooks-selection-limit' is cut there."
+the prompt already carries, holds that selection.  A selection longer
+than `limen-hooks-selection-limit' is cut there."
   (when-let* ((text (alist-get 'text (alist-get 'selection focus)))
-              ((not (string-empty-p text)))
-              ((not (equal text sent))))
+              ((not (string-blank-p text)))
+              ((not (and sent (string-search (string-trim text) sent)))))
     (let ((rest (- (length text) limen-hooks-selection-limit)))
       (concat (limen-hooks--fence
                (if (> rest 0) (substring text 0 limen-hooks-selection-limit) text))
@@ -706,7 +710,8 @@ the prompt already carries, is that selection.  A selection longer than
                           (and recent (list recent))
                           (list limen-hooks--live-line))
                   "\n")
-     (if (and text (not (string-empty-p text)))
+     (if (and text (not (string-empty-p text))
+              (not (alist-get 'quoted context)))
          (limen-hooks--fence text)
        "")
      (or (limen-hooks--selection-block focus text) ""))))
