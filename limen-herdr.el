@@ -39,7 +39,8 @@
 (declare-function herdr-agent-rename "ext:herdr-agent" (target title))
 (declare-function herdr-agent-name-slug "ext:herdr-agent" (string))
 (declare-function herdr-agent--available-name "ext:herdr-agent" (name server-key))
-(declare-function limen-hooks-subscribe "limen-hooks" (feature &rest arguments))
+(declare-function limen-hooks-subscribe "limen-hooks"
+                  (feature &key events provider-events function))
 (declare-function limen-hooks-unsubscribe "limen-hooks" (feature))
 (defvar herdr-socket-path)
 (defvar herdr-agent-name-function)
@@ -792,7 +793,7 @@ A session carries far more tool traffic than talk.")
                           (split-string (buffer-string) "\n" t)))))))
 
 (defconst limen-herdr--injected-regexp
-  (rx bos (* space) (or (seq "<" (+ (any "a-z_-")) ">")
+  (rx bos (* space) (or (seq "<" (+ (in "a-z_-")) ">")
                         "# AGENTS.md instructions"))
   "What a user record opens with when the harness wrote it, not the user.")
 

@@ -713,7 +713,7 @@ OTHERS are the other workspaces, as `limen-herd--other-workspaces' gives."
           "\n" limen-herd-workspace-protocol))
 
 (defun limen-herd--introduce (entry agents)
-  "Mark ENTRY introduced and return what it is told on arrival."
+  "Mark ENTRY introduced and return what it is told on arrival among AGENTS."
   (puthash (limen-herd--entry-key entry) t limen-herd--arrived)
   (limen-herd--workspace-intro (limen-herd--workspace-peers entry agents)
                                (limen-herd--other-workspaces entry agents)))
@@ -902,8 +902,7 @@ workspace without a setting of its own follows."
    ["Whole herd"
     ("A" "all" limen-herd-herd-subscribe-all :transient t)
     ("N" "none" limen-herd-herd-unsubscribe-all :transient t)
-    ("D" "defaults" limen-herd-herd-subscribe-defaults :transient t)]
-])
+    ("D" "defaults" limen-herd-herd-subscribe-defaults :transient t)]])
 
 (defun limen-herd--prefix-loaded-p (prefix)
   "Return non-nil when the transient PREFIX is defined, not merely autoloaded."

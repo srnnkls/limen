@@ -8,6 +8,7 @@
 (defvar herdr-herd-sent-functions)
 (defvar herdr-agent-event-functions)
 (defvar herdr-entries-in-scope-function)
+(declare-function herdr-herd-of-entry "ext:herdr-herd" (entry))
 
 (defun limen-herd-tests--entry (name &rest keys)
   "Return a Herdr agent entry called NAME.
@@ -539,7 +540,7 @@ and `fetches' how often herdr was asked for the live agents."
                        "working"))
         (should (equal (alist-get 'herds result)
                        [((name . "alpha/limen") (members . ["%a" "%c"]))]))
-        (json-serialize result :null-object nil :false-object :json-false)
+        (should (json-serialize result :null-object nil :false-object :json-false))
         (let ((one (limen-herd--list '((workspace . "ws-w1")) nil)))
           (should (equal (mapcar (lambda (workspace)
                                    (alist-get 'label workspace))
