@@ -141,6 +141,7 @@ The `limen` command line:
 | [`limen compile`](REFERENCE.md#limen-compile) | existing compilation buffers |
 | [`limen annotations`](REFERENCE.md#limen-annotations) | scholia sessions and annotations |
 | [`limen projects`](REFERENCE.md#limen-projects) | known projects |
+| [`limen agents`](REFERENCE.md#limen-agents) | live Herdr agents by workspace, and their herds |
 | [`limen skill`](REFERENCE.md#limen-skill) | agent instructions for the enabled operations |
 | [`limen hook`](REFERENCE.md#limen-hook) | answer a harness hook from standard input |
 | [`limen eval`](REFERENCE.md#limen-eval) | evaluate Emacs Lisp, when enabled |

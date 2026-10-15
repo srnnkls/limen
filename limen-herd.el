@@ -149,7 +149,8 @@ A workspace toggled on its project dashboard keeps its own setting."
 
 (defcustom limen-herd-workspace-protocol "\
 Reach one: herdr agent prompt <pane> \"<msg>\" (interrupts; `herdr agent
-get <pane>' first). Arrivals are announced like this; do not reply."
+get <pane>' first). Others: limen agents list [--workspace <label>].
+Arrivals are announced like this; do not reply."
   "What an agent in an aware workspace is told after who else is there."
   :type 'string
   :group 'limen-herd)
@@ -683,19 +684,39 @@ Its own setting wins; without one `limen-herd-workspace-awareness' decides."
                        (not (limen-herd--same-pane-p agent entry))))
                 agents)))
 
-(defun limen-herd--workspace-intro (peers)
-  "Return what an agent in an aware workspace alongside PEERS is told."
+(defun limen-herd--other-workspaces (entry agents)
+  "Return the other workspaces AGENTS work in, ENTRY's left out.
+Each is (LABEL . COUNT), COUNT the agents there, ordered by label."
+  (let ((own (limen-herd--workspace-label entry))
+        counts)
+    (dolist (agent agents)
+      (when-let* ((label (limen-herd--workspace-label agent))
+                  ((not (equal label own))))
+        (cl-incf (alist-get label counts 0 nil #'equal))))
+    (sort counts (lambda (one other) (string< (car one) (car other))))))
+
+(defun limen-herd--workspace-intro (peers others)
+  "Return what an agent in an aware workspace alongside PEERS is told.
+OTHERS are the other workspaces, as `limen-herd--other-workspaces' gives."
   (concat limen-herd-workspace-prefix
           (if peers
               (concat "Agents here:\n"
                       (mapconcat #'herdr-herd--roster-line peers "\n"))
             "No other agents here yet.")
+          (when others
+            (concat "\nOther workspaces: "
+                    (mapconcat (pcase-lambda (`(,label . ,count))
+                                 (format "%s (%d agent%s)" label count
+                                         (if (= count 1) "" "s")))
+                               others ", ")
+                    "."))
           "\n" limen-herd-workspace-protocol))
 
 (defun limen-herd--introduce (entry agents)
-  "Mark ENTRY introduced and return the peers it shares a workspace with."
+  "Mark ENTRY introduced and return what it is told on arrival."
   (puthash (limen-herd--entry-key entry) t limen-herd--arrived)
-  (limen-herd--workspace-peers entry agents))
+  (limen-herd--workspace-intro (limen-herd--workspace-peers entry agents)
+                               (limen-herd--other-workspaces entry agents)))
 
 (defun limen-herd-workspace-audience (kind self agents _text-function)
   "Introduce SELF arriving in an aware workspace, through hook context.
@@ -704,8 +725,9 @@ KIND is the event and AGENTS the live agents."
   (when (and (eq kind 'online)
              (not (gethash (limen-herd--entry-key self) limen-herd--arrived))
              (limen-herd-workspace-aware-p self))
-    (let ((peers (limen-herd--introduce self agents)))
-      (cons (list 'hook (limen-herd--workspace-intro peers) self)
+    (let ((intro (limen-herd--introduce self agents))
+          (peers (limen-herd--workspace-peers self agents)))
+      (cons (list 'hook intro self)
             (when peers
               (list (cons 'hook
                           (cons (concat limen-herd-workspace-prefix
@@ -723,8 +745,7 @@ again once it is."
        ((not (limen-herd-workspace-aware-p agent))
         (remhash (limen-herd--entry-key agent) limen-herd--arrived))
        ((not (gethash (limen-herd--entry-key agent) limen-herd--arrived))
-        (limen-herd--whisper agent (limen-herd--workspace-intro
-                                    (limen-herd--introduce agent agents))))))))
+        (limen-herd--whisper agent (limen-herd--introduce agent agents)))))))
 
 (defun limen-herd--scope-label ()
   "Return the workspace label the dashboard is scoped to, or nil for all."
@@ -918,6 +939,69 @@ An agent recorded here is never taken for an arrival later."
     (when limen-herd-mode (limen-herd--attach-menu)))
   (with-eval-after-load 'herdr-status
     (when limen-herd-mode (limen-herd--attach-dashboard))))
+
+;;; Listing
+
+(defun limen-herd--agent-record (entry)
+  "Return what `agent.list' reports of the agent ENTRY."
+  `((pane . ,(alist-get 'pane_id entry))
+    (server . ,(alist-get 'server_key entry))
+    (name . ,(limen-herd--agent-name entry))
+    (agent . ,(alist-get 'agent entry))
+    (status . ,(alist-get 'agent_status entry))
+    (herd . ,(when-let* ((herd (herdr-herd-of-entry entry)))
+               (herdr-herd-label herd)))
+    (notify . ,(vconcat (mapcar #'symbol-name
+                                (limen-herd-subscriptions entry))))))
+
+(defun limen-herd--label< (one other)
+  "Return non-nil when label ONE sorts before OTHER, nil labels last."
+  (and one (or (null other) (string< one other))))
+
+(defun limen-herd--list (arguments _context)
+  "List the live agents by editor workspace, and the herds they form.
+ARGUMENTS may name one `workspace' to keep alone."
+  (let ((only (alist-get 'workspace arguments))
+        (limen-herd--agents nil)
+        (limen-herd--fetched nil)
+        (limen-herd--labels nil)
+        workspaces herds)
+    (dolist (entry (limen-herd--live-agents))
+      (let ((label (limen-herd--workspace-label entry)))
+        (when (or (null only) (equal label only))
+          (let ((record (limen-herd--agent-record entry)))
+            (push record (alist-get label workspaces nil nil #'equal))
+            (when-let* ((herd (alist-get 'herd record)))
+              (push (alist-get 'pane record)
+                    (alist-get herd herds nil nil #'equal)))))))
+    `((workspaces
+       . ,(vconcat
+           (mapcar (pcase-lambda (`(,label . ,agents))
+                     `((label . ,label)
+                       (aware . ,(if (limen-herd--label-aware-p label)
+                                     t
+                                   :json-false))
+                       (agents . ,(vconcat (nreverse agents)))))
+                   (sort workspaces
+                         (lambda (one other)
+                           (limen-herd--label< (car one) (car other)))))))
+      (herds
+       . ,(vconcat
+           (mapcar (pcase-lambda (`(,name . ,panes))
+                     `((name . ,name)
+                       (members . ,(vconcat (nreverse panes)))))
+                   (sort herds
+                         (lambda (one other)
+                           (limen-herd--label< (car one) (car other))))))))))
+
+(limen-register-operation
+ "agent.list" #'limen-herd--list
+ :command "agents list"
+ :description "List the live Herdr agents by editor workspace, and their herds."
+ :effect 'read
+ :parameters '((:name "workspace" :type string
+                      :description "Editor workspace label to list alone."))
+ :enabled-p (lambda (_context) (fboundp 'herdr-herd-live-agents)))
 
 ;;;###autoload
 (define-minor-mode limen-herd-mode

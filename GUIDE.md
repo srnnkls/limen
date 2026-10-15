@@ -581,7 +581,8 @@ call, as hook context the user does not see. Notices never answer notices: a tur
 
 With `limen-herd-workspace-awareness` set, the agents of every editor workspace know each other
 without joining a herd. An agent belongs to the workspace `herdr-workspace-label` gives its
-directory, whichever Herdr workspace its pane sits in. Each is told once who else is there and how to reach them; an agent
+directory, whichever Herdr workspace its pane sits in. Each is told once who else is there, which
+other workspaces have agents, and how to reach them; an agent
 arriving later gets the same, and the others learn it arrived. `A` in `herdr-status` flips this for
 the dashboard's scope: on a project dashboard for that project's workspace alone, on the global one
 for every workspace without a setting of its own.
@@ -590,7 +591,9 @@ for every workspace without a setting of its own.
 [workspace] Agents here:
   w1:p2    memex-index (claude)
 Reach one: herdr agent prompt <pane> "<msg>" (interrupts; `herdr agent
-get <pane>' first). Arrivals are announced like this; do not reply.
+get <pane>' first). Others: limen agents list [--workspace <label>].
+Arrivals are announced like this; do not reply.
+Other workspaces: dotfiles (2 agents), herdr (1 agent).
 ```
 
 None of this is typed into a terminal. It travels as hook context: a Claude Code agent at work

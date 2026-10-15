@@ -480,6 +480,17 @@ limen trail [--limit N]
 
 Read `trail.list`, newest first. Needs `limen-trail-mode`.
 
+### limen agents
+
+```
+limen agents list [--workspace LABEL]
+```
+
+Read `agent.list`: the live Herdr agents grouped by editor workspace, each workspace with its
+label and whether it is aware, each agent with its pane, server, name, harness, status, herd and
+subscribed notice kinds; then every herd with its members' panes. `--workspace` keeps one
+workspace and the herds of its agents. Needs `limen-herd`, which loads Herdr.
+
 ### limen windows
 
 ```

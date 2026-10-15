@@ -303,9 +303,11 @@ and `fetches' how often herdr was asked for the live agents."
       (limen-herd-tests--drain)
       (should (equal (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "go"))
                      (concat "[workspace] Agents here:\n  %b b\n"
+                             "Other workspaces: ws-w2 (1 agent).\n"
                              limen-herd-workspace-protocol)))
       (should (equal (limen-herd-tests--event "UserPromptSubmit" "z" '(prompt . "go"))
                      (concat "[workspace] No other agents here yet.\n"
+                             "Other workspaces: ws-w1 (2 agents).\n"
                              limen-herd-workspace-protocol)))
       (setq members (append members
                             (list (limen-herd-tests--entry "c" :workspace "w1"))))
@@ -316,6 +318,7 @@ and `fetches' how often herdr was asked for the live agents."
                      "[workspace] c (claude, %c) arrived."))
       (should (equal (limen-herd-tests--event "UserPromptSubmit" "c" '(prompt . "go"))
                      (concat "[workspace] Agents here:\n  %a a\n  %b b\n"
+                             "Other workspaces: ws-w2 (1 agent).\n"
                              limen-herd-workspace-protocol)))
       (should-not (limen-herd-tests--event "UserPromptSubmit" "z" '(prompt . "go")))
       (should-not prompts))))
@@ -330,9 +333,11 @@ and `fetches' how often herdr was asked for the live agents."
       (limen-herd-tests--drain)
       (should (equal (limen-herd-tests--event "UserPromptSubmit" "a" '(prompt . "go"))
                      (concat "[workspace] Agents here:\n  %b b\n"
+                             "Other workspaces: ws-w2 (1 agent).\n"
                              limen-herd-workspace-protocol)))
       (should (equal (limen-herd-tests--event "UserPromptSubmit" "z" '(prompt . "go"))
                      (concat "[workspace] No other agents here yet.\n"
+                             "Other workspaces: ws-w1 (2 agents).\n"
                              limen-herd-workspace-protocol))))))
 
 (ert-deftest limen-herd-a-workspace-setting-overrides-the-global-one ()
@@ -505,6 +510,43 @@ and `fetches' how often herdr was asked for the live agents."
           (setq-local herdr-entries-in-scope-function #'ignore)
           (limen-herd--fetch-agents))
         (should-not seen)))))
+
+(ert-deftest limen-herd-lists-agents-by-workspace-with-their-herds ()
+  (limen-herd-tests--with-herd
+      (list (limen-herd-tests--entry "a" :workspace "w2"
+                                     :label "herd:limen notify:finished")
+            (limen-herd-tests--entry "b" :workspace "w1" :status "working")
+            (limen-herd-tests--entry "c" :workspace "w2" :label "herd:limen")
+            (limen-herd-tests--entry "d"))
+    (cl-letf (((symbol-function 'herdr-herd-label)
+               (lambda (herd) (format "%s/%s" (car herd) (cdr herd)))))
+      (let* ((limen-herd-workspace-awareness nil)
+             (_ (puthash "ws-w2" 'on limen-herd--overrides))
+             (result (limen-herd--list nil nil))
+             (workspaces (alist-get 'workspaces result)))
+        (should (equal (mapcar (lambda (workspace) (alist-get 'label workspace))
+                               workspaces)
+                       '("ws-w1" "ws-w2" nil)))
+        (should (equal (mapcar (lambda (workspace) (alist-get 'aware workspace))
+                               workspaces)
+                       '(:json-false t :json-false)))
+        (should (equal (aref (alist-get 'agents (aref workspaces 1)) 0)
+                       '((pane . "%a") (server . "/tmp/alpha.sock") (name . "a")
+                         (agent . "claude") (status . "idle")
+                         (herd . "alpha/limen") (notify . ["finished"]))))
+        (should (equal (alist-get 'status
+                                  (aref (alist-get 'agents (aref workspaces 0)) 0))
+                       "working"))
+        (should (equal (alist-get 'herds result)
+                       [((name . "alpha/limen") (members . ["%a" "%c"]))]))
+        (json-serialize result :null-object nil :false-object :json-false)
+        (let ((one (limen-herd--list '((workspace . "ws-w1")) nil)))
+          (should (equal (mapcar (lambda (workspace)
+                                   (alist-get 'label workspace))
+                                 (alist-get 'workspaces one))
+                         '("ws-w1")))
+          (should (equal (alist-get 'herds one) [])))
+        (should (= fetches 1))))))
 
 (ert-deftest limen-herd-mode-registers-and-installs ()
   (let ((limen-hooks--subscriptions nil)

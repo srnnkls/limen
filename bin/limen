@@ -21,6 +21,7 @@ Commands:
   windows      List Emacs windows
   diagnostics  List Flymake diagnostics
   projects     List known projects
+  agents       Inspect Herdr agents by workspace, and their herds
   skill        Generate agent instructions
   hook         Answer an agent prompt hook with Emacs context
   eval         Evaluate explicitly enabled Emacs Lisp
@@ -312,6 +313,34 @@ Options:
 EOF
 }
 
+agents_help() {
+    cat <<'EOF'
+Inspect the live Herdr agents.
+
+Usage: limen agents <COMMAND>
+
+Commands:
+  list  List agents by editor workspace, and their herds
+
+Options:
+  -h, --help  Print help
+EOF
+}
+
+agents_list_help() {
+    cat <<'EOF'
+List the live Herdr agents by editor workspace, and the herds they form.
+
+Requires limen-herd in Emacs.
+
+Usage: limen agents list [OPTIONS]
+
+Options:
+      --workspace <LABEL>  List only this editor workspace
+  -h, --help               Print help
+EOF
+}
+
 eval_help() {
     cat <<'EOF'
 Evaluate explicitly enabled Emacs Lisp.
@@ -345,6 +374,7 @@ show_help() {
                 windows) windows_help ;;
                 diagnostics) diagnostics_help ;;
                 projects) projects_help ;;
+                agents) agents_help ;;
                 skill) skill_help ;;
                 hook) hook_help ;;
                 eval) eval_help ;;
@@ -358,6 +388,7 @@ show_help() {
                 "buffer read") buffer_read_help ;;
                 "buffer save") buffer_save_help ;;
                 "compile list") compile_list_help ;;
+                "agents list") agents_list_help ;;
                 "compile read") compile_read_help ;;
                 "annotations sessions") annotations_sessions_help ;;
                 "annotations list") annotations_list_help ;;
@@ -854,6 +885,42 @@ case ${1-} in
         esac
         method=call
         operation=project.list
+        ;;
+    agents)
+        case ${2-} in
+            ''|-h|--help)
+                [ "$#" -le 2 ] || usage agents_help
+                agents_help
+                exit 0
+                ;;
+            list)
+                case ${3-} in
+                    -h|--help)
+                        [ "$#" -eq 3 ] || usage agents_list_help
+                        agents_list_help
+                        exit 0
+                        ;;
+                esac
+                method=call
+                operation=agent.list
+                argument_fields=
+                workspace_seen=
+                shift 2
+                while [ "$#" -gt 0 ]; do
+                    case $1 in
+                        --workspace)
+                            [ "$#" -ge 2 ] && [ -z "$workspace_seen" ] || usage agents_list_help
+                            workspace_seen=true
+                            add_string_argument workspace "$2"
+                            shift 2
+                            ;;
+                        *) usage agents_list_help ;;
+                    esac
+                done
+                arguments="{$argument_fields}"
+                ;;
+            *) usage agents_help ;;
+        esac
         ;;
     eval)
         case ${2-} in
