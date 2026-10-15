@@ -182,8 +182,9 @@ per message."
 (defvar limen-message--summaries (make-hash-table :test #'equal))
 (defvar limen-message--scopes (make-hash-table :test #'equal)
   "The memex session each agent was found in, keyed by target.
-An agent keeps the session it is running, so the lookup that found it
-stands for as long as Emacs does.")
+The lookup that found it stands while the agent reports the same
+session; a terminal that clears, resumes or starts another is looked up
+again.")
 
 (defvar limen-message--replies (make-hash-table :test #'equal)
   "What each session last answered, keyed by its scope.
@@ -1226,7 +1227,9 @@ cost in front of every field, where the session is almost always known."
           (if (not (and (stringp value) (member kind '("id" "path"))
                         (stringp source) (require 'memex-api nil t)))
               (limen-message--unavailable state)
-            (if-let* ((scope (gethash target limen-message--scopes)))
+            (if-let* ((scope (gethash target limen-message--scopes))
+                      ((equal source (nth 0 scope)))
+                      ((equal value (nth (if (equal kind "id") 1 2) scope))))
                 (progn (limen-message--remember state scope)
                        (limen-message--count
                         state (lambda ()

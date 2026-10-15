@@ -626,6 +626,35 @@ A pane stacks blocks, which stand where the lines of one text stood."
         (should (string-match-p "earlier reply"
                                 (limen-message-tests--text (cdar updates))))))))
 
+(ert-deftest limen-message-an-agent-on-another-session-is-looked-up-again ()
+  "A terminal that has moved to another session is not read from the
+session it was found in before."
+  (limen-message-tests--state
+    (let (order)
+      (puthash (limen-message--state-target state) '("claude" "old" "/old")
+               limen-message--scopes)
+      (cl-letf (((symbol-function 'require) (lambda (&rest _) t))
+                ((symbol-function 'herdr-agent-find) (lambda (&rest _) 'session))
+                ((symbol-function 'herdr-agent-session-agent-session)
+                 (lambda (_) '((kind . "id") (value . "new"))))
+                ((symbol-function 'herdr-agent-session-kind) (lambda (_) "claude"))
+                ((symbol-function 'herdr-agent-session-project) #'ignore)
+                ((symbol-function 'memex-api-index)
+                 (lambda (callback &rest _) (push 'index order) (funcall callback '())))
+                ((symbol-function 'memex-api-sessions)
+                 (lambda (callback &rest _)
+                   (push 'sessions order)
+                   (funcall callback '(((source . "claude") (session_id . "new")
+                                        (source_path . "/new"))))))
+                ((symbol-function 'memex-api-session-page)
+                 (lambda (&rest _) (push 'page order) nil)))
+        (limen-message--resolve state)
+        (should (equal (car (reverse order)) 'sessions))
+        (should (equal (limen-message--state-scope state) '("claude" "new" "/new")))
+        (should (equal (gethash (limen-message--state-target state)
+                                limen-message--scopes)
+                       '("claude" "new" "/new")))))))
+
 (ert-deftest limen-message-a-session-that-lost-its-records-is-looked-up-again ()
   (limen-message-tests--state
     (let (order)
