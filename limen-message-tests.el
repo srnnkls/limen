@@ -15,6 +15,8 @@
 (defvar cera-session-start-hook nil)
 (defvar herdr-status-field-glyphs)
 (defvar herdr-status-context-glyphs)
+(defvar herdr-message-preface-functions)
+(defvar limen-scholia-scopes)
 
 (defun limen-message-tests--text (content)
   "Return CONTENT as the text a pane draws, whether blocks or one string."
@@ -425,8 +427,11 @@ A pane stacks blocks, which stand where the lines of one text stood."
         (limen-message-enable)
         (limen-message-enable)
         (should (advice-member-p #'limen-message--read-field 'herdr-message-read-field))
+        (should (equal (default-value 'herdr-message-preface-functions)
+                       '(limen-message--annotation-preface)))
         (limen-message-disable)
-        (should-not (advice-member-p #'limen-message--read-field 'herdr-message-read-field)))
+        (should-not (advice-member-p #'limen-message--read-field 'herdr-message-read-field))
+        (should-not (default-value 'herdr-message-preface-functions)))
     (limen-message-disable)))
 
 (ert-deftest limen-message-wrapper-starts-after-field-and-scopes-hooks ()
@@ -1392,7 +1397,8 @@ where Codex ended up in PLACE."
 
 (ert-deftest limen-message-status-names-an-agent-of-another-workspace ()
   (skip-unless (require 'herdr-status nil t))
-  (let ((herdr-status-field-glyphs '((workspace "W") (pane "P"))))
+  (let ((herdr-status-field-glyphs '((workspace "W") (pane "P")))
+        (limen-message-status t))
     (limen-message-tests--state
       (setf (limen-message--state-workspace state) "main")
       (limen-message-tests--with-agent-in "shiftlet"
@@ -1459,14 +1465,15 @@ where Codex ended up in PLACE."
         (should-error (limen-message-pick-model) :type 'user-error)))))
 
 (ert-deftest limen-message-status-shows-the-effort-behind-the-model ()
-  (limen-message-tests--state
-    (setf (limen-message--state-model state) "Opus 5.5"
-          (limen-message--state-effort state) "xhigh")
-    (cl-letf (((symbol-function 'limen-message--agent) #'ignore)
-              ((symbol-function 'limen-message--elsewhere) #'ignore))
-      (let ((status (substring-no-properties (limen-message--status state))))
-        (should (string-match-p "Opus 5.5 .*xhigh\\'" status))
-        (should-not (string-match-p "/xhigh" status))))))
+  (let ((limen-message-status t))
+    (limen-message-tests--state
+      (setf (limen-message--state-model state) "Opus 5.5"
+            (limen-message--state-effort state) "xhigh")
+      (cl-letf (((symbol-function 'limen-message--agent) #'ignore)
+                ((symbol-function 'limen-message--elsewhere) #'ignore))
+        (let ((status (substring-no-properties (limen-message--status state))))
+          (should (string-match-p "Opus 5.5 .*xhigh\\'" status))
+          (should-not (string-match-p "/xhigh" status)))))))
 
 (ert-deftest limen-message-pick-effort-reports-it-with-the-model ()
   "The effort picked goes to the agent, the status line and the dashboard."
@@ -1493,6 +1500,114 @@ where Codex ended up in PLACE."
 (ert-deftest limen-message-status-icons-sit-at-text-size-by-default ()
   (should-not (plist-get (cdr (car (face-default-spec 'limen-message-status-icon)))
                          :height)))
+
+(defmacro limen-message-tests--with-scholia (&rest body)
+  "Run BODY with scholia on where the composer was opened, its parts stubbed."
+  (declare (indent 0) (debug t))
+  `(let ((limen-scholia-scopes '((point . "point") (region . "selection")
+                                 (file . "buffer") (session . "session"))))
+     (cl-letf (((symbol-function 'limen-scholia-composer-p) (lambda (_buffer) t))
+               ((symbol-function 'limen-scholia-composer-glyph) #'ignore)
+               ((symbol-function 'limen-scholia-composer-part)
+                (lambda (_buffer scope) (format "notes %s" scope)))
+               ((symbol-function 'limen-scholia-composer-payload)
+                (lambda (_buffer scope place) (format "%s %S" scope place))))
+       ,@body)))
+
+(ert-deftest limen-message-annotations-step-through-the-scopes-the-field-has ()
+  "The region is a scope only where the field was opened over one."
+  (let ((limen-message-status nil))
+    (limen-message-tests--with-scholia
+      (limen-message-tests--state
+        (cl-letf (((symbol-function 'limen-message--state-here) (lambda () state))
+                  ((symbol-function 'message) #'ignore))
+          (setf (limen-message--state-place state) '(5 . 5))
+          (should (equal (cl-loop repeat 5
+                                  do (limen-message-cycle-annotations)
+                                  collect (limen-message--state-annotations state))
+                         '(point file session nil point)))
+          (should (equal (cdar updates) "notes point"))
+          (setf (limen-message--state-place state) '(1 . 9)
+                (limen-message--state-annotations state) 'point)
+          (limen-message-cycle-annotations)
+          (should (eq (limen-message--state-annotations state) 'region)))))))
+
+(ert-deftest limen-message-annotations-glyph-is-drawn-as-the-other-icons ()
+  (let ((limen-message-status nil))
+    (limen-message-tests--with-scholia
+      (limen-message-tests--state
+        (cl-letf (((symbol-function 'limen-scholia-composer-glyph) (lambda () "Q")))
+          (let ((status (limen-message--status state)))
+            (should (equal (substring-no-properties status) "Q notes nil"))
+            (should (eq (get-text-property 0 'face status)
+                        'limen-message-status-icon))))))))
+
+(ert-deftest limen-message-annotations-need-scholia-where-the-field-opened ()
+  (limen-message-tests--state
+    (setf (limen-message--state-place state) '(1 . 1))
+    (cl-letf (((symbol-function 'limen-message--state-here) (lambda () state)))
+      (should-error (limen-message-cycle-annotations) :type 'user-error)
+      (should-not (limen-message--state-annotations state)))))
+
+(ert-deftest limen-message-annotations-preface-only-the-message-of-their-field ()
+  (limen-message-tests--with-scholia
+    (limen-message-tests--state
+      (setf (limen-message--state-place state) '(3 . 7))
+      (let ((limen-message--sending state))
+        (should-not (limen-message--annotation-preface '("server" . "terminal")))
+        (setf (limen-message--state-annotations state) 'region)
+        (should (equal (limen-message--annotation-preface '("server" . "terminal"))
+                       "region (3 . 7)"))
+        (should-not (limen-message--annotation-preface '("server" . "other"))))
+      (should-not (limen-message--annotation-preface '("server" . "terminal"))))))
+
+(ert-deftest limen-message-field-opens-on-the-configured-annotations ()
+  "A field opened without a region takes none for `region'."
+  (let ((limen-message-context t) (limen-message-status nil)
+        (cera-read-context-function nil) (cera-session-keymap nil)
+        (cera-session-start-hook nil))
+    (limen-message-tests--with-scholia
+      (with-temp-buffer
+        (insert "alpha beta")
+        (cl-letf (((symbol-function 'require) (lambda (&rest _) t))
+                  ((symbol-function 'cera-pane) #'list)
+                  ((symbol-function 'cera-update-pane) #'ignore)
+                  ((symbol-function 'cera-read-stack) #'ignore)
+                  ((symbol-function 'run-at-time) (lambda (&rest _) (timer-create))))
+          (let ((opened (lambda ()
+                          (limen-message--read-field
+                           (lambda (&rest _)
+                             (cons (limen-message--state-annotations
+                                    limen-message--sending)
+                                   (limen-message--state-place
+                                    limen-message--sending)))
+                           'target "source"))))
+            (let ((limen-message--picked-annotations nil))
+              (let ((limen-message-annotations 'file))
+                (should (equal (funcall opened) '(file 11 . 11))))
+              (let ((limen-message-annotations 'region))
+                (should (equal (funcall opened) '(nil 11 . 11)))))
+            (let ((limen-message-annotations 'file))
+              (let ((limen-message--picked-annotations '(session)))
+                (should (equal (funcall opened) '(session 11 . 11))))
+              (let ((limen-message--picked-annotations '(nil)))
+                (should (equal (funcall opened) '(nil 11 . 11)))))))))))
+
+(ert-deftest limen-message-annotations-picked-carry-to-the-next-field ()
+  "A scope picked, none among them, outlasts its field; the option seeds it."
+  (let ((limen-message-annotations 'file)
+        (limen-message--picked-annotations nil)
+        (limen-message-status nil))
+    (limen-message-tests--with-scholia
+      (limen-message-tests--state
+        (cl-letf (((symbol-function 'limen-message--state-here) (lambda () state))
+                  ((symbol-function 'message) #'ignore))
+          (setf (limen-message--state-place state) '(5 . 5)
+                (limen-message--state-annotations state) 'file)
+          (limen-message-cycle-annotations)
+          (should (equal limen-message--picked-annotations '(session)))
+          (limen-message-cycle-annotations)
+          (should (equal limen-message--picked-annotations '(nil))))))))
 
 (provide 'limen-message-tests)
 ;;; limen-message-tests.el ends here

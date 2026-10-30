@@ -293,8 +293,8 @@ sessions to agents:
 or project write target, and how many of its files lie in the project. `limen annotations list`
 lists the annotations of the sessions visible in the current buffer, or of `--session NAME`,
 narrowed by `--path` and capped by `--limit`. `limen annotations export --session NAME` renders a
-session through scholia's own formatters, `rustc` by default, or `diff` or `integrate` with
-`--format`.
+session through scholia's own formatters, `rustc` by default, or `diff`, `integrate`, `compact` or
+`yaml` with `--format`.
 
 While a session is visible, `limen context` gains an `annotations` section, and a context sent to
 an agent carries a line such as ``annotations: review (3), perf — `limen annotations list` ``, so
@@ -699,6 +699,23 @@ While the field is open:
 | `C-c C-t` | open the agent's memex transcript beside the buffer |
 | `C-c RET` | switch the agent's model |
 | `C-c C-e` | set the agent's reasoning effort |
+| `C-c C-a` | carry no scholia annotations, or those under point, in the selection, in the buffer or in the session |
+
+With `limen-scholia` loaded and `scholia-mode` on where the field opens, the status line shows
+scholia's annotation glyph, drawn like the model and effort glyphs, the session's name unless it
+is the default, and the annotations the message carries. They go just above the message and under any quoted
+selection, rendered as scholia's own sends render them, in `scholia-herdr-send-format`; a message
+carrying annotations may be left empty:
+
+```text
+Scholia annotations · session default · scope point
+- src/app.typ:16:1-24 — Too narrow here?
+  > #set par(justify: false)
+  ↳ ana: Fixed in the template.
+```
+
+The scope you pick carries over to every field after it. `limen-message-annotations` sets the one
+a field starts with until you pick one; the default carries none.
 
 The model and effort pickers read their choices from `limen-message-models`, one entry per
 provider:

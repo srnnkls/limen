@@ -37,5 +37,65 @@
               (should-not (limen-scholia-annotation-references root)))))
       (delete-directory root t))))
 
+(defvar scholia-edit-icon)
+(defvar scholia-export-directory)
+(defvar scholia-edit-icon-fallback)
+
+(ert-deftest limen-scholia-composer-p-needs-scholia-mode-defined-and-on ()
+  "A buffer opened before scholia's mode is defined carries no annotations."
+  (skip-unless (not (boundp 'scholia-mode)))
+  (with-temp-buffer
+    (cl-progv '(limen-scholia-available-p) '(t)
+      (should-not (limen-scholia-composer-p (current-buffer))))))
+
+(ert-deftest limen-scholia-composer-part-names-a-session-not-the-default ()
+  (with-temp-buffer
+    (let ((session "review")
+          (scholia-edit-icon "nf-md-comment_quote_outline")
+          (scholia-edit-icon-fallback "❝"))
+      (cl-letf (((symbol-function 'scholia-session-name) (lambda () session))
+                ((symbol-function 'scholia-session-default-name) (lambda () "default"))
+                ((symbol-function 'scholia-edit-glyph)
+                 (lambda (&rest _) (propertize "G" 'face '(:foreground "#F5DD8E")))))
+        (should (equal (limen-scholia-composer-part (current-buffer) 'file)
+                       "review · buffer"))
+        (setq session "default")
+        (should (equal (limen-scholia-composer-part (current-buffer) nil) "off"))
+        (should (equal (limen-scholia-composer-part (current-buffer) 'region)
+                       "selection"))
+        (let ((glyph (limen-scholia-composer-glyph)))
+          (should (equal glyph "G"))
+          (should-not (text-properties-at 0 glyph)))))))
+
+(ert-deftest limen-scholia-composer-payload-renders-as-scholia-sends ()
+  "The project's annotations go through scholia's renderer, named from its root."
+  (let* ((root (file-name-as-directory (make-temp-file "limen-scholia" t)))
+         (file (expand-file-name "src/app.typ" root))
+         asked rendered)
+    (unwind-protect
+        (with-temp-buffer
+          (setq default-directory root)
+          (insert "alpha beta gamma")
+          (cl-letf (((symbol-function 'limen--project-root) (lambda (_) root))
+                    ((symbol-function 'scholia-herdr-annotations)
+                     (lambda (scope &optional beg end)
+                       (setq asked (list scope beg end (point)))
+                       `((,file (:id "a1")) ("/elsewhere/other.typ" (:id "x"))
+                         ("buffer:0ff" (:id "b")))))
+                    ((symbol-function 'scholia-herdr-render)
+                     (lambda (scope entries &optional _session)
+                       (setq rendered (list scope entries scholia-export-directory))
+                       "section")))
+            (should (equal (limen-scholia-composer-payload
+                            (current-buffer) 'region '(7 . 12))
+                           "section"))
+            (should (equal asked '(region 7 12 7)))
+            (should (equal rendered `(region ((,file (:id "a1"))) ,root)))
+            (should (= (point) (point-max)))
+            (cl-letf (((symbol-function 'scholia-herdr-annotations) #'ignore))
+              (should-not (limen-scholia-composer-payload
+                           (current-buffer) 'point '(1 . 1))))))
+      (delete-directory root t))))
+
 (provide 'limen-scholia-tests)
 ;;; limen-scholia-tests.el ends here

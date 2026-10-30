@@ -110,6 +110,19 @@ and :effort sets one the way :command sets a model, such as
   :type '(alist :key-type symbol :value-type plist)
   :group 'limen-message)
 
+(defcustom limen-message-annotations nil
+  "Scholia annotations a message carries above itself, until one is picked.
+The scope last picked with \\[limen-message-cycle-annotations] is what
+every field after it starts with.
+`point' takes those covering point, `region' those the region overlaps,
+`file' the buffer's and `session' every one of the session the buffer
+annotates into; nil carries none.  \\[limen-message-cycle-annotations]
+in the field steps through them while `scholia-mode' is on where it was
+opened."
+  :type '(choice (const :tag "None" nil) (const point) (const region)
+                 (const file) (const session))
+  :group 'limen-message)
+
 (defface limen-message-status
   '((t :inherit shadow))
   "Face of the status line below a message field."
@@ -160,6 +173,12 @@ glyph is raised to stay centred on its line."
 (declare-function herdr-agent-session-project "ext:herdr-agent" (session) t)
 (declare-function herdr-agent-find "ext:herdr-agent" (server-key terminal-id))
 (declare-function herdr-agent-session-agent-session "ext:herdr-agent" (session) t)
+(declare-function limen-scholia-composer-p "limen-scholia" (buffer))
+(declare-function limen-scholia-composer-part "limen-scholia" (buffer scope))
+(declare-function limen-scholia-composer-glyph "limen-scholia" ())
+(declare-function limen-scholia-composer-payload "limen-scholia" (buffer scope place))
+(defvar limen-scholia-scopes)
+(defvar herdr-message-preface-functions)
 (declare-function memex-cancel-rpc "ext:memex-core" (process))
 (declare-function lectio-render "ext:lectio" (markdown &optional code))
 (declare-function memex-view-session "ext:memex-view"
@@ -280,7 +299,13 @@ one before it stands until the new one arrives.")
   buffer token target context summary live timers process stderr directory decorated started close-hook
   scope records requests (retrieving t) (scanned 0) (chars 0)
   recap latest role messages (cursor 0) history (recalled nil) draft
-  expanded dismissed recap-timer model workspace effort)
+  expanded dismissed recap-timer model workspace effort annotations place)
+
+(defvar limen-message--sending nil
+  "The composer state whose message is being sent, while it is.")
+
+(defvar limen-message--picked-annotations nil
+  "A list of the annotation scope last picked in a field, or nil before any.")
 
 (defun limen-message--state-here ()
   "Return the composer state of the buffer the field here was opened for.
@@ -492,16 +517,22 @@ so the line says where the message goes."
 The glyphs are the dashboard's, so a field reads the same in both, the
 context glyph filling with the share TEXT reports; TEXT stands alone
 where there is none."
-  (let ((glyph (cond ((not (require 'herdr-status nil t)) "")
-                     ((fboundp 'herdr-status-field-glyph)
-                      (herdr-status-field-glyph field text))
-                     (t (herdr-status-glyph
-                         (alist-get field herdr-status-field-glyphs))))))
-    (if (string-empty-p glyph)
-        text
-      (concat (propertize glyph 'face 'limen-message-status-icon
-                          'display (limen-message--centring))
-              " " text))))
+  (limen-message--glyph-part
+   (cond ((not (require 'herdr-status nil t)) "")
+         ((fboundp 'herdr-status-field-glyph)
+          (herdr-status-field-glyph field text))
+         (t (herdr-status-glyph
+             (alist-get field herdr-status-field-glyphs))))
+   text))
+
+(defun limen-message--glyph-part (glyph text)
+  "Return TEXT behind GLYPH drawn as the status line's icons are.
+TEXT stands alone where GLYPH is nil or empty."
+  (if (or (null glyph) (string-empty-p glyph))
+      text
+    (concat (propertize glyph 'face 'limen-message-status-icon
+                        'display (limen-message--centring))
+            " " text)))
 
 (defun limen-message--centring ()
   "Return the raise centring a glyph in `limen-message-status-icon' on its line.
@@ -550,10 +581,37 @@ moment a pick changes it."
               (label (limen-message--model-label (limen-message--answer state))))
     (limen-model-report (car target) pane label)))
 
+(defun limen-message--annotations-p (state)
+  "Return non-nil when STATE's message can carry scholia annotations."
+  (and (fboundp 'limen-scholia-composer-p)
+       (limen-scholia-composer-p (limen-message--state-buffer state))))
+
+(defun limen-message--status-p (state)
+  "Return non-nil when STATE's field has a status line to draw."
+  (or limen-message-status (limen-message--annotations-p state)))
+
 (defun limen-message--status (state)
-  "Return the model, effort and context window STATE's agent runs on, or nil.
-A model or effort picked in the composer stands in for the one answered
-with, and an agent of another workspace is named in front."
+  "Return the status line drawn below STATE's field, or nil.
+With `limen-message-status' it names the model, effort and context
+window STATE's agent runs on: a model or effort picked in the composer
+stands in for the one answered with, and an agent of another workspace
+is named in front.  The annotations the message carries come last."
+  (when-let* ((parts (delq nil
+                           (list (and limen-message-status
+                                      (limen-message--agent-status state))
+                                 (and (limen-message--annotations-p state)
+                                      (limen-message--annotations-part state))))))
+    (string-join parts "  ")))
+
+(defun limen-message--annotations-part (state)
+  "Return the status part naming the annotations STATE's message carries."
+  (limen-message--glyph-part
+   (limen-scholia-composer-glyph)
+   (limen-scholia-composer-part (limen-message--state-buffer state)
+                                (limen-message--state-annotations state))))
+
+(defun limen-message--agent-status (state)
+  "Return the model, effort and context window STATE's agent runs on, or nil."
   (let ((answer (limen-message--answer state)))
     (let* ((model (limen-message--model-label (cons '(effort) answer)))
            (effort (and model (alist-get 'effort answer)))
@@ -629,6 +687,42 @@ The draft stays in the field; the status line shows the effort picked."
     (limen-message--report-model state)
     (when limen-message-status
       (limen-message--show-status state))))
+
+(defun limen-message--annotation-scopes (state)
+  "Return the annotation scopes STATE's field steps through, none first.
+The region is one of them only where the field was opened over one."
+  (cons nil (seq-remove (lambda (scope)
+                          (and (eq scope 'region)
+                               (= (car (limen-message--state-place state))
+                                  (cdr (limen-message--state-place state)))))
+                        (mapcar #'car limen-scholia-scopes))))
+
+(defun limen-message-cycle-annotations ()
+  "Step through the scholia annotations the message carries above itself.
+None, those covering point, those the region overlaps, the buffer's and
+the session's, in turn; the status line names the one taken."
+  (interactive)
+  (let* ((state (or (limen-message--state-here)
+                    (user-error "No composer is open")))
+         (scopes (if (limen-message--annotations-p state)
+                     (limen-message--annotation-scopes state)
+                   (user-error "Scholia is not on where the field was opened")))
+         (scope (or (cadr (memq (limen-message--state-annotations state) scopes))
+                    (car scopes))))
+    (setf (limen-message--state-annotations state) scope
+          limen-message--picked-annotations (list scope))
+    (limen-message--show-status state)
+    (message "Annotations: %s"
+             (or (alist-get scope limen-scholia-scopes) "none"))))
+
+(defun limen-message--annotation-preface (target)
+  "Return the annotations the message being sent to TARGET carries, or nil."
+  (when-let* ((state limen-message--sending)
+              ((equal target (limen-message--state-target state)))
+              (scope (limen-message--state-annotations state))
+              ((limen-message--annotations-p state)))
+    (limen-scholia-composer-payload (limen-message--state-buffer state)
+                                    scope (limen-message--state-place state))))
 
 (defun limen-message--send-setting (state command value)
   "Hand VALUE to STATE's agent through COMMAND.
@@ -1460,6 +1554,9 @@ a field close it again."
                      :summary limen-message-summary :live t
                      :workspace (and (fboundp 'herdr-current-workspace-label)
                                      (herdr-current-workspace-label))
+                     :place (if (use-region-p)
+                                (cons (region-beginning) (region-end))
+                              (cons (point) (point)))
                      :history (gethash target limen-message--history)))
              (previous-context cera-read-context-function)
              (cera-read-context-function
@@ -1479,7 +1576,7 @@ a field close it again."
                            (cera-pane :id 'limen-context :kind 'readonly
                                       :text "" :bracket nil :prefix nil))
                      defaults
-                     (and limen-message-status
+                     (and (limen-message--status-p state)
                           (list (cera-pane :id 'limen-status :kind 'readonly
                                            :text "" :bracket nil :prefix nil
                                            :wrap nil :align 'input))))))))
@@ -1497,6 +1594,11 @@ a field close it again."
                   (define-key map (kbd (car binding))
                               `(menu-item "" ,(cdr binding)
                                           :filter limen-message--without-completion)))
+                (define-key map (kbd "C-c C-a")
+                            `(menu-item "" limen-message-cycle-annotations
+                                        :filter ,(lambda (command)
+                                                   (when (limen-message--annotations-p state)
+                                                     command))))
                 (define-key map (kbd "C-c C-u") #'limen-message-toggle-user)
                 (define-key map (kbd "C-c C-n") #'limen-message-cycle-messages)
                 (define-key map (kbd "M-p") #'limen-message-older)
@@ -1525,12 +1627,19 @@ a field close it again."
                           (add-hook 'kill-buffer-hook (limen-message--state-close-hook state) nil t))
                         (push (run-at-time 0 nil #'limen-message--resolve state)
                               (limen-message--state-timers state))
-                        (when limen-message-status
+                        (when (limen-message--status-p state)
                           (push (run-at-time 0 nil #'limen-message--show-status state)
                                 (limen-message--state-timers state)))))
                     cera-session-start-hook)))
+        (setf (limen-message--state-annotations state)
+              (car (memq (if limen-message--picked-annotations
+                             (car limen-message--picked-annotations)
+                           limen-message-annotations)
+                         (and (limen-message--annotations-p state)
+                              (limen-message--annotation-scopes state)))))
         (unwind-protect
-            (funcall original target context)
+            (let ((limen-message--sending state))
+              (funcall original target context))
           (unless (limen-message--state-dismissed state)
             (remhash target limen-message--drafts))
           (limen-message--close state))))))
@@ -1538,12 +1647,14 @@ a field close it again."
 (defun limen-message-enable ()
   "Install optional message-field context without loading its dependencies."
   (advice-add 'herdr-message-read-field :around #'limen-message--read-field)
-  (add-hook 'herdr-message-compose-functions #'limen-message-record -100))
+  (add-hook 'herdr-message-compose-functions #'limen-message-record -100)
+  (add-hook 'herdr-message-preface-functions #'limen-message--annotation-preface))
 
 (defun limen-message-disable ()
   "Remove optional message-field context and close outstanding work."
   (advice-remove 'herdr-message-read-field #'limen-message--read-field)
   (remove-hook 'herdr-message-compose-functions #'limen-message-record)
+  (remove-hook 'herdr-message-preface-functions #'limen-message--annotation-preface)
   (dolist (buffer (buffer-list))
     (when-let* ((state (buffer-local-value 'limen-message--active buffer)))
       (limen-message--close state))))

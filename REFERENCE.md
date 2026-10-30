@@ -104,7 +104,8 @@ listener's host, port and session count.
 ### limen-scholia.el
 
 No commands or options. Loading it registers the `annotation.*` operations, the `annotations`
-section of `context.get`, and the `annotations:` line of sent context. Loading it tries to load
+section of `context.get`, the `annotations:` line of sent context, and the annotations a message
+field can carry (`limen-message-cycle-annotations`). Loading it tries to load
 scholia; when that fails, the operations stay disabled until `limen-scholia` is loaded again.
 
 ### limen-herdr.el
@@ -323,6 +324,7 @@ keys appear while `limen-message-context` is set.
 | `limen-message-transcript` | `C-c C-t` | open the agent's memex transcript beside the buffer |
 | `limen-message-pick-model` | `C-c RET` | switch the agent's model to one of `limen-message-models` |
 | `limen-message-pick-effort` | `C-c C-e` | set the agent's reasoning effort |
+| `limen-message-cycle-annotations` | `C-c C-a` | carry none, or the scholia annotations at `point`, in the `region`, the `file` or the `session` above the message; needs `limen-scholia` and `scholia-mode` |
 
 `C-p`, `C-n`, `up` and `down` pass to the completion menu while it is open.
 
@@ -343,6 +345,7 @@ keys appear while `limen-message-context` is set.
 | `limen-message-message-counts` | list of natural numbers | `(1 2 3)` | how many messages the pane shows, in cycle order |
 | `limen-message-message-gap` | natural number | `7` | pixels between shown messages |
 | `limen-message-history-limit` | natural number | `32` | sent messages kept per agent |
+| `limen-message-annotations` | `nil`, `point`, `region`, `file` or `session` | `nil` | scholia annotations a field starts carrying until `C-c C-a` picks a scope, which later fields keep |
 | `limen-message-rule` | string | `"┃"` | rule drawn left of a quoted message |
 | `limen-message-rule-offset` | natural number | `2` | pixels the rule stands off the pane's edge |
 | `limen-message-headroom` | natural number | `10` | pixels between the context and the input |
@@ -413,7 +416,7 @@ operations are offered over MCP, on the route `limen-herdr-mcp` gives a launched
 | `compile.read` | - | `compile read` | read | always | `name`: string, required |
 | `annotation.sessions` | - | `annotations sessions` | read | scholia loaded | none |
 | `annotation.list` | - | `annotations list` | read | scholia loaded | `session`, `path`: string; `limit`: integer |
-| `annotation.export` | - | `annotations export` | read | scholia loaded | `session`: string, required; `path`: string; `format`: `rustc`, `diff` or `integrate` |
+| `annotation.export` | - | `annotations export` | read | scholia loaded | `session`: string, required; `path`: string; `format`: `rustc`, `diff`, `integrate`, `compact` or `yaml` |
 | `diff.open` | `diff_open` | - | write, deferred | `limen-editor-enable-diffs` | `old_path`, `new_path`, `contents`, `name`: string, required; `expected_tick`: integer |
 | `diff.close` | `diff_close` | - | write | `limen-editor-enable-diffs` | `name`: string, required |
 | `diff.close-all` | `diff_close-all` | - | write | `limen-editor-enable-diffs` | none |

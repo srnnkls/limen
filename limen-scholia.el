@@ -11,8 +11,9 @@
 ;;; Commentary:
 
 ;; Registers read-only `annotation.*' operations over scholia's sessions,
-;; adds an `annotations' section to `context.get', and names the visible
-;; sessions in the header of a Herdr message.  Requires scholia.
+;; adds an `annotations' section to `context.get', names the visible
+;; sessions in the header of a Herdr message, and lets the message field
+;; carry annotations above the message.  Requires scholia.
 
 ;;; Code:
 
@@ -43,8 +44,18 @@
                   (sessions &optional target format))
 (declare-function scholia-export--session-record "ext:scholia-export"
                   (record cache format))
+(declare-function scholia-session-name "ext:scholia-core" ())
+(declare-function scholia-edit-glyph "ext:scholia-edit" (name fallback &optional color))
+(defvar scholia-edit-icon)
+(defvar scholia-edit-icon-fallback)
+(declare-function scholia-herdr-annotations "ext:scholia-herdr"
+                  (scope &optional beg end))
+(declare-function scholia-herdr-render "ext:scholia-herdr"
+                  (scope entries &optional session))
+(defvar scholia-export-directory)
 (defvar scholia-visible-sessions)
 (defvar scholia-project-sessions)
+(defvar scholia-mode)
 
 (defconst limen-scholia-available-p
   (and (require 'scholia-vars nil t)
@@ -55,7 +66,7 @@
        t)
   "Non-nil when scholia loaded; the operations stay disabled otherwise.")
 
-(defconst limen-scholia--formats '("rustc" "diff" "integrate")
+(defconst limen-scholia--formats '("rustc" "diff" "integrate" "compact" "yaml")
   "Export formats accepted by `annotation.export'.")
 
 (defconst limen-scholia--entrypoint "`limen annotations list`"
@@ -238,6 +249,55 @@ without a visible session, or without a root."
                       name)))
                 visible ", ")
                limen-scholia--entrypoint)))))
+
+(defconst limen-scholia-scopes
+  '((point . "point") (region . "selection") (file . "buffer")
+    (session . "session"))
+  "Scopes a message can carry annotations from, with the names shown for them.")
+
+(defun limen-scholia-composer-p (buffer)
+  "Return non-nil when a message written from BUFFER can carry its annotations."
+  (and limen-scholia-available-p
+       (buffer-live-p buffer)
+       (boundp 'scholia-mode)
+       (buffer-local-value 'scholia-mode buffer)
+       (require 'scholia-edit nil t)
+       (require 'scholia-herdr nil t)))
+
+(defun limen-scholia-composer-glyph ()
+  "Return the glyph scholia's own field wears, bare, or nil for none."
+  (when-let* ((glyph (scholia-edit-glyph scholia-edit-icon
+                                         scholia-edit-icon-fallback)))
+    (substring-no-properties glyph)))
+
+(defun limen-scholia-composer-part (buffer scope)
+  "Return the status text naming SCOPE of BUFFER's annotations.
+The session BUFFER annotates into is named unless it is the default one."
+  (with-current-buffer buffer
+    (let ((session (scholia-session-name)))
+      (concat (unless (equal session (scholia-session-default-name))
+                (concat session " · "))
+              (or (alist-get scope limen-scholia-scopes) "off")))))
+
+(defun limen-scholia-composer-payload (buffer scope place)
+  "Return BUFFER's annotations SCOPE takes as a send carries them, or nil.
+PLACE is the region the message was begun over, as a cons of its
+positions, or point consed onto itself.  They are rendered as scholia's
+own sends render them, files named relative to BUFFER's project; a
+session's files outside that project are left out."
+  (with-current-buffer buffer
+    (let* ((root (limen--project-root default-directory))
+           (entries (seq-filter
+                     (lambda (entry)
+                       (or (null (car entry))
+                           (and (file-name-absolute-p (car entry))
+                                (limen-project-file-p (car entry) root))))
+                     (save-excursion
+                       (goto-char (car place))
+                       (scholia-herdr-annotations scope (car place) (cdr place))))))
+      (when entries
+        (let ((scholia-export-directory root))
+          (scholia-herdr-render scope entries))))))
 
 (limen-register-operation
  "annotation.sessions" #'limen-scholia--sessions-operation
